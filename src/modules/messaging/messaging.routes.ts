@@ -7,6 +7,7 @@ const controller = new MessagingController();
 
 router.use(authMiddleware);
 
-router.post('/send-text', controller.sendText);
+router.post('/send-text', controller.sendText.bind(controller));
+router.post('/send-media', controller.sendMedia.bind(controller));
 
 export default router;

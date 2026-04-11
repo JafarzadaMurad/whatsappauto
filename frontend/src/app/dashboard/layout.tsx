@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,6 +14,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const pathname = usePathname();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [networksExpanded, setNetworksExpanded] = useState(true);
+    const [aiExpanded, setAiExpanded] = useState(true);
 
     useEffect(() => {
         if (hasHydrated && !isAuthenticated) {
@@ -36,6 +37,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare }
+            ]
+        },
+        {
+            name: 'AI Workspace',
+            icon: Bot,
+            isGroup: true,
+            children: [
+                { name: 'AI Agents', href: '/dashboard/ai/agents', icon: Bot },
+                { name: 'Data Tables', href: '/dashboard/ai/tables', icon: Database },
+                { name: 'AI Providers', href: '/dashboard/ai/providers', icon: Server }
             ]
         },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key },
@@ -75,20 +86,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <nav className="space-y-1">
                         {navLinks.map((item) => {
                             if (item.isGroup) {
+                                const isNetworks = item.name === 'Networks';
+                                const expanded = item.name === 'Networks' ? networksExpanded : aiExpanded;
+                                const setExpanded = item.name === 'Networks' ? setNetworksExpanded : setAiExpanded;
+
                                 return (
                                     <div key={item.name} className="space-y-1">
                                         <button
-                                            onClick={() => setNetworksExpanded(!networksExpanded)}
+                                            onClick={() => setExpanded(!expanded)}
                                             className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors font-medium"
                                         >
                                             <div className="flex items-center gap-3">
                                                 <item.icon className="w-5 h-5" />
                                                 {item.name}
                                             </div>
-                                            {networksExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                                         </button>
                                         <AnimatePresence>
-                                            {networksExpanded && (
+                                            {expanded && (
                                                 <motion.div
                                                     initial={{ height: 0, opacity: 0 }}
                                                     animate={{ height: 'auto', opacity: 1 }}

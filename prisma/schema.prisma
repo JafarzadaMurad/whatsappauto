@@ -15,101 +15,192 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  instances     Instance[]
-  webhooks      WebhookConfig[]
-  apiKeys       ApiKey[]
+  instances Instance[]
+  webhooks  WebhookConfig[]
+  apiKeys   ApiKey[]
+
+  // AI & CRM Links
+  aiProviders  AiProvider[]
+  agents       Agent[]
+  customTables CustomTable[]
+  clients      Client[]
 }
 
 model Instance {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  name         String
-  status       String   @default("DISCONNECTED") // CONNECTED, DISCONNECTED, CONNECTING
-  sessionData  String?  @db.Text // Can store some meta-info, actual baileys state might be stored elsewhere or here piece by piece
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  messages     Message[]
-  contacts     Contact[]
-  webhooks     WebhookConfig[]
+  agentId String?
+  agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  name        String
+  status      String  @default("DISCONNECTED") // CONNECTED, DISCONNECTED, CONNECTING
+  sessionData String? @db.Text // Can store some meta-info, actual baileys state might be stored elsewhere or here piece by piece
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+  contacts Contact[]
+  webhooks WebhookConfig[]
 }
 
 model ApiKey {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
-  
-  createdAt DateTime @default(now())
+  id     String @id @default(uuid())
+  key    String @unique
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String
+
+  createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 }
 
 model WebhookConfig {
-  id          String    @id @default(uuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  instanceId  String?   // Optional: if null applies to all, otherwise specific to instance
-  instance    Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  url         String
-  events      String[]  // e.g. ["message.new", "message.sent"]
-  isActive    Boolean   @default(true)
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  instanceId String? // Optional: if null applies to all, otherwise specific to instance
+  instance   Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  url      String
+  events   String[] // e.g. ["message.new", "message.sent"]
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Message {
-  id          String   @id @default(uuid())
-  instanceId  String
-  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
-  
-  remoteJid   String   // The WhatsApp ID of the chat/contact
+  id         String   @id @default(uuid())
+  instanceId String
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  remoteJid   String // The WhatsApp ID of the chat/contact
   isFromMe    Boolean
-  messageType String   // text, image, video, document, etc
-  content     String?  @db.Text
-  
-  status      String   @default("SENT") // PENDING, SENT, DELIVERED, READ
-  
-  timestamp   DateTime
-  createdAt   DateTime @default(now())
+  messageType String // text, image, video, document, etc
+  content     String? @db.Text
+
+  status String @default("SENT") // PENDING, SENT, DELIVERED, READ
+
+  timestamp DateTime
+  createdAt DateTime @default(now())
 }
 
 model Contact {
-  id          String   @id @default(uuid())
-  instanceId  String
-  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
-  
-  remoteJid   String
-  name        String?
-  pushName    String?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  instanceId String
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  remoteJid String
+  name      String?
+  pushName  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([instanceId, remoteJid])
 }
 
 // Model for Baileys Auth State
 model AuthState {
-  id          String   @id @default(uuid())
-  instanceId  String   @unique
-  data        String   @db.Text // JSON string containing creds
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  instanceId String   @unique
+  data       String   @db.Text // JSON string containing creds
+  updatedAt  DateTime @updatedAt
 }
 
 model AuthKey {
-  id          String   @id // Formatted as instanceId_type_id
-  instanceId  String
-  type        String
-  keyId       String
-  data        String   @db.Text // JSON string containing the key
-  updatedAt   DateTime @updatedAt
+  id         String   @id // Formatted as instanceId_type_id
+  instanceId String
+  type       String
+  keyId      String
+  data       String   @db.Text // JSON string containing the key
+  updatedAt  DateTime @updatedAt
 
   @@unique([instanceId, type, keyId])
+}
+
+// -----------------------------------------
+// AI Chatbot & Intelligent CRM CRM Models
+// -----------------------------------------
+
+model AiProvider {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider String // OPENAI, CLAUDE, GEMINI
+  apiKey   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agents Agent[]
+
+  @@unique([userId, provider])
+}
+
+model Agent {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name       String
+  providerId String
+  provider   AiProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  model      String // e.g. "gpt-4o", "claude-3-opus"
+
+  systemPrompt    String?  @db.Text
+  allowedTableIds String[] // IDs of CustomTable models this agent can access
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  instances Instance[] // Instances using this agent
+}
+
+model CustomTable {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name    String
+  columns Json // Array of column definitions: { name: 'Price', type: 'number', relationTableId?: 'uuid' }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rows CustomRow[]
+}
+
+model CustomRow {
+  id      String      @id @default(uuid())
+  tableId String
+  table   CustomTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  data Json // Key-value pairs matching table columns
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Client {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  phone  String // RemoteJid
+  name   String?
+  status String   @default("NEW") // Custom CRM Status e.g., "Lead", "Purchased"
+  tags   String[]
+
+  customFields Json? // Additional CRM data AI extracts or user defines
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, phone])
 }

@@ -22,6 +22,11 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
     const [activeColMenu, setActiveColMenu] = useState<string | null>(null);
     const [newColMenuOpen, setNewColMenuOpen] = useState(false);
 
+    // Undo Stack
+    type Action = { type: 'delete_row', rowId: string, rowData: RowData } | { type: 'delete_col', colDef: ColumnDef, colIndex: number };
+    const [undoStack, setUndoStack] = useState<Action[]>([]);
+    const [showToast, setShowToast] = useState<string | null>(null);
+
     // Auto-sync flags
     const [saving, setSaving] = useState(false);
 
@@ -42,6 +47,47 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
         };
         load();
     }, [id]);
+
+    useEffect(() => {
+        const handleKeyDown = async (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                if (undoStack.length === 0) return;
+                e.preventDefault();
+
+                const action = undoStack[undoStack.length - 1];
+                setUndoStack(prev => prev.slice(0, -1));
+
+                if (action.type === 'delete_row') {
+                    // Restore row in UI temp
+                    setRows(prev => [...prev, action.rowData]);
+                    setShowToast(`Record restored.`);
+                    try {
+                        const res = await api.post(`/tables/${id}/rows`, { data: action.rowData.data });
+                        if (res.data.success) {
+                            // Update the temp UI row with the new one from DB (with proper new ID maybe, or just refresh it)
+                            setRows(r => r.map(row => row.id === action.rowId ? res.data.row : row));
+                        }
+                    } catch (err) { }
+                }
+                else if (action.type === 'delete_col') {
+                    setTable(prev => {
+                        if (!prev) return prev;
+                        const newCols = [...prev.columns];
+                        newCols.splice(action.colIndex, 0, action.colDef);
+                        const updated = { ...prev, columns: newCols };
+                        api.put(`/tables/${prev.id}`, { name: prev.name, description: prev.description, columns: newCols }).catch(console.error);
+                        return updated;
+                    });
+                    setShowToast(`Property restored.`);
+                }
+
+                setTimeout(() => setShowToast(null), 3500);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [undoStack, id]);
 
     const handleUpdateTable = async (updatedColumns: ColumnDef[]) => {
         if (!table) return;
@@ -72,8 +118,13 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
 
     const handleDeleteColumn = (colId: string) => {
         if (!table) return;
-        if (!confirm("Delete this property? Data in this property will be lost.")) return;
+        const colIndex = table.columns.findIndex(c => c.id === colId);
+        const colDef = table.columns[colIndex];
+
         const updated = table.columns.filter(c => c.id !== colId);
+        setUndoStack(prev => [...prev, { type: 'delete_col', colDef, colIndex }]);
+        setShowToast(`Property deleted. Press Ctrl+Z to undo.`);
+
         handleUpdateTable(updated);
         setActiveColMenu(null);
     };
@@ -112,8 +163,13 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
     };
 
     const handleDeleteRow = async (rowId: string) => {
-        if (!confirm("Delete this page?")) return;
+        const rowData = rows.find(r => r.id === rowId);
+        if (!rowData) return;
+
+        setUndoStack(prev => [...prev, { type: 'delete_row', rowId, rowData }]);
+        setShowToast(`Record deleted. Press Ctrl+Z to undo.`);
         setRows(rows.filter(r => r.id !== rowId));
+
         try {
             await api.delete(`/tables/${id}/rows/${rowId}`);
         } catch (err) {
@@ -163,28 +219,18 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
             </div>
 
             {/* Notion-like Table container */}
-            <div className="max-w-[1200px] mx-auto px-6">
-                <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 opacity-0 text-sm"><Search className="w-4 h-4" /> Filter</div>
-                    <div className="flex items-center gap-2">
-                        <button className="text-muted-foreground hover:text-foreground p-1"><Settings2 className="w-4 h-4" /></button>
-                        <button onClick={handleCreateRow} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 hover:bg-primary/90 transition-colors">
-                            New <ChevronDown className="w-3 h-3 ml-1 opacity-70" />
-                        </button>
-                    </div>
-                </div>
-
-                <div className="w-full border border-border rounded-lg overflow-x-auto bg-card shadow-sm">
+            <div className="max-w-[1200px] mx-auto px-6 relative pb-64 overflow-visible">
+                <div className="w-full flex flex-col text-sm">
                     {/* Header Row */}
-                    <div className="flex w-fit min-w-full border-b border-border bg-secondary/20">
+                    <div className="flex w-fit min-w-full border-t border-b border-border/50 text-muted-foreground bg-background">
                         {/* Status Column Dummy (drag handle) */}
                         <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50"></div>
 
                         {table.columns.map(col => (
-                            <div key={col.id} className="relative group border-r border-border/50 flex-shrink-0 min-w-[200px] hover:bg-secondary/50 transition-colors">
+                            <div key={col.id} className="relative group border-r border-border/50 flex-shrink-0 w-[220px] transition-colors">
                                 <button
                                     onClick={() => setActiveColMenu(activeColMenu === col.id ? null : col.id)}
-                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground font-medium text-left outline-none"
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-muted-foreground hover:bg-secondary/30 transition-colors font-medium text-left outline-none"
                                 >
                                     {getTypeIcon(col.type)}
                                     <span className="truncate flex-1">{col.name || 'Untitled'}</span>
@@ -249,8 +295,8 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
                                         <div className="max-h-64 overflow-y-auto space-y-0.5">
                                             <button onClick={() => handleCreateColumn('text', 'Text')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><Type className="w-4 h-4 text-muted-foreground" /> Text</button>
                                             <button onClick={() => handleCreateColumn('number', 'Number')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><Hash className="w-4 h-4 text-muted-foreground" /> Number</button>
-                                            <button onClick={() => handleCreateColumn('boolean', 'Checkbox')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><CheckSquare className="w-4 h-4 text-muted-foreground" /> Checkbox</button>
-                                            <button onClick={() => handleCreateColumn('relation', 'Relation')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><LinkIcon className="w-4 h-4 text-muted-foreground" /> Relation</button>
+                                            <button onClick={() => handleCreateColumn('boolean', 'Checkbox')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg transition-colors text-left"><CheckSquare className="w-4 h-4 text-muted-foreground" /> Checkbox</button>
+                                            <button onClick={() => handleCreateColumn('relation', 'Relation')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg transition-colors text-left"><LinkIcon className="w-4 h-4 text-muted-foreground" /> Relation</button>
                                         </div>
                                     </motion.div>
                                 )}
@@ -269,9 +315,9 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
                             </div>
 
                             {table.columns.map(col => (
-                                <div key={col.id} className="border-r border-border/50 flex-shrink-0 min-w-[200px] flex relative">
+                                <div key={col.id} className="border-r border-border/50 flex-shrink-0 w-[220px] flex relative">
                                     {col.type === 'boolean' ? (
-                                        <div className="w-full px-3 py-2 flex items-center">
+                                        <div className="w-full px-3 py-1.5 flex items-center">
                                             <input
                                                 type="checkbox"
                                                 checked={!!row.data[col.name]}
@@ -282,8 +328,8 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
                                     ) : (
                                         <input
                                             type={col.type === 'number' ? 'number' : 'text'}
-                                            className="w-full bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/30 focus:bg-secondary/20 transition-colors"
-                                            placeholder="Empty"
+                                            className="w-full bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground/30 focus:bg-secondary/20 transition-colors"
+                                            placeholder=""
                                             value={row.data[col.name] || ''}
                                             onChange={(e) => handleUpdateRowData(row.id, col.name, col.type === 'number' ? Number(e.target.value) : e.target.value)}
                                         />
@@ -296,11 +342,14 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
                     ))}
 
                     {/* New Page button */}
-                    <div className="flex w-fit min-w-full hover:bg-secondary/10 transition-colors cursor-text" onClick={handleCreateRow}>
-                        <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50"></div>
-                        <div className="px-3 py-2 text-sm text-muted-foreground flex items-center gap-2 hover:text-foreground">
+                    <div className="flex w-fit min-w-full hover:bg-secondary/10 transition-colors cursor-text text-sm border-b border-border/50 group" onClick={handleCreateRow}>
+                        <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50 flex items-center justify-center">
+                            <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40" />
+                        </div>
+                        <div className="px-3 py-2 flex items-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors w-[220px]">
                             <Plus className="w-4 h-4" /> New
                         </div>
+                        <div className="flex-1"></div>
                     </div>
                 </div>
 
@@ -318,6 +367,21 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
                     onClick={() => { setActiveColMenu(null); setNewColMenuOpen(false); }}
                 />
             )}
+
+            {/* Undo Toast */}
+            <AnimatePresence>
+                {showToast && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 50, x: '-50%' }}
+                        animate={{ opacity: 1, y: 0, x: '-50%' }}
+                        exit={{ opacity: 0, y: 50, x: '-50%' }}
+                        className="fixed bottom-10 left-1/2 bg-foreground text-background px-6 py-3 rounded-full shadow-lg font-medium text-sm z-50 flex items-center gap-3"
+                    >
+                        {showToast}
+                        <div className="px-2 py-1 bg-background/20 rounded text-xs">Ctrl + Z</div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

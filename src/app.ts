@@ -9,6 +9,7 @@ import messagingRoutes from './modules/messaging/messaging.routes';
 import webhookRoutes from './modules/webhook/webhook.routes';
 import apikeyRoutes from './modules/apikey/apikey.routes';
 import aiProviderRoutes from './modules/aiprovider/aiprovider.routes';
+import customTableRoutes from './modules/customtable/customtable.routes';
 
 const app: Express = express();
 
@@ -39,6 +40,7 @@ app.use('/api/messages', messagingRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/keys', apikeyRoutes);
 app.use('/api/ai-providers', aiProviderRoutes);
+app.use('/api/tables', customTableRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

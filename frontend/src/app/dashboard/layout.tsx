@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,6 +39,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare }
             ]
         },
+        { name: 'CRM / Clients', href: '/dashboard/crm', icon: Users },
         {
             name: 'AI Workspace',
             icon: Bot,

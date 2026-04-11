@@ -7,6 +7,7 @@ import authRoutes from './modules/auth/auth.routes';
 import whatsappRoutes from './modules/whatsapp/whatsapp.routes';
 import messagingRoutes from './modules/messaging/messaging.routes';
 import webhookRoutes from './modules/webhook/webhook.routes';
+import apikeyRoutes from './modules/apikey/apikey.routes';
 
 const app: Express = express();
 
@@ -35,6 +36,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/instances', whatsappRoutes);
 app.use('/api/messages', messagingRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/keys', apikeyRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

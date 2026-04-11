@@ -11,6 +11,29 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
         }
 
         const token = authHeader.split(' ')[1];
+
+        // Check if it's an API Key (starts with sk_)
+        if (token.startsWith('sk_')) {
+            const apiKey = await prisma.apiKey.findUnique({
+                where: { key: token },
+                include: { user: { select: { id: true, email: true, name: true } } }
+            });
+
+            if (!apiKey || !apiKey.user) {
+                return res.status(401).json({ success: false, message: 'Invalid API Key' });
+            }
+
+            // Update last used timestamp
+            await prisma.apiKey.update({
+                where: { id: apiKey.id },
+                data: { lastUsedAt: new Date() }
+            });
+
+            (req as any).user = apiKey.user;
+            return next();
+        }
+
+        // Otherwise assume it's a JWT
         const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
 
         const user = await prisma.user.findUnique({

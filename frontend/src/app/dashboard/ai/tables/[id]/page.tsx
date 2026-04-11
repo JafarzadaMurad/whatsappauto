@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, FormEvent } from "react";
+import { useEffect, useState, useRef, FormEvent, use } from "react";
 import { ArrowLeft, Loader2, Plus, Type, Hash, ToggleLeft, Link as LinkIcon, Settings2, Trash2, ChevronDown, CheckSquare, Search, Columns, Clock } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
@@ -13,7 +13,8 @@ interface RowData {
     createdAt: string;
 }
 
-export default function TableDataPage({ params }: { params: { id: string } }) {
+export default function TableDataPage({ params }: { params: Promise<{ id: string }> }) {
+    const { id } = use(params);
     const [table, setTable] = useState<CustomTable | null>(null);
     const [rows, setRows] = useState<RowData[]>([]);
     const [loading, setLoading] = useState(true);
@@ -28,8 +29,8 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
         const load = async () => {
             try {
                 const [tableRes, rowsRes] = await Promise.all([
-                    api.get(`/tables/${params.id}`),
-                    api.get(`/tables/${params.id}/rows`)
+                    api.get(`/tables/${id}`),
+                    api.get(`/tables/${id}/rows`)
                 ]);
                 if (tableRes.data.success) setTable(tableRes.data.table);
                 if (rowsRes.data.success) setRows(rowsRes.data.rows);
@@ -40,7 +41,7 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
             }
         };
         load();
-    }, [params.id]);
+    }, [id]);
 
     const handleUpdateTable = async (updatedColumns: ColumnDef[]) => {
         if (!table) return;
@@ -86,7 +87,7 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
         setRows(rows.map(r => r.id === rowId ? { ...r, data: { ...r.data, [colName]: value } } : r));
 
         try {
-            await api.put(`/tables/${params.id}/rows/${rowId}`, {
+            await api.put(`/tables/${id}/rows/${rowId}`, {
                 data: { ...rowData.data, [colName]: value }
             });
         } catch (err) {
@@ -99,7 +100,7 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
     const handleCreateRow = async () => {
         setSaving(true);
         try {
-            const res = await api.post(`/tables/${params.id}/rows`, { data: {} });
+            const res = await api.post(`/tables/${id}/rows`, { data: {} });
             if (res.data.success) {
                 setRows([...rows, res.data.row]);
             }
@@ -114,7 +115,7 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
         if (!confirm("Delete this page?")) return;
         setRows(rows.filter(r => r.id !== rowId));
         try {
-            await api.delete(`/tables/${params.id}/rows/${rowId}`);
+            await api.delete(`/tables/${id}/rows/${rowId}`);
         } catch (err) {
             console.error("Failed to delete row", err);
         }

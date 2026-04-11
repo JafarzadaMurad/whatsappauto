@@ -1,0 +1,111 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  instances     Instance[]
+  webhooks      WebhookConfig[]
+  apiKeys       ApiKey[]
+}
+
+model Instance {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name         String
+  status       String   @default("DISCONNECTED") // CONNECTED, DISCONNECTED, CONNECTING
+  sessionData  String?  @db.Text // Can store some meta-info, actual baileys state might be stored elsewhere or here piece by piece
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages     Message[]
+  contacts     Contact[]
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+}
+
+model WebhookConfig {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  url       String
+  events    String[] // e.g. ["message.new", "message.sent"]
+  isActive  Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  instanceId  String
+  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  
+  remoteJid   String   // The WhatsApp ID of the chat/contact
+  isFromMe    Boolean
+  messageType String   // text, image, video, document, etc
+  content     String?  @db.Text
+  
+  status      String   @default("SENT") // PENDING, SENT, DELIVERED, READ
+  
+  timestamp   DateTime
+  createdAt   DateTime @default(now())
+}
+
+model Contact {
+  id          String   @id @default(uuid())
+  instanceId  String
+  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  
+  remoteJid   String
+  name        String?
+  pushName    String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([instanceId, remoteJid])
+}
+
+// Model for Baileys Auth State
+model AuthState {
+  id          String   @id @default(uuid())
+  instanceId  String   @unique
+  data        String   @db.Text // JSON string containing creds
+  updatedAt   DateTime @updatedAt
+}
+
+model AuthKey {
+  id          String   @id // Formatted as instanceId_type_id
+  instanceId  String
+  type        String
+  keyId       String
+  data        String   @db.Text // JSON string containing the key
+  updatedAt   DateTime @updatedAt
+
+  @@unique([instanceId, type, keyId])
+}

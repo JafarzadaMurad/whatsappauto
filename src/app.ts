@@ -1,0 +1,53 @@
+import express, { Express, Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { config } from './config';
+import authRoutes from './modules/auth/auth.routes';
+import whatsappRoutes from './modules/whatsapp/whatsapp.routes';
+import messagingRoutes from './modules/messaging/messaging.routes';
+import webhookRoutes from './modules/webhook/webhook.routes';
+
+const app: Express = express();
+
+// Security Middlewares
+app.use(helmet());
+app.use(
+    cors({
+        origin: config.FRONTEND_URL,
+        credentials: true,
+    })
+);
+
+// Rate Limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
+
+// Body Parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/instances', whatsappRoutes);
+app.use('/api/messages', messagingRoutes);
+app.use('/api/webhooks', webhookRoutes);
+
+// Health Check
+app.get('/health', (req: Request, res: Response) => {
+    res.status(200).json({ status: 'OK', environment: config.NODE_ENV });
+});
+
+// Global Error Handler
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    console.error(err.stack);
+    res.status(500).json({
+        success: false,
+        message: err.message || 'Internal Server Error',
+    });
+});
+
+export default app;

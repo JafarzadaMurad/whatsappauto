@@ -10,18 +10,18 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { user, isAuthenticated, logout } = useAuthStore();
+    const { user, isAuthenticated, logout, hasHydrated } = useAuthStore();
     const pathname = usePathname();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [networksExpanded, setNetworksExpanded] = useState(true);
 
     useEffect(() => {
-        if (!isAuthenticated) {
+        if (hasHydrated && !isAuthenticated) {
             router.replace('/login');
         }
-    }, [isAuthenticated, router]);
+    }, [isAuthenticated, hasHydrated, router]);
 
-    if (!isAuthenticated) return null;
+    if (!hasHydrated || !isAuthenticated) return null;
 
     const handleLogout = () => {
         logout();

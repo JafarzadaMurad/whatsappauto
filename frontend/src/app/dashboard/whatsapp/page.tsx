@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode } from "lucide-react";
+import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import io from "socket.io-client";
@@ -13,6 +13,8 @@ interface Instance {
     name: string;
     status: string;
     createdAt: string;
+    agentId?: string | null;
+    agent?: any;
 }
 
 export default function DashboardPage() {
@@ -22,12 +24,18 @@ export default function DashboardPage() {
     const [newInstanceName, setNewInstanceName] = useState("");
     const [activeQr, setActiveQr] = useState<{ id: string, qrUrl: string } | null>(null);
 
-    const fetchInstances = async () => {
+    // AI Agents
+    const [agents, setAgents] = useState<any[]>([]);
+    const [updatingAgent, setUpdatingAgent] = useState<string | null>(null);
+
+    const fetchData = async () => {
         try {
-            const res = await api.get('/instances');
-            if (res.data.success) {
-                setInstances(res.data.instances);
-            }
+            const [instRes, agentsRes] = await Promise.all([
+                api.get('/instances'),
+                api.get('/agents')
+            ]);
+            if (instRes.data.success) setInstances(instRes.data.instances);
+            if (agentsRes.data.success) setAgents(agentsRes.data.agents);
         } catch (err) {
             console.error(err);
         } finally {
@@ -36,7 +44,7 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        fetchInstances();
+        fetchData();
 
         // Start Socket.IO for QR and Status updates
         const socket = io(process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:2992');
@@ -110,6 +118,20 @@ export default function DashboardPage() {
             if (activeQr?.id === id) setActiveQr(null);
         } catch (err) {
             console.error(err);
+        }
+    };
+
+    const handleLinkAgent = async (instanceId: string, agentId: string) => {
+        setUpdatingAgent(instanceId);
+        try {
+            const res = await api.put(`/instances/${instanceId}`, { agentId: agentId || null });
+            if (res.data.success) {
+                setInstances(instances.map(i => i.id === instanceId ? { ...i, agentId: agentId || null, agent: agents.find(a => a.id === agentId) } : i));
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setUpdatingAgent(null);
         }
     };
 
@@ -215,34 +237,57 @@ export default function DashboardPage() {
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                        {inst.status === 'CONNECTED' && (
-                                            <Link
-                                                href={`/dashboard/whatsapp/${inst.id}`}
-                                                className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium"
-                                                title="Open Chat"
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
+                                        <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl">
+                                            {updatingAgent === inst.id ? (
+                                                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mr-1" />
+                                            ) : (
+                                                <Bot className="w-4 h-4 text-primary" />
+                                            )}
+                                            <select
+                                                value={inst.agentId || ""}
+                                                disabled={updatingAgent === inst.id}
+                                                onChange={(e) => handleLinkAgent(inst.id, e.target.value)}
+                                                className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate"
                                             >
-                                                Chat
-                                            </Link>
-                                        )}
-                                        {inst.status === 'DISCONNECTED' && (
+                                                <option value="">No AI Agent</option>
+                                                {agents.map(a => (
+                                                    <option key={a.id} value={a.id}>{a.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div className="h-6 w-px bg-border/50 hidden sm:block mx-1"></div>
+
+                                        <div className="flex items-center gap-2">
+                                            {inst.status === 'CONNECTED' && (
+                                                <Link
+                                                    href={`/dashboard/whatsapp/${inst.id}`}
+                                                    className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium"
+                                                    title="Open Chat"
+                                                >
+                                                    Chat
+                                                </Link>
+                                            )}
+                                            {inst.status === 'DISCONNECTED' && (
+                                                <button
+                                                    onClick={() => {
+                                                        api.post(`/instances/${inst.id}/restart`).catch(e => console.error(e));
+                                                        // Note: we need to add restart endpoint in backend or just recreate, but clicking triggers QR for now if backend reconnect logic is smart
+                                                    }}
+                                                    className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2 text-sm"
+                                                >
+                                                    <QrCode className="w-4 h-4" /> Link
+                                                </button>
+                                            )}
                                             <button
-                                                onClick={() => {
-                                                    api.post(`/instances/${inst.id}/restart`).catch(e => console.error(e));
-                                                    // Note: we need to add restart endpoint in backend or just recreate, but clicking triggers QR for now if backend reconnect logic is smart
-                                                }}
-                                                className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2 text-sm"
+                                                onClick={() => handleDelete(inst.id)}
+                                                className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                                                title="Delete Instance"
                                             >
-                                                <QrCode className="w-4 h-4" /> Link
+                                                <Trash2 className="w-5 h-5" />
                                             </button>
-                                        )}
-                                        <button
-                                            onClick={() => handleDelete(inst.id)}
-                                            className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                                            title="Delete Instance"
-                                        >
-                                            <Trash2 className="w-5 h-5" />
-                                        </button>
+                                        </div>
                                     </div>
                                 </motion.div>
                             ))}

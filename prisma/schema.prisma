@@ -167,8 +167,9 @@ model CustomTable {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name    String
-  columns Json // Array of column definitions: { name: 'Price', type: 'number', relationTableId?: 'uuid' }
+  name        String
+  description String? @db.Text
+  columns     Json // Array of column definitions: { name: 'Price', type: 'number', relationTableId?: 'uuid' }
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

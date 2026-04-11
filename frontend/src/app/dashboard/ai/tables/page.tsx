@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Database, Plus, Table2, Trash2, Edit2, Loader2, ArrowRight } from "lucide-react";
+import { Database, Plus, Table2, Trash2, Loader2, ArrowRight } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -16,6 +17,7 @@ export interface ColumnDef {
 export interface CustomTable {
     id: string;
     name: string;
+    description: string | null;
     columns: ColumnDef[];
     createdAt: string;
 }
@@ -24,10 +26,11 @@ export default function TablesPage() {
     const [tables, setTables] = useState<CustomTable[]>([]);
     const [loading, setLoading] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
+    const router = useRouter();
 
     // New Table Form
     const [newTableName, setNewTableName] = useState("");
-    const [columns, setColumns] = useState<ColumnDef[]>([{ id: 'c1', name: 'Name', type: 'text' }]);
+    const [newTableDescription, setNewTableDescription] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
@@ -47,20 +50,20 @@ export default function TablesPage() {
         }
     };
 
-    const addColumn = () => {
-        setColumns([...columns, { id: `c${Date.now()}`, name: '', type: 'text' }]);
-    };
-
-    const handleCreate = async () => {
-        if (!newTableName || columns.some(c => !c.name)) return alert("Please fill all fields");
+    const handleCreate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newTableName) return alert("Please specify a table name");
         setSubmitting(true);
         try {
-            const res = await api.post('/tables', { name: newTableName, columns });
+            // Start with an empty "Name" column just to initialize something if needed
+            const res = await api.post('/tables', {
+                name: newTableName,
+                description: newTableDescription,
+                columns: [{ id: 'c1', name: 'Name', type: 'text' }]
+            });
             if (res.data.success) {
-                setTables([res.data.table, ...tables]);
-                setIsCreating(false);
-                setNewTableName("");
-                setColumns([{ id: 'c1', name: 'Name', type: 'text' }]);
+                // Route directly to the table edit page
+                router.push(`/dashboard/ai/tables/${res.data.table.id}`);
             }
         } catch (err) {
             console.error(err);
@@ -103,83 +106,52 @@ export default function TablesPage() {
                         exit={{ opacity: 0, scale: 0.95, y: -10 }}
                         className="bg-card border border-border rounded-2xl p-6 shadow-sm mb-8"
                     >
-                        <h2 className="text-xl font-semibold mb-4">New Dynamic Table</h2>
-                        <div className="space-y-4">
+                        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                            <Table2 className="w-5 h-5 text-primary" />
+                            Create New Table
+                        </h2>
+                        <form onSubmit={handleCreate} className="space-y-4">
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground">Table Name</label>
                                 <input
                                     type="text"
-                                    placeholder="e.g. Products, Services"
-                                    className="mt-1 w-full max-w-md bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                                    required
+                                    placeholder="e.g. Products, Leads, Inventory"
+                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                                     value={newTableName}
                                     onChange={(e) => setNewTableName(e.target.value)}
                                 />
                             </div>
 
-                            <div className="space-y-3 pt-2">
-                                <label className="text-sm font-medium text-muted-foreground">Columns / Fields</label>
-                                {columns.map((col, idx) => (
-                                    <div key={col.id} className="flex flex-wrap sm:flex-nowrap items-center gap-3">
-                                        <input
-                                            type="text"
-                                            placeholder="Column Name"
-                                            value={col.name}
-                                            onChange={e => setColumns(columns.map(c => c.id === col.id ? { ...c, name: e.target.value } : c))}
-                                            className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                                        />
-                                        <select
-                                            value={col.type}
-                                            onChange={e => setColumns(columns.map(c => c.id === col.id ? { ...c, type: e.target.value as any } : c))}
-                                            className="bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 w-32"
-                                        >
-                                            <option value="text">Text</option>
-                                            <option value="number">Number</option>
-                                            <option value="boolean">Yes/No</option>
-                                            <option value="relation">Relation</option>
-                                        </select>
-
-                                        {col.type === 'relation' && (
-                                            <select
-                                                value={col.relationTableId || ''}
-                                                onChange={e => setColumns(columns.map(c => c.id === col.id ? { ...c, relationTableId: e.target.value } : c))}
-                                                className="bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 flex-1"
-                                                required
-                                            >
-                                                <option value="" disabled>Select Target Table</option>
-                                                {tables.map(t => (
-                                                    <option key={t.id} value={t.id}>{t.name}</option>
-                                                ))}
-                                            </select>
-                                        )}
-
-                                        {idx > 0 && (
-                                            <button onClick={() => setColumns(columns.filter(c => c.id !== col.id))} className="p-2 text-destructive hover:bg-destructive/10 rounded-lg">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                ))}
-                                <button type="button" onClick={addColumn} className="text-sm text-primary font-medium hover:underline flex items-center gap-1 mt-2">
-                                    <Plus className="w-4 h-4" /> Add Field
-                                </button>
+                            <div>
+                                <label className="text-sm font-medium text-muted-foreground">Description (AI context)</label>
+                                <textarea
+                                    placeholder="Explain how AI should use this table..."
+                                    rows={3}
+                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm"
+                                    value={newTableDescription}
+                                    onChange={(e) => setNewTableDescription(e.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground mt-1 text-right">Optional, but highly recommended for ChatGPT/Claude.</p>
                             </div>
 
-                            <div className="flex items-center gap-3 pt-6">
+                            <div className="flex items-center justify-end gap-3 pt-4">
                                 <button
-                                    onClick={handleCreate}
-                                    disabled={submitting}
-                                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70"
-                                >
-                                    {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Table'}
-                                </button>
-                                <button
+                                    type="button"
                                     onClick={() => setIsCreating(false)}
                                     className="px-6 py-2.5 font-medium text-muted-foreground hover:bg-secondary rounded-xl transition-all"
                                 >
                                     Cancel
                                 </button>
+                                <button
+                                    type="submit"
+                                    disabled={submitting}
+                                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70"
+                                >
+                                    {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Create Table'}
+                                </button>
                             </div>
-                        </div>
+                        </form>
                     </motion.div>
                 )}
             </AnimatePresence>

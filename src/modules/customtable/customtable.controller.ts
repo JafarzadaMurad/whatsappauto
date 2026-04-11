@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 const createTableSchema = z.object({
     name: z.string().min(1),
+    description: z.string().optional(),
     columns: z.array(z.object({
         id: z.string(),
         name: z.string(),
@@ -55,6 +56,7 @@ export class CustomTableController {
                 data: {
                     userId,
                     name: data.name,
+                    description: data.description || "",
                     columns: data.columns as any
                 }
             });
@@ -79,6 +81,7 @@ export class CustomTableController {
                 where: { id },
                 data: {
                     name: data.name,
+                    description: data.description !== undefined ? data.description : existing.description,
                     columns: data.columns as any
                 }
             });

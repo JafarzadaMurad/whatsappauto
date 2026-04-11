@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Plus, Trash2, Save } from "lucide-react";
+import { useEffect, useState, useRef, FormEvent } from "react";
+import { ArrowLeft, Loader2, Plus, Type, Hash, ToggleLeft, Link as LinkIcon, Settings2, Trash2, ChevronDown, CheckSquare, Search, Columns, Clock } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { CustomTable, ColumnDef } from "../page";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface RowData {
     id: string;
@@ -17,8 +18,10 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
     const [rows, setRows] = useState<RowData[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const [isAdding, setIsAdding] = useState(false);
-    const [newRowData, setNewRowData] = useState<Record<string, any>>({});
+    const [activeColMenu, setActiveColMenu] = useState<string | null>(null);
+    const [newColMenuOpen, setNewColMenuOpen] = useState(false);
+
+    // Auto-sync flags
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -39,158 +42,282 @@ export default function TableDataPage({ params }: { params: { id: string } }) {
         load();
     }, [params.id]);
 
-    const handleSaveRow = async () => {
+    const handleUpdateTable = async (updatedColumns: ColumnDef[]) => {
+        if (!table) return;
+        setTable({ ...table, columns: updatedColumns });
+        try {
+            await api.put(`/tables/${table.id}`, {
+                name: table.name,
+                description: table.description,
+                columns: updatedColumns
+            });
+        } catch (err) {
+            console.error("Failed to update table columns", err);
+        }
+    };
+
+    const handleCreateColumn = (type: any, name: string) => {
+        const newCol: ColumnDef = { id: `c_${Date.now()}`, name, type };
+        const updated = [...(table?.columns || []), newCol];
+        handleUpdateTable(updated);
+        setNewColMenuOpen(false);
+    };
+
+    const handleUpdateColumn = (colId: string, updates: Partial<ColumnDef>) => {
+        if (!table) return;
+        const updated = table.columns.map(c => c.id === colId ? { ...c, ...updates } : c);
+        handleUpdateTable(updated);
+    };
+
+    const handleDeleteColumn = (colId: string) => {
+        if (!table) return;
+        if (!confirm("Delete this property? Data in this property will be lost.")) return;
+        const updated = table.columns.filter(c => c.id !== colId);
+        handleUpdateTable(updated);
+        setActiveColMenu(null);
+    };
+
+    const handleUpdateRowData = async (rowId: string, colName: string, value: any) => {
+        const rowData = rows.find(r => r.id === rowId);
+        if (!rowData || rowData.data[colName] === value) return; // No change
+
+        setSaving(true);
+        // Optimistic UI
+        setRows(rows.map(r => r.id === rowId ? { ...r, data: { ...r.data, [colName]: value } } : r));
+
+        try {
+            await api.put(`/tables/${params.id}/rows/${rowId}`, {
+                data: { ...rowData.data, [colName]: value }
+            });
+        } catch (err) {
+            console.error("Failed to update cell", err);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleCreateRow = async () => {
         setSaving(true);
         try {
-            const res = await api.post(`/tables/${params.id}/rows`, { data: newRowData });
+            const res = await api.post(`/tables/${params.id}/rows`, { data: {} });
             if (res.data.success) {
-                setRows([res.data.row, ...rows]);
-                setNewRowData({});
-                setIsAdding(false);
+                setRows([...rows, res.data.row]);
             }
         } catch (err) {
-            console.error(err);
+            console.error("Failed to add row", err);
         } finally {
             setSaving(false);
         }
     };
 
     const handleDeleteRow = async (rowId: string) => {
-        if (!confirm('Delete this row?')) return;
+        if (!confirm("Delete this page?")) return;
+        setRows(rows.filter(r => r.id !== rowId));
         try {
             await api.delete(`/tables/${params.id}/rows/${rowId}`);
-            setRows(rows.filter(r => r.id !== rowId));
         } catch (err) {
-            console.error(err);
+            console.error("Failed to delete row", err);
         }
     };
 
     if (loading) return (
-        <div className="flex justify-center items-center h-64 border border-border border-dashed rounded-2xl">
+        <div className="flex justify-center items-center h-screen">
             <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
         </div>
     );
 
     if (!table) return <div>Table not found</div>;
 
+    const getTypeIcon = (type: string) => {
+        switch (type) {
+            case 'text': return <Type className="w-4 h-4" />;
+            case 'number': return <Hash className="w-4 h-4" />;
+            case 'boolean': return <CheckSquare className="w-4 h-4" />;
+            case 'relation': return <LinkIcon className="w-4 h-4" />;
+            default: return <Type className="w-4 h-4" />;
+        }
+    };
+
     return (
-        <div className="max-w-7xl mx-auto space-y-8">
-            <div className="flex flex-col gap-4">
-                <Link href="/dashboard/ai/tables" className="flex items-center text-sm font-medium text-muted-foreground hover:text-foreground w-fit transition-colors">
-                    <ArrowLeft className="w-4 h-4 mr-1" />
-                    Back to Tables
+        <div className="min-h-screen bg-background text-foreground pb-20">
+            {/* Header Area */}
+            <div className="max-w-[1200px] mx-auto px-6 pt-12 pb-6">
+                <Link href="/dashboard/ai/tables" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors">
+                    <ArrowLeft className="w-4 h-4 mr-2" /> Back
                 </Link>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-foreground">{table.name}</h1>
-                        <p className="text-muted-foreground mt-1">Manage knowledge data records for this table</p>
+
+                <h1 className="text-4xl font-bold tracking-tight mb-4 flex items-center gap-3 group px-2 py-1 -ml-2 rounded-lg hover:bg-secondary/30 transition-colors w-fit border border-transparent hover:border-border">
+                    {table.name}
+                </h1>
+
+                {table.description && (
+                    <p className="text-muted-foreground mb-4 text-sm max-w-2xl px-2">{table.description}</p>
+                )}
+
+                <div className="flex items-center gap-4 text-sm font-medium">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary/60 text-secondary-foreground rounded-md border border-border">
+                        <Columns className="w-4 h-4" /> Table
                     </div>
-                    <button
-                        onClick={() => setIsAdding(true)}
-                        className="bg-primary text-primary-foreground px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all active:scale-[0.98]"
-                    >
-                        <Plus className="w-5 h-5" />
-                        Add Record
-                    </button>
                 </div>
             </div>
 
-            {isAdding && (
-                <div className="bg-card border border-border p-6 rounded-2xl shadow-sm">
-                    <h3 className="font-semibold text-lg mb-4">New Entry</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Notion-like Table container */}
+            <div className="max-w-[1200px] mx-auto px-6">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 opacity-0 text-sm"><Search className="w-4 h-4" /> Filter</div>
+                    <div className="flex items-center gap-2">
+                        <button className="text-muted-foreground hover:text-foreground p-1"><Settings2 className="w-4 h-4" /></button>
+                        <button onClick={handleCreateRow} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 hover:bg-primary/90 transition-colors">
+                            New <ChevronDown className="w-3 h-3 ml-1 opacity-70" />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="w-full border border-border rounded-lg overflow-x-auto bg-card shadow-sm">
+                    {/* Header Row */}
+                    <div className="flex w-fit min-w-full border-b border-border bg-secondary/20">
+                        {/* Status Column Dummy (drag handle) */}
+                        <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50"></div>
+
                         {table.columns.map(col => (
-                            <div key={col.id}>
-                                <label className="text-sm font-medium text-muted-foreground mb-1 block">{col.name}</label>
-                                {col.type === 'boolean' ? (
-                                    <div className="flex items-center gap-2 h-10 px-2 mt-1">
-                                        <input
-                                            type="checkbox"
-                                            checked={!!newRowData[col.name]}
-                                            onChange={e => setNewRowData({ ...newRowData, [col.name]: e.target.checked })}
-                                            className="w-5 h-5 accent-primary rounded border border-border"
-                                        />
-                                        <span className="text-sm">Yes</span>
-                                    </div>
-                                ) : (
-                                    <input
-                                        type={col.type === 'number' ? 'number' : 'text'}
-                                        placeholder={`Enter ${col.name.toLowerCase()}`}
-                                        value={newRowData[col.name] || ''}
-                                        onChange={e => setNewRowData({ ...newRowData, [col.name]: col.type === 'number' ? Number(e.target.value) : e.target.value })}
-                                        className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                                    />
-                                )}
+                            <div key={col.id} className="relative group border-r border-border/50 flex-shrink-0 min-w-[200px] hover:bg-secondary/50 transition-colors">
+                                <button
+                                    onClick={() => setActiveColMenu(activeColMenu === col.id ? null : col.id)}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground font-medium text-left outline-none"
+                                >
+                                    {getTypeIcon(col.type)}
+                                    <span className="truncate flex-1">{col.name || 'Untitled'}</span>
+                                </button>
+
+                                <AnimatePresence>
+                                    {activeColMenu === col.id && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                            className="absolute top-10 left-0 bg-popover border border-border shadow-md rounded-xl p-2 w-[280px] z-20"
+                                        >
+                                            <div className="mb-2">
+                                                <input
+                                                    type="text"
+                                                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
+                                                    value={col.name}
+                                                    onChange={e => handleUpdateColumn(col.id, { name: e.target.value })}
+                                                    placeholder="Property name"
+                                                />
+                                            </div>
+                                            <div className="border-t border-border/50 my-2"></div>
+                                            <div className="text-xs font-semibold text-muted-foreground px-2 py-1 uppercase tracking-wider">Type</div>
+                                            <select
+                                                className="w-full bg-transparent p-2 text-sm hover:bg-secondary/50 rounded-lg outline-none cursor-pointer mb-2"
+                                                value={col.type}
+                                                onChange={e => handleUpdateColumn(col.id, { type: e.target.value as any })}
+                                            >
+                                                <option value="text">Text (Paragraph)</option>
+                                                <option value="number">Number</option>
+                                                <option value="boolean">Checkbox</option>
+                                                <option value="relation">Relation</option>
+                                            </select>
+                                            <div className="border-t border-border/50 my-2"></div>
+                                            <button
+                                                onClick={() => handleDeleteColumn(col.id)}
+                                                className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 rounded-lg outline-none transition-colors"
+                                            >
+                                                <Trash2 className="w-4 h-4" /> Delete property
+                                            </button>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                             </div>
                         ))}
-                    </div>
-                    <div className="mt-6 flex items-center gap-3">
-                        <button
-                            onClick={handleSaveRow}
-                            disabled={saving}
-                            className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70"
-                        >
-                            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-4 h-4" />}
-                            Save Record
-                        </button>
-                        <button
-                            onClick={() => setIsAdding(false)}
-                            className="px-6 py-2.5 font-medium text-muted-foreground hover:bg-secondary rounded-xl transition-all"
-                        >
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            )}
 
-            <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-secondary/50 border-b border-border text-sm">
-                                {table.columns.map(col => (
-                                    <th key={col.id} className="px-6 py-4 font-semibold text-muted-foreground whitespace-nowrap">
-                                        {col.name} <span className="opacity-50 font-normal text-xs ml-1">({col.type})</span>
-                                    </th>
-                                ))}
-                                <th className="px-6 py-4 font-semibold text-muted-foreground text-right w-20">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows.length === 0 ? (
-                                <tr>
-                                    <td colSpan={table.columns.length + 1} className="px-6 py-12 text-center text-muted-foreground">
-                                        No records found. Click "Add Record" to start populating this table.
-                                    </td>
-                                </tr>
-                            ) : (
-                                rows.map(row => (
-                                    <tr key={row.id} className="border-b border-border/50 hover:bg-secondary/20 transition-colors last:border-0 group">
-                                        {table.columns.map(col => (
-                                            <td key={col.id} className="px-6 py-4 max-w-[200px] truncate text-sm">
-                                                {col.type === 'boolean' ? (
-                                                    row.data[col.name] ? 'Yes' : 'No'
-                                                ) : col.type === 'relation' ? (
-                                                    <span className="bg-secondary px-2 py-1 rounded text-xs border border-border break-all">{row.data[col.name]?.toString() || '-'}</span>
-                                                ) : (
-                                                    row.data[col.name]?.toString() || '-'
-                                                )}
-                                            </td>
-                                        ))}
-                                        <td className="px-6 py-4 text-right">
-                                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => handleDeleteRow(row.id)} className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+                        {/* Add Property Header */}
+                        <div className="relative border-r border-border/50 flex-shrink-0 min-w-[150px] flex-1 hover:bg-secondary/50 transition-colors">
+                            <button
+                                onClick={() => setNewColMenuOpen(!newColMenuOpen)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground outline-none"
+                            >
+                                <Plus className="w-4 h-4" /> Add property
+                            </button>
+
+                            <AnimatePresence>
+                                {newColMenuOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                        className="absolute top-10 left-0 bg-popover border border-border shadow-md rounded-xl p-2 w-[280px] z-20"
+                                    >
+                                        <div className="text-xs font-semibold text-muted-foreground px-2 py-1 uppercase tracking-wider mb-1">Select type</div>
+                                        <div className="max-h-64 overflow-y-auto space-y-0.5">
+                                            <button onClick={() => handleCreateColumn('text', 'Text')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><Type className="w-4 h-4 text-muted-foreground" /> Text</button>
+                                            <button onClick={() => handleCreateColumn('number', 'Number')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><Hash className="w-4 h-4 text-muted-foreground" /> Number</button>
+                                            <button onClick={() => handleCreateColumn('boolean', 'Checkbox')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><CheckSquare className="w-4 h-4 text-muted-foreground" /> Checkbox</button>
+                                            <button onClick={() => handleCreateColumn('relation', 'Relation')} className="w-full flex items-center gap-2 px-2 py-2 hover:bg-secondary rounded-lg text-sm transition-colors text-left"><LinkIcon className="w-4 h-4 text-muted-foreground" /> Relation</button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+                    </div>
+
+                    {/* Data Rows */}
+                    {rows.map((row) => (
+                        <div key={row.id} className="group flex w-fit min-w-full border-b border-border/50 hover:bg-secondary/10 transition-colors">
+                            {/* Drag Handle / Delete */}
+                            <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50 flex items-center justify-center">
+                                <button onClick={() => handleDeleteRow(row.id)} className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 text-destructive rounded-md transition-all">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+
+                            {table.columns.map(col => (
+                                <div key={col.id} className="border-r border-border/50 flex-shrink-0 min-w-[200px] flex relative">
+                                    {col.type === 'boolean' ? (
+                                        <div className="w-full px-3 py-2 flex items-center">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!row.data[col.name]}
+                                                onChange={(e) => handleUpdateRowData(row.id, col.name, e.target.checked)}
+                                                className="w-4 h-4 accent-primary cursor-pointer border border-border/50 rounded"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <input
+                                            type={col.type === 'number' ? 'number' : 'text'}
+                                            className="w-full bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/30 focus:bg-secondary/20 transition-colors"
+                                            placeholder="Empty"
+                                            value={row.data[col.name] || ''}
+                                            onChange={(e) => handleUpdateRowData(row.id, col.name, col.type === 'number' ? Number(e.target.value) : e.target.value)}
+                                        />
+                                    )}
+                                </div>
+                            ))}
+
+                            <div className="border-r border-border/50 flex-shrink-0 min-w-[150px] flex-1"></div>
+                        </div>
+                    ))}
+
+                    {/* New Page button */}
+                    <div className="flex w-fit min-w-full hover:bg-secondary/10 transition-colors cursor-text" onClick={handleCreateRow}>
+                        <div className="w-10 min-w-[40px] flex-shrink-0 border-r border-border/50"></div>
+                        <div className="px-3 py-2 text-sm text-muted-foreground flex items-center gap-2 hover:text-foreground">
+                            <Plus className="w-4 h-4" /> New
+                        </div>
+                    </div>
                 </div>
+
+                {saving && (
+                    <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1.5">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Saving...
+                    </div>
+                )}
             </div>
+
+            {/* Click outside to close menus hack */}
+            {(activeColMenu || newColMenuOpen) && (
+                <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => { setActiveColMenu(null); setNewColMenuOpen(false); }}
+                />
+            )}
         </div>
     );
 }
+

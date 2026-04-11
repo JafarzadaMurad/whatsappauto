@@ -11,6 +11,7 @@ import apikeyRoutes from './modules/apikey/apikey.routes';
 import aiProviderRoutes from './modules/aiprovider/aiprovider.routes';
 import customTableRoutes from './modules/customtable/customtable.routes';
 import clientRoutes from './modules/client/client.routes';
+import agentRoutes from './modules/agent/agent.routes';
 
 const app: Express = express();
 
@@ -43,6 +44,7 @@ app.use('/api/keys', apikeyRoutes);
 app.use('/api/ai-providers', aiProviderRoutes);
 app.use('/api/tables', customTableRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/api/agents', agentRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

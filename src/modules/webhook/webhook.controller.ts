@@ -5,13 +5,17 @@ import { z } from 'zod';
 const createWebhookSchema = z.object({
     url: z.string().url(),
     events: z.array(z.string()).default([]), // Empty array means all events
-    isActive: z.boolean().default(true)
+    isActive: z.boolean().default(true),
+    instanceId: z.string().uuid().optional().nullable()
 });
 
 export class WebhookController {
     async listWebhooks(req: Request, res: Response) {
         const userId = (req as any).user.id;
-        const webhooks = await prisma.webhookConfig.findMany({ where: { userId } });
+        const webhooks = await prisma.webhookConfig.findMany({
+            where: { userId },
+            include: { instance: { select: { name: true } } }
+        });
         return res.status(200).json({ success: true, webhooks });
     }
 
@@ -25,7 +29,8 @@ export class WebhookController {
                     userId,
                     url: data.url,
                     events: data.events,
-                    isActive: data.isActive
+                    isActive: data.isActive,
+                    instanceId: data.instanceId || null
                 }
             });
             return res.status(201).json({ success: true, webhook });

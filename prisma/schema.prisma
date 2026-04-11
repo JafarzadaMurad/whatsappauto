@@ -34,6 +34,7 @@ model Instance {
 
   messages     Message[]
   contacts     Contact[]
+  webhooks     WebhookConfig[]
 }
 
 model ApiKey {
@@ -48,16 +49,19 @@ model ApiKey {
 }
 
 model WebhookConfig {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  url       String
-  events    String[] // e.g. ["message.new", "message.sent"]
-  isActive  Boolean  @default(true)
+  instanceId  String?   // Optional: if null applies to all, otherwise specific to instance
+  instance    Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  url         String
+  events      String[]  // e.g. ["message.new", "message.sent"]
+  isActive    Boolean   @default(true)
   
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 model Message {

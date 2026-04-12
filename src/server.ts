@@ -4,6 +4,7 @@ import app from './app';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { startWebhookWorker } from './modules/webhook/webhook.dispatcher';
+import { startCampaignWorker } from './modules/campaign/campaign.queue';
 
 import { InstanceManager } from './modules/whatsapp/instance.manager';
 
@@ -11,6 +12,7 @@ const server = http.createServer(app);
 
 // Initialize Webhook Worker
 startWebhookWorker();
+startCampaignWorker();
 
 // Initialize Socket.IO
 export const io = new Server(server, {

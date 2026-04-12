@@ -1,0 +1,1731 @@
+murad@srv810230:/opt/whatsappauto$ sudo fuser -k 2992/tcp 2>/dev/null; sleep 2; sudo npx tsx src/server.ts
+◇ injected env (6) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2026-04-12 12:50:46.752 +0000] INFO (2617228): Webhook worker started
+[2026-04-12 12:50:46.758 +0000] INFO (2617228): 🚀 Server running on port 2992 in production mode
+[2026-04-12 12:50:46.889 +0000] INFO (2617228): Recovering 1 active instances...
+[2026-04-12 12:50:46.902 +0000] INFO (2617228): Starting WhatsApp instance: 70ced19c-286d-44da-9d7f-997dd325df52
+[2026-04-12 12:50:46.969 +0000] INFO (2617228): connected to WA
+    module: "baileys"
+    browser: [
+      "WazzupAuto",
+      "Chrome",
+      "1.0.0"
+    ]
+    helloMsg: {
+      "clientHello": {
+        "ephemeral": "PAZWmWmgvf6kg0aw29j3csQwX963YPWhFyHMJl96lA0="
+      }
+    }
+[2026-04-12 12:50:46.997 +0000] INFO (2617228): logging in...
+    module: "baileys"
+    node: {
+      "username": "994773102993",
+      "passive": true,
+      "userAgent": {
+        "platform": "WEB",
+        "appVersion": {
+          "primary": 2,
+          "secondary": 3000,
+          "tertiary": 1035194821
+        },
+        "mcc": "000",
+        "mnc": "000",
+        "osVersion": "0.1",
+        "device": "Desktop",
+        "osBuildNumber": "0.1",
+        "releaseChannel": "RELEASE",
+        "localeLanguageIso6391": "en",
+        "localeCountryIso31661Alpha2": "US"
+      },
+      "webInfo": {
+        "webSubPlatform": "WEB_BROWSER"
+      },
+      "connectType": "WIFI_UNKNOWN",
+      "connectReason": "USER_ACTIVATED",
+      "device": 87,
+      "pull": true,
+      "lidDbMigrated": false
+    }
+[2026-04-12 12:50:47.057 +0000] INFO (2617228): Socket connected: EWPY8K6FqTo52a6hAAAC
+[2026-04-12 12:50:47.060 +0000] INFO (2617228): Socket connected: J8VtlcsY7ossMVKEAAAD
+[2026-04-12 12:50:47.504 +0000] INFO (2617228): 748 pre-keys found on server
+    module: "baileys"
+[2026-04-12 12:50:47.505 +0000] INFO (2617228): Current prekey ID: 812, exists in storage: true
+    module: "baileys"
+[2026-04-12 12:50:47.505 +0000] INFO (2617228): PreKey validation passed - Server: 748, Current prekey 812 exists
+    module: "baileys"
+[2026-04-12 12:50:47.649 +0000] INFO (2617228): handled 0 offline messages/notifications
+    module: "baileys"
+[2026-04-12 12:50:47.649 +0000] INFO (2617228): Connection is now AwaitingInitialSync, buffering events
+    module: "baileys"
+[2026-04-12 12:50:47.649 +0000] INFO (2617228): History sync is enabled, awaiting notification with a 20s timeout.
+    module: "baileys"
+[2026-04-12 12:50:47.690 +0000] INFO (2617228): opened connection to WA
+    module: "baileys"
+[2026-04-12 12:50:47.694 +0000] INFO (2617228): Connected instance: 70ced19c-286d-44da-9d7f-997dd325df52
+[2026-04-12 12:50:47.707 +0000] ERROR (2617228): unexpected error in 'init queries'
+    module: "baileys"
+    err: {
+      "type": "Error",
+      "message": "bad-request",
+      "stack":
+          Error: bad-request
+              at assertNodeErrorFree (/opt/whatsappauto/node_modules/@whiskeysockets/baileys/lib/WABinary/generic-utils.js:46:15)
+              at query (/opt/whatsappauto/node_modules/@whiskeysockets/baileys/lib/Socket/socket.js:127:13)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async fetchProps (/opt/whatsappauto/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js:640:28)
+              at async Promise.all (index 0)
+              at async executeInitQueries (/opt/whatsappauto/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js:787:9)
+      "data": 400,
+      "isBoom": true,
+      "isServer": true,
+      "output": {
+        "statusCode": 500,
+        "payload": {
+          "statusCode": 500,
+          "error": "Internal Server Error",
+          "message": "An internal server error occurred"
+        },
+        "headers": {}
+      }
+    }
+[2026-04-12 12:50:47.714 +0000] INFO (2617228): Own LID session created successfully
+    module: "baileys"
+    myPN: "994773102993:87@s.whatsapp.net"
+    myLID: "231610725195937:87@lid"
+[2026-04-12 12:50:47.798 +0000] INFO (2617228): Socket disconnected: EWPY8K6FqTo52a6hAAAC
+[2026-04-12 12:50:47.886 +0000] INFO (2617228): Socket connected: Sjuvxd77VwFbrarPAAAF
+[2026-04-12 12:50:56.406 +0000] INFO (2617228): [70ced19c-286d-44da-9d7f-997dd325df52] messages.upsert debug
+    remoteJid: "208799969366084@lid"
+    fromMe: false
+    hasMessage: true
+    isStatus: false
+    isGroup: false
+    messageType: "extendedTextMessage,messageContextInfo"
+[2026-04-12 12:50:56.406 +0000] INFO (2617228): [70ced19c-286d-44da-9d7f-997dd325df52] New message from 208799969366084@lid
+[2026-04-12 12:50:56.428 +0000] INFO (2617228): Processing webhook job 82 for event message.new
+[2026-04-12 12:50:56.473 +0000] INFO (2617228): Found 1 webhooks for instance 70ced19c-286d-44da-9d7f-997dd325df52
+[2026-04-12 12:50:56.553 +0000] ERROR (2617228): Webhook delivery failed: https://a.tur.al/webhook-test/whatsapp - Request failed with status code 404
+[2026-04-12 12:50:56.559 +0000] ERROR (2617228): Job 82 failed
+    err: {
+      "code": "ERR_BAD_REQUEST",
+      "config": {
+        "adapter": [
+          "xhr",
+          "http",
+          "fetch"
+        ],
+        "allowAbsoluteUrls": true,
+        "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:50:56.473Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+        "env": {},
+        "headers": {
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Encoding": "gzip, compress, deflate, br",
+          "Content-Length": "861",
+          "Content-Type": "application/json",
+          "User-Agent": "axios/1.15.0"
+        },
+        "maxBodyLength": -1,
+        "maxContentLength": -1,
+        "method": "post",
+        "timeout": 5000,
+        "transformRequest": [
+          null
+        ],
+        "transformResponse": [
+          null
+        ],
+        "transitional": {
+          "clarifyTimeoutError": false,
+          "forcedJSONParsing": true,
+          "legacyInterceptorReqResOrdering": true,
+          "silentJSONParsing": true
+        },
+        "url": "https://a.tur.al/webhook-test/whatsapp",
+        "xsrfCookieName": "XSRF-TOKEN",
+        "xsrfHeaderName": "X-XSRF-TOKEN"
+      },
+      "isAxiosError": true,
+      "message": "Request failed with status code 404",
+      "name": "AxiosError",
+      "request": {
+        "_closed": true,
+        "_contentLength": 861,
+        "_defaultKeepAlive": true,
+        "_ended": true,
+        "_events": {},
+        "_eventsCount": 7,
+        "_hasBody": true,
+        "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+        "_headerSent": true,
+        "_keepAliveTimeout": 0,
+        "_last": false,
+        "_redirectable": {
+          "_currentRequest": "[Circular]",
+          "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "_ended": true,
+          "_ending": true,
+          "_events": {
+            "socket": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 3,
+          "_options": {
+            "agents": {},
+            "beforeRedirects": {},
+            "headers": {
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Encoding": "gzip, compress, deflate, br",
+              "Content-Length": "861",
+              "Content-Type": "application/json",
+              "User-Agent": "axios/1.15.0"
+            },
+            "hostname": "a.tur.al",
+            "maxBodyLength": null,
+            "maxRedirects": 21,
+            "method": "POST",
+            "nativeProtocols": {
+              "http:": "[Object]",
+              "https:": "[Object]"
+            },
+            "path": "/webhook-test/whatsapp",
+            "pathname": "/webhook-test/whatsapp",
+            "port": "",
+            "protocol": "https:"
+          },
+          "_redirectCount": 0,
+          "_redirects": [],
+          "_requestBodyBuffers": [],
+          "_requestBodyLength": 861,
+          "_timeout": null,
+          "_writableState": {
+            "bufferedIndex": 0,
+            "corked": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pendingcb": 0,
+            "writelen": 0
+          }
+        },
+        "_removedConnection": false,
+        "_removedContLen": false,
+        "_removedTE": false,
+        "_trailer": "",
+        "aborted": false,
+        "agent": {
+          "_events": {},
+          "_eventsCount": 2,
+          "_sessionCache": {
+            "list": [
+              "a.tur.al:443:::::::::::::::::::::"
+            ],
+            "map": {
+              "a.tur.al:443:::::::::::::::::::::": "[Object]"
+            }
+          },
+          "agentKeepAliveTimeoutBuffer": 1000,
+          "defaultPort": 443,
+          "freeSockets": {
+            "a.tur.al:443:::::::::::::::::::::": [
+              "[Object]"
+            ]
+          },
+          "keepAlive": true,
+          "keepAliveMsecs": 1000,
+          "maxCachedSessions": 100,
+          "maxFreeSockets": 256,
+          "maxSockets": null,
+          "maxTotalSockets": null,
+          "options": {
+            "defaultPort": 443,
+            "keepAlive": true,
+            "noDelay": true,
+            "path": null,
+            "protocol": "https:",
+            "scheduling": "lifo",
+            "timeout": 5000
+          },
+          "protocol": "https:",
+          "requests": {},
+          "scheduling": "lifo",
+          "sockets": {},
+          "totalSocketCount": 1
+        },
+        "chunkedEncoding": false,
+        "destroyed": true,
+        "finished": true,
+        "host": "a.tur.al",
+        "maxHeadersCount": null,
+        "maxRequestsOnConnectionReached": false,
+        "method": "POST",
+        "outputData": [],
+        "outputSize": 0,
+        "parser": null,
+        "path": "/webhook-test/whatsapp",
+        "protocol": "https:",
+        "res": {
+          "_consuming": false,
+          "_dumped": false,
+          "_events": {
+            "end": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 4,
+          "_readableState": {
+            "awaitDrainWriters": null,
+            "buffer": [],
+            "bufferIndex": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pipes": []
+          },
+          "aborted": false,
+          "client": {
+            "_SNICallback": null,
+            "_closeAfterHandlingError": false,
+            "_controlReleased": true,
+            "_events": {
+              "close": "[Array]",
+              "timeout": "[Array]"
+            },
+            "_eventsCount": 9,
+            "_hadError": false,
+            "_host": "a.tur.al",
+            "_httpMessage": null,
+            "_newSessionPending": false,
+            "_parent": null,
+            "_pendingData": null,
+            "_pendingEncoding": "",
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "_rejectUnauthorized": true,
+            "_requestCert": true,
+            "_secureEstablished": true,
+            "_securePending": false,
+            "_server": null,
+            "_sockname": null,
+            "_tlsOptions": {
+              "isServer": false,
+              "pipe": false,
+              "rejectUnauthorized": true,
+              "requestCert": true,
+              "secureContext": "[Object]"
+            },
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            },
+            "allowHalfOpen": false,
+            "alpnProtocol": false,
+            "authorizationError": null,
+            "authorized": true,
+            "connecting": false,
+            "encrypted": true,
+            "parser": null,
+            "secureConnecting": false,
+            "servername": "a.tur.al",
+            "ssl": {
+              "_parent": "[Object]",
+              "_parentWrap": null,
+              "_secureContext": "[Object]",
+              "reading": true
+            },
+            "timeout": 5000
+          },
+          "complete": true,
+          "httpVersion": "1.1",
+          "httpVersionMajor": 1,
+          "httpVersionMinor": 1,
+          "method": null,
+          "rawHeaders": [
+            "Alt-Svc",
+            "h3=\":443\"; ma=2592000",
+            "Content-Length",
+            "720",
+            "Content-Type",
+            "application/json; charset=utf-8",
+            "Date",
+            "Sun, 12 Apr 2026 12:50:56 GMT",
+            "Etag",
+            "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+            "Vary",
+            "Accept-Encoding",
+            "Via",
+            "1.1 Caddy"
+          ],
+          "rawTrailers": [],
+          "redirects": [],
+          "req": "[Circular]",
+          "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "socket": null,
+          "statusCode": 404,
+          "statusMessage": "Not Found",
+          "upgrade": false,
+          "url": ""
+        },
+        "reusedSocket": false,
+        "sendDate": false,
+        "shouldKeepAlive": true,
+        "strictContentLength": false,
+        "timeoutCb": null,
+        "upgradeOrConnect": false,
+        "useChunkedEncodingByDefault": true,
+        "writable": true
+      },
+      "response": {
+        "config": {
+          "adapter": [
+            "xhr",
+            "http",
+            "fetch"
+          ],
+          "allowAbsoluteUrls": true,
+          "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:50:56.473Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+          "env": {},
+          "headers": {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, compress, deflate, br",
+            "Content-Length": "861",
+            "Content-Type": "application/json",
+            "User-Agent": "axios/1.15.0"
+          },
+          "maxBodyLength": -1,
+          "maxContentLength": -1,
+          "method": "post",
+          "timeout": 5000,
+          "transformRequest": [
+            null
+          ],
+          "transformResponse": [
+            null
+          ],
+          "transitional": {
+            "clarifyTimeoutError": false,
+            "forcedJSONParsing": true,
+            "legacyInterceptorReqResOrdering": true,
+            "silentJSONParsing": true
+          },
+          "url": "https://a.tur.al/webhook-test/whatsapp",
+          "xsrfCookieName": "XSRF-TOKEN",
+          "xsrfHeaderName": "X-XSRF-TOKEN"
+        },
+        "data": {
+          "code": 404,
+          "hint": "Click the 'Execute workflow' button on the canvas, then try again. (In test mode, the webhook only works for one call after you click this button)",
+          "message": "The requested webhook \"whatsapp\" is not registered.",
+          "stacktrace": "ResponseError: The requested webhook \"whatsapp\" is not registered.\n    at TestWebhooks.getWebhookMethods (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:232:37)\n    at TestWebhooks.executeWebhook (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:83:22)\n    at WebhookRequestHandler.handleRequest (/usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:66:21)\n    at /usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:257:3"
+        },
+        "headers": {
+          "alt-svc": "h3=\":443\"; ma=2592000",
+          "content-length": "720",
+          "content-type": "application/json; charset=utf-8",
+          "date": "Sun, 12 Apr 2026 12:50:56 GMT",
+          "etag": "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+          "vary": "Accept-Encoding",
+          "via": "1.1 Caddy"
+        },
+        "request": {
+          "_closed": true,
+          "_contentLength": 861,
+          "_defaultKeepAlive": true,
+          "_ended": true,
+          "_events": {},
+          "_eventsCount": 7,
+          "_hasBody": true,
+          "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+          "_headerSent": true,
+          "_keepAliveTimeout": 0,
+          "_last": false,
+          "_redirectable": {
+            "_currentRequest": "[Circular]",
+            "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "_ended": true,
+            "_ending": true,
+            "_events": {
+              "socket": "[Array]"
+            },
+            "_eventsCount": 3,
+            "_options": {
+              "agents": "[Object]",
+              "beforeRedirects": "[Object]",
+              "headers": "[Object]",
+              "hostname": "a.tur.al",
+              "maxBodyLength": null,
+              "maxRedirects": 21,
+              "method": "POST",
+              "nativeProtocols": "[Object]",
+              "path": "/webhook-test/whatsapp",
+              "pathname": "/webhook-test/whatsapp",
+              "port": "",
+              "protocol": "https:"
+            },
+            "_redirectCount": 0,
+            "_redirects": [],
+            "_requestBodyBuffers": [],
+            "_requestBodyLength": 861,
+            "_timeout": null,
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            }
+          },
+          "_removedConnection": false,
+          "_removedContLen": false,
+          "_removedTE": false,
+          "_trailer": "",
+          "aborted": false,
+          "agent": {
+            "_events": {},
+            "_eventsCount": 2,
+            "_sessionCache": {
+              "list": "[Array]",
+              "map": "[Object]"
+            },
+            "agentKeepAliveTimeoutBuffer": 1000,
+            "defaultPort": 443,
+            "freeSockets": {
+              "a.tur.al:443:::::::::::::::::::::": "[Array]"
+            },
+            "keepAlive": true,
+            "keepAliveMsecs": 1000,
+            "maxCachedSessions": 100,
+            "maxFreeSockets": 256,
+            "maxSockets": null,
+            "maxTotalSockets": null,
+            "options": {
+              "defaultPort": 443,
+              "keepAlive": true,
+              "noDelay": true,
+              "path": null,
+              "protocol": "https:",
+              "scheduling": "lifo",
+              "timeout": 5000
+            },
+            "protocol": "https:",
+            "requests": {},
+            "scheduling": "lifo",
+            "sockets": {},
+            "totalSocketCount": 1
+          },
+          "chunkedEncoding": false,
+          "destroyed": true,
+          "finished": true,
+          "host": "a.tur.al",
+          "maxHeadersCount": null,
+          "maxRequestsOnConnectionReached": false,
+          "method": "POST",
+          "outputData": [],
+          "outputSize": 0,
+          "parser": null,
+          "path": "/webhook-test/whatsapp",
+          "protocol": "https:",
+          "res": {
+            "_consuming": false,
+            "_dumped": false,
+            "_events": {
+              "end": "[Array]"
+            },
+            "_eventsCount": 4,
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "aborted": false,
+            "client": {
+              "_SNICallback": null,
+              "_closeAfterHandlingError": false,
+              "_controlReleased": true,
+              "_events": "[Object]",
+              "_eventsCount": 9,
+              "_hadError": false,
+              "_host": "a.tur.al",
+              "_httpMessage": null,
+              "_newSessionPending": false,
+              "_parent": null,
+              "_pendingData": null,
+              "_pendingEncoding": "",
+              "_readableState": "[Object]",
+              "_rejectUnauthorized": true,
+              "_requestCert": true,
+              "_secureEstablished": true,
+              "_securePending": false,
+              "_server": null,
+              "_sockname": null,
+              "_tlsOptions": "[Object]",
+              "_writableState": "[Object]",
+              "allowHalfOpen": false,
+              "alpnProtocol": false,
+              "authorizationError": null,
+              "authorized": true,
+              "connecting": false,
+              "encrypted": true,
+              "parser": null,
+              "secureConnecting": false,
+              "servername": "a.tur.al",
+              "ssl": "[Object]",
+              "timeout": 5000
+            },
+            "complete": true,
+            "httpVersion": "1.1",
+            "httpVersionMajor": 1,
+            "httpVersionMinor": 1,
+            "method": null,
+            "rawHeaders": [
+              "Alt-Svc",
+              "h3=\":443\"; ma=2592000",
+              "Content-Length",
+              "720",
+              "Content-Type",
+              "application/json; charset=utf-8",
+              "Date",
+              "Sun, 12 Apr 2026 12:50:56 GMT",
+              "Etag",
+              "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+              "Vary",
+              "Accept-Encoding",
+              "Via",
+              "1.1 Caddy"
+            ],
+            "rawTrailers": [],
+            "redirects": [],
+            "req": "[Circular]",
+            "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "socket": null,
+            "statusCode": 404,
+            "statusMessage": "Not Found",
+            "upgrade": false,
+            "url": ""
+          },
+          "reusedSocket": false,
+          "sendDate": false,
+          "shouldKeepAlive": true,
+          "strictContentLength": false,
+          "timeoutCb": null,
+          "upgradeOrConnect": false,
+          "useChunkedEncodingByDefault": true,
+          "writable": true
+        },
+        "status": 404,
+        "statusText": "Not Found"
+      },
+      "stack":
+          AxiosError: Request failed with status code 404
+              at settle (/opt/whatsappauto/node_modules/axios/lib/core/settle.js:20:7)
+              at IncomingMessage.handleStreamEnd (/opt/whatsappauto/node_modules/axios/lib/adapters/http.js:849:13)
+              at IncomingMessage.emit (node:events:531:35)
+              at endReadableNT (node:internal/streams/readable:1698:12)
+              at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+              at Axios.request (/opt/whatsappauto/node_modules/axios/lib/core/Axios.js:46:41)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async Worker.import_bullmq.Worker.connection.connection (/opt/whatsappauto/src/modules/webhook/webhook.dispatcher.ts:38:21)
+              at async <anonymous> (/opt/whatsappauto/node_modules/bullmq/src/classes/worker.ts:999:26)
+      "status": 404,
+      "type": "AxiosError"
+    }
+[2026-04-12 12:50:57.725 +0000] INFO (2617228): [70ced19c-286d-44da-9d7f-997dd325df52] AI replied to 208799969366084@lid
+[2026-04-12 12:50:58.646 +0000] INFO (2617228): Processing webhook job 82 for event message.new
+[2026-04-12 12:50:58.650 +0000] INFO (2617228): Found 1 webhooks for instance 70ced19c-286d-44da-9d7f-997dd325df52
+[2026-04-12 12:50:58.656 +0000] ERROR (2617228): Webhook delivery failed: https://a.tur.al/webhook-test/whatsapp - Request failed with status code 404
+[2026-04-12 12:50:58.657 +0000] ERROR (2617228): Job 82 failed
+    err: {
+      "code": "ERR_BAD_REQUEST",
+      "config": {
+        "adapter": [
+          "xhr",
+          "http",
+          "fetch"
+        ],
+        "allowAbsoluteUrls": true,
+        "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:50:58.650Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+        "env": {},
+        "headers": {
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Encoding": "gzip, compress, deflate, br",
+          "Content-Length": "861",
+          "Content-Type": "application/json",
+          "User-Agent": "axios/1.15.0"
+        },
+        "maxBodyLength": -1,
+        "maxContentLength": -1,
+        "method": "post",
+        "timeout": 5000,
+        "transformRequest": [
+          null
+        ],
+        "transformResponse": [
+          null
+        ],
+        "transitional": {
+          "clarifyTimeoutError": false,
+          "forcedJSONParsing": true,
+          "legacyInterceptorReqResOrdering": true,
+          "silentJSONParsing": true
+        },
+        "url": "https://a.tur.al/webhook-test/whatsapp",
+        "xsrfCookieName": "XSRF-TOKEN",
+        "xsrfHeaderName": "X-XSRF-TOKEN"
+      },
+      "isAxiosError": true,
+      "message": "Request failed with status code 404",
+      "name": "AxiosError",
+      "request": {
+        "_closed": true,
+        "_contentLength": 861,
+        "_defaultKeepAlive": true,
+        "_ended": true,
+        "_events": {},
+        "_eventsCount": 7,
+        "_hasBody": true,
+        "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+        "_headerSent": true,
+        "_keepAliveTimeout": 0,
+        "_last": false,
+        "_redirectable": {
+          "_currentRequest": "[Circular]",
+          "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "_ended": true,
+          "_ending": true,
+          "_events": {
+            "socket": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 3,
+          "_options": {
+            "agents": {},
+            "beforeRedirects": {},
+            "headers": {
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Encoding": "gzip, compress, deflate, br",
+              "Content-Length": "861",
+              "Content-Type": "application/json",
+              "User-Agent": "axios/1.15.0"
+            },
+            "hostname": "a.tur.al",
+            "maxBodyLength": null,
+            "maxRedirects": 21,
+            "method": "POST",
+            "nativeProtocols": {
+              "http:": "[Object]",
+              "https:": "[Object]"
+            },
+            "path": "/webhook-test/whatsapp",
+            "pathname": "/webhook-test/whatsapp",
+            "port": "",
+            "protocol": "https:"
+          },
+          "_redirectCount": 0,
+          "_redirects": [],
+          "_requestBodyBuffers": [],
+          "_requestBodyLength": 861,
+          "_timeout": null,
+          "_writableState": {
+            "bufferedIndex": 0,
+            "corked": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pendingcb": 0,
+            "writelen": 0
+          }
+        },
+        "_removedConnection": false,
+        "_removedContLen": false,
+        "_removedTE": false,
+        "_trailer": "",
+        "aborted": false,
+        "agent": {
+          "_events": {},
+          "_eventsCount": 2,
+          "_sessionCache": {
+            "list": [
+              "a.tur.al:443:::::::::::::::::::::"
+            ],
+            "map": {
+              "a.tur.al:443:::::::::::::::::::::": "[Object]"
+            }
+          },
+          "agentKeepAliveTimeoutBuffer": 1000,
+          "defaultPort": 443,
+          "freeSockets": {
+            "a.tur.al:443:::::::::::::::::::::": [
+              "[Object]"
+            ]
+          },
+          "keepAlive": true,
+          "keepAliveMsecs": 1000,
+          "maxCachedSessions": 100,
+          "maxFreeSockets": 256,
+          "maxSockets": null,
+          "maxTotalSockets": null,
+          "options": {
+            "defaultPort": 443,
+            "keepAlive": true,
+            "noDelay": true,
+            "path": null,
+            "protocol": "https:",
+            "scheduling": "lifo",
+            "timeout": 5000
+          },
+          "protocol": "https:",
+          "requests": {},
+          "scheduling": "lifo",
+          "sockets": {},
+          "totalSocketCount": 1
+        },
+        "chunkedEncoding": false,
+        "destroyed": true,
+        "finished": true,
+        "host": "a.tur.al",
+        "maxHeadersCount": null,
+        "maxRequestsOnConnectionReached": false,
+        "method": "POST",
+        "outputData": [],
+        "outputSize": 0,
+        "parser": null,
+        "path": "/webhook-test/whatsapp",
+        "protocol": "https:",
+        "res": {
+          "_consuming": false,
+          "_dumped": false,
+          "_events": {
+            "end": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 4,
+          "_readableState": {
+            "awaitDrainWriters": null,
+            "buffer": [],
+            "bufferIndex": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pipes": []
+          },
+          "aborted": false,
+          "client": {
+            "_SNICallback": null,
+            "_closeAfterHandlingError": false,
+            "_controlReleased": true,
+            "_events": {
+              "close": "[Array]",
+              "timeout": "[Array]"
+            },
+            "_eventsCount": 9,
+            "_hadError": false,
+            "_host": "a.tur.al",
+            "_httpMessage": null,
+            "_newSessionPending": false,
+            "_parent": null,
+            "_pendingData": null,
+            "_pendingEncoding": "",
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "_rejectUnauthorized": true,
+            "_requestCert": true,
+            "_secureEstablished": true,
+            "_securePending": false,
+            "_server": null,
+            "_sockname": null,
+            "_tlsOptions": {
+              "isServer": false,
+              "pipe": false,
+              "rejectUnauthorized": true,
+              "requestCert": true,
+              "secureContext": "[Object]"
+            },
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            },
+            "allowHalfOpen": false,
+            "alpnProtocol": false,
+            "authorizationError": null,
+            "authorized": true,
+            "connecting": false,
+            "encrypted": true,
+            "parser": null,
+            "secureConnecting": false,
+            "servername": "a.tur.al",
+            "ssl": {
+              "_parent": "[Object]",
+              "_parentWrap": null,
+              "_secureContext": "[Object]",
+              "reading": true
+            },
+            "timeout": 5000
+          },
+          "complete": true,
+          "httpVersion": "1.1",
+          "httpVersionMajor": 1,
+          "httpVersionMinor": 1,
+          "method": null,
+          "rawHeaders": [
+            "Alt-Svc",
+            "h3=\":443\"; ma=2592000",
+            "Content-Length",
+            "720",
+            "Content-Type",
+            "application/json; charset=utf-8",
+            "Date",
+            "Sun, 12 Apr 2026 12:50:58 GMT",
+            "Etag",
+            "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+            "Vary",
+            "Accept-Encoding",
+            "Via",
+            "1.1 Caddy"
+          ],
+          "rawTrailers": [],
+          "redirects": [],
+          "req": "[Circular]",
+          "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "socket": null,
+          "statusCode": 404,
+          "statusMessage": "Not Found",
+          "upgrade": false,
+          "url": ""
+        },
+        "reusedSocket": true,
+        "sendDate": false,
+        "shouldKeepAlive": true,
+        "strictContentLength": false,
+        "timeoutCb": null,
+        "upgradeOrConnect": false,
+        "useChunkedEncodingByDefault": true,
+        "writable": true
+      },
+      "response": {
+        "config": {
+          "adapter": [
+            "xhr",
+            "http",
+            "fetch"
+          ],
+          "allowAbsoluteUrls": true,
+          "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:50:58.650Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+          "env": {},
+          "headers": {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, compress, deflate, br",
+            "Content-Length": "861",
+            "Content-Type": "application/json",
+            "User-Agent": "axios/1.15.0"
+          },
+          "maxBodyLength": -1,
+          "maxContentLength": -1,
+          "method": "post",
+          "timeout": 5000,
+          "transformRequest": [
+            null
+          ],
+          "transformResponse": [
+            null
+          ],
+          "transitional": {
+            "clarifyTimeoutError": false,
+            "forcedJSONParsing": true,
+            "legacyInterceptorReqResOrdering": true,
+            "silentJSONParsing": true
+          },
+          "url": "https://a.tur.al/webhook-test/whatsapp",
+          "xsrfCookieName": "XSRF-TOKEN",
+          "xsrfHeaderName": "X-XSRF-TOKEN"
+        },
+        "data": {
+          "code": 404,
+          "hint": "Click the 'Execute workflow' button on the canvas, then try again. (In test mode, the webhook only works for one call after you click this button)",
+          "message": "The requested webhook \"whatsapp\" is not registered.",
+          "stacktrace": "ResponseError: The requested webhook \"whatsapp\" is not registered.\n    at TestWebhooks.getWebhookMethods (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:232:37)\n    at TestWebhooks.executeWebhook (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:83:22)\n    at WebhookRequestHandler.handleRequest (/usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:66:21)\n    at /usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:257:3"
+        },
+        "headers": {
+          "alt-svc": "h3=\":443\"; ma=2592000",
+          "content-length": "720",
+          "content-type": "application/json; charset=utf-8",
+          "date": "Sun, 12 Apr 2026 12:50:58 GMT",
+          "etag": "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+          "vary": "Accept-Encoding",
+          "via": "1.1 Caddy"
+        },
+        "request": {
+          "_closed": true,
+          "_contentLength": 861,
+          "_defaultKeepAlive": true,
+          "_ended": true,
+          "_events": {},
+          "_eventsCount": 7,
+          "_hasBody": true,
+          "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+          "_headerSent": true,
+          "_keepAliveTimeout": 0,
+          "_last": false,
+          "_redirectable": {
+            "_currentRequest": "[Circular]",
+            "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "_ended": true,
+            "_ending": true,
+            "_events": {
+              "socket": "[Array]"
+            },
+            "_eventsCount": 3,
+            "_options": {
+              "agents": "[Object]",
+              "beforeRedirects": "[Object]",
+              "headers": "[Object]",
+              "hostname": "a.tur.al",
+              "maxBodyLength": null,
+              "maxRedirects": 21,
+              "method": "POST",
+              "nativeProtocols": "[Object]",
+              "path": "/webhook-test/whatsapp",
+              "pathname": "/webhook-test/whatsapp",
+              "port": "",
+              "protocol": "https:"
+            },
+            "_redirectCount": 0,
+            "_redirects": [],
+            "_requestBodyBuffers": [],
+            "_requestBodyLength": 861,
+            "_timeout": null,
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            }
+          },
+          "_removedConnection": false,
+          "_removedContLen": false,
+          "_removedTE": false,
+          "_trailer": "",
+          "aborted": false,
+          "agent": {
+            "_events": {},
+            "_eventsCount": 2,
+            "_sessionCache": {
+              "list": "[Array]",
+              "map": "[Object]"
+            },
+            "agentKeepAliveTimeoutBuffer": 1000,
+            "defaultPort": 443,
+            "freeSockets": {
+              "a.tur.al:443:::::::::::::::::::::": "[Array]"
+            },
+            "keepAlive": true,
+            "keepAliveMsecs": 1000,
+            "maxCachedSessions": 100,
+            "maxFreeSockets": 256,
+            "maxSockets": null,
+            "maxTotalSockets": null,
+            "options": {
+              "defaultPort": 443,
+              "keepAlive": true,
+              "noDelay": true,
+              "path": null,
+              "protocol": "https:",
+              "scheduling": "lifo",
+              "timeout": 5000
+            },
+            "protocol": "https:",
+            "requests": {},
+            "scheduling": "lifo",
+            "sockets": {},
+            "totalSocketCount": 1
+          },
+          "chunkedEncoding": false,
+          "destroyed": true,
+          "finished": true,
+          "host": "a.tur.al",
+          "maxHeadersCount": null,
+          "maxRequestsOnConnectionReached": false,
+          "method": "POST",
+          "outputData": [],
+          "outputSize": 0,
+          "parser": null,
+          "path": "/webhook-test/whatsapp",
+          "protocol": "https:",
+          "res": {
+            "_consuming": false,
+            "_dumped": false,
+            "_events": {
+              "end": "[Array]"
+            },
+            "_eventsCount": 4,
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "aborted": false,
+            "client": {
+              "_SNICallback": null,
+              "_closeAfterHandlingError": false,
+              "_controlReleased": true,
+              "_events": "[Object]",
+              "_eventsCount": 9,
+              "_hadError": false,
+              "_host": "a.tur.al",
+              "_httpMessage": null,
+              "_newSessionPending": false,
+              "_parent": null,
+              "_pendingData": null,
+              "_pendingEncoding": "",
+              "_readableState": "[Object]",
+              "_rejectUnauthorized": true,
+              "_requestCert": true,
+              "_secureEstablished": true,
+              "_securePending": false,
+              "_server": null,
+              "_sockname": null,
+              "_tlsOptions": "[Object]",
+              "_writableState": "[Object]",
+              "allowHalfOpen": false,
+              "alpnProtocol": false,
+              "authorizationError": null,
+              "authorized": true,
+              "connecting": false,
+              "encrypted": true,
+              "parser": null,
+              "secureConnecting": false,
+              "servername": "a.tur.al",
+              "ssl": "[Object]",
+              "timeout": 5000
+            },
+            "complete": true,
+            "httpVersion": "1.1",
+            "httpVersionMajor": 1,
+            "httpVersionMinor": 1,
+            "method": null,
+            "rawHeaders": [
+              "Alt-Svc",
+              "h3=\":443\"; ma=2592000",
+              "Content-Length",
+              "720",
+              "Content-Type",
+              "application/json; charset=utf-8",
+              "Date",
+              "Sun, 12 Apr 2026 12:50:58 GMT",
+              "Etag",
+              "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+              "Vary",
+              "Accept-Encoding",
+              "Via",
+              "1.1 Caddy"
+            ],
+            "rawTrailers": [],
+            "redirects": [],
+            "req": "[Circular]",
+            "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "socket": null,
+            "statusCode": 404,
+            "statusMessage": "Not Found",
+            "upgrade": false,
+            "url": ""
+          },
+          "reusedSocket": true,
+          "sendDate": false,
+          "shouldKeepAlive": true,
+          "strictContentLength": false,
+          "timeoutCb": null,
+          "upgradeOrConnect": false,
+          "useChunkedEncodingByDefault": true,
+          "writable": true
+        },
+        "status": 404,
+        "statusText": "Not Found"
+      },
+      "stack":
+          AxiosError: Request failed with status code 404
+              at settle (/opt/whatsappauto/node_modules/axios/lib/core/settle.js:20:7)
+              at IncomingMessage.handleStreamEnd (/opt/whatsappauto/node_modules/axios/lib/adapters/http.js:849:13)
+              at IncomingMessage.emit (node:events:531:35)
+              at endReadableNT (node:internal/streams/readable:1698:12)
+              at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+              at Axios.request (/opt/whatsappauto/node_modules/axios/lib/core/Axios.js:46:41)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async Worker.import_bullmq.Worker.connection.connection (/opt/whatsappauto/src/modules/webhook/webhook.dispatcher.ts:38:21)
+              at async <anonymous> (/opt/whatsappauto/node_modules/bullmq/src/classes/worker.ts:999:26)
+      "status": 404,
+      "type": "AxiosError"
+    }
+[2026-04-12 12:51:02.676 +0000] INFO (2617228): Processing webhook job 82 for event message.new
+[2026-04-12 12:51:02.682 +0000] INFO (2617228): Found 1 webhooks for instance 70ced19c-286d-44da-9d7f-997dd325df52
+[2026-04-12 12:51:02.689 +0000] ERROR (2617228): Webhook delivery failed: https://a.tur.al/webhook-test/whatsapp - Request failed with status code 404
+[2026-04-12 12:51:02.691 +0000] ERROR (2617228): Job 82 failed
+    err: {
+      "code": "ERR_BAD_REQUEST",
+      "config": {
+        "adapter": [
+          "xhr",
+          "http",
+          "fetch"
+        ],
+        "allowAbsoluteUrls": true,
+        "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:51:02.683Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+        "env": {},
+        "headers": {
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Encoding": "gzip, compress, deflate, br",
+          "Content-Length": "861",
+          "Content-Type": "application/json",
+          "User-Agent": "axios/1.15.0"
+        },
+        "maxBodyLength": -1,
+        "maxContentLength": -1,
+        "method": "post",
+        "timeout": 5000,
+        "transformRequest": [
+          null
+        ],
+        "transformResponse": [
+          null
+        ],
+        "transitional": {
+          "clarifyTimeoutError": false,
+          "forcedJSONParsing": true,
+          "legacyInterceptorReqResOrdering": true,
+          "silentJSONParsing": true
+        },
+        "url": "https://a.tur.al/webhook-test/whatsapp",
+        "xsrfCookieName": "XSRF-TOKEN",
+        "xsrfHeaderName": "X-XSRF-TOKEN"
+      },
+      "isAxiosError": true,
+      "message": "Request failed with status code 404",
+      "name": "AxiosError",
+      "request": {
+        "_closed": true,
+        "_contentLength": 861,
+        "_defaultKeepAlive": true,
+        "_ended": true,
+        "_events": {},
+        "_eventsCount": 7,
+        "_hasBody": true,
+        "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+        "_headerSent": true,
+        "_keepAliveTimeout": 0,
+        "_last": false,
+        "_redirectable": {
+          "_currentRequest": "[Circular]",
+          "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "_ended": true,
+          "_ending": true,
+          "_events": {
+            "socket": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 3,
+          "_options": {
+            "agents": {},
+            "beforeRedirects": {},
+            "headers": {
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Encoding": "gzip, compress, deflate, br",
+              "Content-Length": "861",
+              "Content-Type": "application/json",
+              "User-Agent": "axios/1.15.0"
+            },
+            "hostname": "a.tur.al",
+            "maxBodyLength": null,
+            "maxRedirects": 21,
+            "method": "POST",
+            "nativeProtocols": {
+              "http:": "[Object]",
+              "https:": "[Object]"
+            },
+            "path": "/webhook-test/whatsapp",
+            "pathname": "/webhook-test/whatsapp",
+            "port": "",
+            "protocol": "https:"
+          },
+          "_redirectCount": 0,
+          "_redirects": [],
+          "_requestBodyBuffers": [],
+          "_requestBodyLength": 861,
+          "_timeout": null,
+          "_writableState": {
+            "bufferedIndex": 0,
+            "corked": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pendingcb": 0,
+            "writelen": 0
+          }
+        },
+        "_removedConnection": false,
+        "_removedContLen": false,
+        "_removedTE": false,
+        "_trailer": "",
+        "aborted": false,
+        "agent": {
+          "_events": {},
+          "_eventsCount": 2,
+          "_sessionCache": {
+            "list": [
+              "a.tur.al:443:::::::::::::::::::::"
+            ],
+            "map": {
+              "a.tur.al:443:::::::::::::::::::::": "[Object]"
+            }
+          },
+          "agentKeepAliveTimeoutBuffer": 1000,
+          "defaultPort": 443,
+          "freeSockets": {
+            "a.tur.al:443:::::::::::::::::::::": [
+              "[Object]"
+            ]
+          },
+          "keepAlive": true,
+          "keepAliveMsecs": 1000,
+          "maxCachedSessions": 100,
+          "maxFreeSockets": 256,
+          "maxSockets": null,
+          "maxTotalSockets": null,
+          "options": {
+            "defaultPort": 443,
+            "keepAlive": true,
+            "noDelay": true,
+            "path": null,
+            "protocol": "https:",
+            "scheduling": "lifo",
+            "timeout": 5000
+          },
+          "protocol": "https:",
+          "requests": {},
+          "scheduling": "lifo",
+          "sockets": {},
+          "totalSocketCount": 1
+        },
+        "chunkedEncoding": false,
+        "destroyed": true,
+        "finished": true,
+        "host": "a.tur.al",
+        "maxHeadersCount": null,
+        "maxRequestsOnConnectionReached": false,
+        "method": "POST",
+        "outputData": [],
+        "outputSize": 0,
+        "parser": null,
+        "path": "/webhook-test/whatsapp",
+        "protocol": "https:",
+        "res": {
+          "_consuming": false,
+          "_dumped": false,
+          "_events": {
+            "end": [
+              null,
+              null
+            ]
+          },
+          "_eventsCount": 4,
+          "_readableState": {
+            "awaitDrainWriters": null,
+            "buffer": [],
+            "bufferIndex": 0,
+            "highWaterMark": 65536,
+            "length": 0,
+            "pipes": []
+          },
+          "aborted": false,
+          "client": {
+            "_SNICallback": null,
+            "_closeAfterHandlingError": false,
+            "_controlReleased": true,
+            "_events": {
+              "close": "[Array]",
+              "timeout": "[Array]"
+            },
+            "_eventsCount": 9,
+            "_hadError": false,
+            "_host": "a.tur.al",
+            "_httpMessage": null,
+            "_newSessionPending": false,
+            "_parent": null,
+            "_pendingData": null,
+            "_pendingEncoding": "",
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "_rejectUnauthorized": true,
+            "_requestCert": true,
+            "_secureEstablished": true,
+            "_securePending": false,
+            "_server": null,
+            "_sockname": null,
+            "_tlsOptions": {
+              "isServer": false,
+              "pipe": false,
+              "rejectUnauthorized": true,
+              "requestCert": true,
+              "secureContext": "[Object]"
+            },
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            },
+            "allowHalfOpen": false,
+            "alpnProtocol": false,
+            "authorizationError": null,
+            "authorized": true,
+            "connecting": false,
+            "encrypted": true,
+            "parser": null,
+            "secureConnecting": false,
+            "servername": "a.tur.al",
+            "ssl": {
+              "_parent": "[Object]",
+              "_parentWrap": null,
+              "_secureContext": "[Object]",
+              "reading": true
+            },
+            "timeout": 5000
+          },
+          "complete": true,
+          "httpVersion": "1.1",
+          "httpVersionMajor": 1,
+          "httpVersionMinor": 1,
+          "method": null,
+          "rawHeaders": [
+            "Alt-Svc",
+            "h3=\":443\"; ma=2592000",
+            "Content-Length",
+            "720",
+            "Content-Type",
+            "application/json; charset=utf-8",
+            "Date",
+            "Sun, 12 Apr 2026 12:51:02 GMT",
+            "Etag",
+            "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+            "Vary",
+            "Accept-Encoding",
+            "Via",
+            "1.1 Caddy"
+          ],
+          "rawTrailers": [],
+          "redirects": [],
+          "req": "[Circular]",
+          "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+          "socket": null,
+          "statusCode": 404,
+          "statusMessage": "Not Found",
+          "upgrade": false,
+          "url": ""
+        },
+        "reusedSocket": true,
+        "sendDate": false,
+        "shouldKeepAlive": true,
+        "strictContentLength": false,
+        "timeoutCb": null,
+        "upgradeOrConnect": false,
+        "useChunkedEncodingByDefault": true,
+        "writable": true
+      },
+      "response": {
+        "config": {
+          "adapter": [
+            "xhr",
+            "http",
+            "fetch"
+          ],
+          "allowAbsoluteUrls": true,
+          "data": "{\"event\":\"message.new\",\"instanceId\":\"70ced19c-286d-44da-9d7f-997dd325df52\",\"timestamp\":\"2026-04-12T12:51:02.683Z\",\"data\":{\"key\":{\"remoteJid\":\"208799969366084@lid\",\"remoteJidAlt\":\"994555592326@s.whatsapp.net\",\"fromMe\":false,\"id\":\"3A2C7FA8250516853AA1\",\"participant\":\"\",\"addressingMode\":\"lid\"},\"messageTimestamp\":1775998256,\"pushName\":\"MG❤️\",\"broadcast\":false,\"message\":{\"extendedTextMessage\":{\"text\":\"Salam\",\"contextInfo\":{\"expiration\":0,\"ephemeralSettingTimestamp\":\"1732735330\",\"disappearingMode\":{\"initiator\":\"CHANGED_IN_CHAT\",\"trigger\":\"CHAT_SETTING\",\"initiatedByMe\":false}}},\"messageContextInfo\":{\"deviceListMetadata\":{\"senderKeyHash\":\"gglNAEmP3xBUnw==\",\"senderTimestamp\":\"1775920562\",\"recipientKeyHash\":\"YhKpd+/91GBG2A==\",\"recipientTimestamp\":\"1775373594\"},\"deviceListMetadataVersion\":2,\"messageSecret\":\"5OTrluh8jHKRj0ujns8XlF3+7TBNFQsa4XLRLUl+3Nk=\"}}}}",
+          "env": {},
+          "headers": {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, compress, deflate, br",
+            "Content-Length": "861",
+            "Content-Type": "application/json",
+            "User-Agent": "axios/1.15.0"
+          },
+          "maxBodyLength": -1,
+          "maxContentLength": -1,
+          "method": "post",
+          "timeout": 5000,
+          "transformRequest": [
+            null
+          ],
+          "transformResponse": [
+            null
+          ],
+          "transitional": {
+            "clarifyTimeoutError": false,
+            "forcedJSONParsing": true,
+            "legacyInterceptorReqResOrdering": true,
+            "silentJSONParsing": true
+          },
+          "url": "https://a.tur.al/webhook-test/whatsapp",
+          "xsrfCookieName": "XSRF-TOKEN",
+          "xsrfHeaderName": "X-XSRF-TOKEN"
+        },
+        "data": {
+          "code": 404,
+          "hint": "Click the 'Execute workflow' button on the canvas, then try again. (In test mode, the webhook only works for one call after you click this button)",
+          "message": "The requested webhook \"whatsapp\" is not registered.",
+          "stacktrace": "ResponseError: The requested webhook \"whatsapp\" is not registered.\n    at TestWebhooks.getWebhookMethods (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:232:37)\n    at TestWebhooks.executeWebhook (/usr/lib/node_modules/n8n/src/webhooks/test-webhooks.ts:83:22)\n    at WebhookRequestHandler.handleRequest (/usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:66:21)\n    at /usr/lib/node_modules/n8n/src/webhooks/webhook-request-handler.ts:257:3"
+        },
+        "headers": {
+          "alt-svc": "h3=\":443\"; ma=2592000",
+          "content-length": "720",
+          "content-type": "application/json; charset=utf-8",
+          "date": "Sun, 12 Apr 2026 12:51:02 GMT",
+          "etag": "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+          "vary": "Accept-Encoding",
+          "via": "1.1 Caddy"
+        },
+        "request": {
+          "_closed": true,
+          "_contentLength": 861,
+          "_defaultKeepAlive": true,
+          "_ended": true,
+          "_events": {},
+          "_eventsCount": 7,
+          "_hasBody": true,
+          "_header": "POST /webhook-test/whatsapp HTTP/1.1\r\nAccept: application/json, text/plain, */*\r\nContent-Type: application/json\r\nUser-Agent: axios/1.15.0\r\nContent-Length: 861\r\nAccept-Encoding: gzip, compress, deflate, br\r\nHost: a.tur.al\r\nConnection: keep-alive\r\n\r\n",
+          "_headerSent": true,
+          "_keepAliveTimeout": 0,
+          "_last": false,
+          "_redirectable": {
+            "_currentRequest": "[Circular]",
+            "_currentUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "_ended": true,
+            "_ending": true,
+            "_events": {
+              "socket": "[Array]"
+            },
+            "_eventsCount": 3,
+            "_options": {
+              "agents": "[Object]",
+              "beforeRedirects": "[Object]",
+              "headers": "[Object]",
+              "hostname": "a.tur.al",
+              "maxBodyLength": null,
+              "maxRedirects": 21,
+              "method": "POST",
+              "nativeProtocols": "[Object]",
+              "path": "/webhook-test/whatsapp",
+              "pathname": "/webhook-test/whatsapp",
+              "port": "",
+              "protocol": "https:"
+            },
+            "_redirectCount": 0,
+            "_redirects": [],
+            "_requestBodyBuffers": [],
+            "_requestBodyLength": 861,
+            "_timeout": null,
+            "_writableState": {
+              "bufferedIndex": 0,
+              "corked": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pendingcb": 0,
+              "writelen": 0
+            }
+          },
+          "_removedConnection": false,
+          "_removedContLen": false,
+          "_removedTE": false,
+          "_trailer": "",
+          "aborted": false,
+          "agent": {
+            "_events": {},
+            "_eventsCount": 2,
+            "_sessionCache": {
+              "list": "[Array]",
+              "map": "[Object]"
+            },
+            "agentKeepAliveTimeoutBuffer": 1000,
+            "defaultPort": 443,
+            "freeSockets": {
+              "a.tur.al:443:::::::::::::::::::::": "[Array]"
+            },
+            "keepAlive": true,
+            "keepAliveMsecs": 1000,
+            "maxCachedSessions": 100,
+            "maxFreeSockets": 256,
+            "maxSockets": null,
+            "maxTotalSockets": null,
+            "options": {
+              "defaultPort": 443,
+              "keepAlive": true,
+              "noDelay": true,
+              "path": null,
+              "protocol": "https:",
+              "scheduling": "lifo",
+              "timeout": 5000
+            },
+            "protocol": "https:",
+            "requests": {},
+            "scheduling": "lifo",
+            "sockets": {},
+            "totalSocketCount": 1
+          },
+          "chunkedEncoding": false,
+          "destroyed": true,
+          "finished": true,
+          "host": "a.tur.al",
+          "maxHeadersCount": null,
+          "maxRequestsOnConnectionReached": false,
+          "method": "POST",
+          "outputData": [],
+          "outputSize": 0,
+          "parser": null,
+          "path": "/webhook-test/whatsapp",
+          "protocol": "https:",
+          "res": {
+            "_consuming": false,
+            "_dumped": false,
+            "_events": {
+              "end": "[Array]"
+            },
+            "_eventsCount": 4,
+            "_readableState": {
+              "awaitDrainWriters": null,
+              "buffer": [],
+              "bufferIndex": 0,
+              "highWaterMark": 65536,
+              "length": 0,
+              "pipes": []
+            },
+            "aborted": false,
+            "client": {
+              "_SNICallback": null,
+              "_closeAfterHandlingError": false,
+              "_controlReleased": true,
+              "_events": "[Object]",
+              "_eventsCount": 9,
+              "_hadError": false,
+              "_host": "a.tur.al",
+              "_httpMessage": null,
+              "_newSessionPending": false,
+              "_parent": null,
+              "_pendingData": null,
+              "_pendingEncoding": "",
+              "_readableState": "[Object]",
+              "_rejectUnauthorized": true,
+              "_requestCert": true,
+              "_secureEstablished": true,
+              "_securePending": false,
+              "_server": null,
+              "_sockname": null,
+              "_tlsOptions": "[Object]",
+              "_writableState": "[Object]",
+              "allowHalfOpen": false,
+              "alpnProtocol": false,
+              "authorizationError": null,
+              "authorized": true,
+              "connecting": false,
+              "encrypted": true,
+              "parser": null,
+              "secureConnecting": false,
+              "servername": "a.tur.al",
+              "ssl": "[Object]",
+              "timeout": 5000
+            },
+            "complete": true,
+            "httpVersion": "1.1",
+            "httpVersionMajor": 1,
+            "httpVersionMinor": 1,
+            "method": null,
+            "rawHeaders": [
+              "Alt-Svc",
+              "h3=\":443\"; ma=2592000",
+              "Content-Length",
+              "720",
+              "Content-Type",
+              "application/json; charset=utf-8",
+              "Date",
+              "Sun, 12 Apr 2026 12:51:02 GMT",
+              "Etag",
+              "W/\"2d0-jiHsy7g3nJYQnZr7Lw0/WZaMWkQ\"",
+              "Vary",
+              "Accept-Encoding",
+              "Via",
+              "1.1 Caddy"
+            ],
+            "rawTrailers": [],
+            "redirects": [],
+            "req": "[Circular]",
+            "responseUrl": "https://a.tur.al/webhook-test/whatsapp",
+            "socket": null,
+            "statusCode": 404,
+            "statusMessage": "Not Found",
+            "upgrade": false,
+            "url": ""
+          },
+          "reusedSocket": true,
+          "sendDate": false,
+          "shouldKeepAlive": true,
+          "strictContentLength": false,
+          "timeoutCb": null,
+          "upgradeOrConnect": false,
+          "useChunkedEncodingByDefault": true,
+          "writable": true
+        },
+        "status": 404,
+        "statusText": "Not Found"
+      },
+      "stack":
+          AxiosError: Request failed with status code 404
+              at settle (/opt/whatsappauto/node_modules/axios/lib/core/settle.js:20:7)
+              at IncomingMessage.handleStreamEnd (/opt/whatsappauto/node_modules/axios/lib/adapters/http.js:849:13)
+              at IncomingMessage.emit (node:events:531:35)
+              at endReadableNT (node:internal/streams/readable:1698:12)
+              at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+              at Axios.request (/opt/whatsappauto/node_modules/axios/lib/core/Axios.js:46:41)
+              at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+              at async Worker.import_bullmq.Worker.connection.connection (/opt/whatsappauto/src/modules/webhook/webhook.dispatcher.ts:38:21)
+              at async <anonymous> (/opt/whatsappauto/node_modules/bullmq/src/classes/worker.ts:999:26)
+      "status": 404,
+      "type": "AxiosError"
+    }
+^C
+murad@srv810230:/opt/whatsappauto$

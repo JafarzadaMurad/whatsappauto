@@ -134,6 +134,12 @@ export class InstanceManager {
                                 timestamp: new Date().toISOString()
                             });
 
+                            // Update campaign recipient if this is a reply
+                            prisma.campaignRecipient.updateMany({
+                                where: { remoteJid, campaign: { instanceId }, status: 'SENT' },
+                                data: { status: 'REPLIED', repliedAt: new Date() }
+                            }).catch(() => {});
+
                             // Trigger AI Agent Response (fire & forget)
                             AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {
                                 logger.error({ err, instanceId }, 'Error triggering AI service');

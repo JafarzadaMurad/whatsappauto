@@ -24,6 +24,7 @@ model User {
   agents       Agent[]
   customTables CustomTable[]
   clients      Client[]
+  campaigns    Campaign[]
 }
 
 model Instance {
@@ -41,9 +42,10 @@ model Instance {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  messages Message[]
-  contacts Contact[]
-  webhooks WebhookConfig[]
+  messages  Message[]
+  contacts  Contact[]
+  webhooks  WebhookConfig[]
+  campaigns Campaign[]
 }
 
 model ApiKey {
@@ -162,6 +164,7 @@ model Agent {
 
   instances        Instance[] // Instances using this agent
   conversationLogs AiConversationLog[]
+  campaigns        Campaign[]
 }
 
 model AiConversationLog {
@@ -228,4 +231,46 @@ model Client {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, phone])
+}
+
+// -----------------------------------------
+// Outbound Campaigns
+// -----------------------------------------
+
+model Campaign {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  agentId    String
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  instanceId String
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Restrict)
+
+  name       String
+  status     String   @default("PENDING") // PENDING, RUNNING, PAUSED, COMPLETED, FAILED
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  recipients CampaignRecipient[]
+}
+
+model CampaignRecipient {
+  id         String    @id @default(uuid())
+  campaignId String
+  campaign   Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  phone      String
+  remoteJid  String
+  status     String    @default("PENDING") // PENDING, SENDING, SENT, FAILED, REPLIED
+  sentAt     DateTime?
+  repliedAt  DateTime?
+  error      String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([campaignId, remoteJid])
 }

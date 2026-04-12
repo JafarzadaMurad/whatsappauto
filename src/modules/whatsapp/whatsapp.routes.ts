@@ -9,6 +9,7 @@ router.use(authMiddleware);
 
 router.get('/', whatsappController.listInstances);
 router.post('/', whatsappController.createInstance);
+router.post('/:id/restart', whatsappController.restartInstance);
 router.put('/:id', whatsappController.updateInstance);
 router.delete('/:id', whatsappController.deleteInstance);
 

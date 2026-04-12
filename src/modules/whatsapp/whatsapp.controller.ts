@@ -64,6 +64,23 @@ export class WhatsappController {
         }
     }
 
+    async restartInstance(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+
+            const instance = await prisma.instance.findFirst({ where: { id, userId } });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            await InstanceManager.stopInstance(id);
+            InstanceManager.startInstance(id);
+
+            return res.json({ success: true, message: 'Instance restarting' });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async updateInstance(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;

@@ -100,6 +100,15 @@ export class InstanceManager {
                         const isStatus = msg.key.remoteJid === 'status@broadcast';
                         const remoteJid = msg.key.remoteJid;
 
+                        logger.info({
+                            remoteJid,
+                            fromMe: msg.key.fromMe,
+                            hasMessage: !!msg.message,
+                            isStatus,
+                            isGroup: remoteJid ? isJidGroup(remoteJid) : false,
+                            messageType: msg.message ? Object.keys(msg.message).join(',') : 'none'
+                        }, `[${instanceId}] messages.upsert debug`);
+
                         if (!msg.key.fromMe && msg.message && !isStatus && remoteJid && !isJidGroup(remoteJid)) {
                             logger.info(`[${instanceId}] New message from ${remoteJid}`);
                             logger.debug({ event: 'message.new' }, `[${instanceId}] Adding message to webhook queue`);

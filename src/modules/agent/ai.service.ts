@@ -1,103 +1,11 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText, tool, stepCountIs, jsonSchema } from 'ai';
+import { generateText } from 'ai';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
-
-function buildTableTools(allowedTableIds: string[]) {
-    return {
-        listTables: (tool as any)({
-            description: 'List all available data tables with their column structure. Call this first to understand what data you have access to.',
-            parameters: jsonSchema({
-                type: 'object',
-                properties: {
-                    reason: { type: 'string', description: 'Brief reason for listing tables' }
-                },
-                required: ['reason']
-            }),
-            execute: async () => {
-                const tables = await prisma.customTable.findMany({
-                    where: { id: { in: allowedTableIds } },
-                    select: { id: true, name: true, description: true, columns: true }
-                });
-                return tables.map((t: any) => ({
-                    id: t.id,
-                    name: t.name,
-                    description: t.description,
-                    columns: (t.columns as any[]).map((c: any) => ({ name: c.name, type: c.type }))
-                }));
-            }
-        }),
-
-        searchTable: (tool as any)({
-            description: 'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
-            parameters: jsonSchema({
-                type: 'object',
-                properties: {
-                    tableId: { type: 'string', description: 'The table ID from listTables' },
-                    column: { type: 'string', description: 'The column name to search in' },
-                    query: { type: 'string', description: 'The search term' }
-                },
-                required: ['tableId', 'column', 'query']
-            }),
-            execute: async ({ tableId, column, query }: { tableId: string; column: string; query: string }) => {
-                if (!allowedTableIds.includes(tableId)) {
-                    return { error: 'Access denied to this table' };
-                }
-                const allRows = await prisma.customRow.findMany({
-                    where: { tableId },
-                    take: 50
-                });
-                const q = query.toLowerCase();
-                const matched = allRows.filter(row => {
-                    const data = row.data as Record<string, any>;
-                    const val = data[column];
-                    return val != null && String(val).toLowerCase().includes(q);
-                });
-                return {
-                    results: matched.map(r => r.data),
-                    count: matched.length
-                };
-            }
-        }),
-
-        getTableRows: (tool as any)({
-            description: 'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
-            parameters: jsonSchema({
-                type: 'object',
-                properties: {
-                    tableId: { type: 'string', description: 'The table ID from listTables' },
-                    limit: { type: 'number', description: 'Max rows to return (max 10)', default: 10 },
-                    offset: { type: 'number', description: 'Number of rows to skip', default: 0 }
-                },
-                required: ['tableId']
-            }),
-            execute: async ({ tableId, limit = 10, offset = 0 }: { tableId: string; limit: number; offset: number }) => {
-                if (!allowedTableIds.includes(tableId)) {
-                    return { error: 'Access denied to this table' };
-                }
-                const safeLimit = Math.min(limit || 10, 10);
-                const [rows, total] = await Promise.all([
-                    prisma.customRow.findMany({
-                        where: { tableId },
-                        take: safeLimit,
-                        skip: offset || 0,
-                        orderBy: { createdAt: 'asc' }
-                    }),
-                    prisma.customRow.count({ where: { tableId } })
-                ]);
-                return {
-                    rows: rows.map(r => r.data),
-                    total,
-                    hasMore: (offset || 0) + safeLimit < total
-                };
-            }
-        })
-    };
-}
 
 export class AiService {
     static async handleIncomingMessage(
@@ -124,7 +32,7 @@ export class AiService {
             // Configure AI model
             let aiModel: any;
             if (providerInfo.provider === 'OPENAI') {
-                aiModel = createOpenAI({ apiKey: providerInfo.apiKey, compatibility: 'compatible' }).chat(agent.model);
+                aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
             } else if (providerInfo.provider === 'CLAUDE') {
                 aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
             } else if (providerInfo.provider === 'GEMINI') {
@@ -132,6 +40,28 @@ export class AiService {
             } else {
                 logger.error(`Unknown AI Provider: ${providerInfo.provider}`);
                 return;
+            }
+
+            // Fetch data tables context if agent has access
+            let dataContext = '';
+            if (agent.allowedTableIds && agent.allowedTableIds.length > 0) {
+                const tables = await prisma.customTable.findMany({
+                    where: { id: { in: agent.allowedTableIds } },
+                    include: { rows: { take: 50 } }
+                });
+
+                if (tables.length > 0) {
+                    const tableTexts = tables.map(table => {
+                        const columns = (table.columns as any[]).map((c: any) => c.name);
+                        const header = columns.join(' | ');
+                        const rowLines = table.rows.map(row => {
+                            const data = row.data as Record<string, any>;
+                            return columns.map(col => data[col] ?? '').join(' | ');
+                        });
+                        return `## ${table.name}\n${header}\n${rowLines.join('\n')}`;
+                    });
+                    dataContext = `\n\n---\nDATA TABLES:\n\n${tableTexts.join('\n\n')}`;
+                }
             }
 
             // Fetch chat history
@@ -149,22 +79,13 @@ export class AiService {
 
             if (messages.length === 0) return;
 
-            // Build system prompt and tools
-            const hasTableAccess = agent.allowedTableIds && agent.allowedTableIds.length > 0;
+            // Generate AI response
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + dataContext;
 
-            let systemPrompt = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
-            if (hasTableAccess) {
-                systemPrompt += '\n\nYou have access to data tables via tools. Use listTables first to see available tables and their columns, then searchTable or getTableRows to look up data. Always use tools to find data — never guess.';
-            }
-
-            const tools = hasTableAccess ? buildTableTools(agent.allowedTableIds) : undefined;
-
-            // Generate AI response with tool calling (up to 5 steps)
             const result = await generateText({
                 model: aiModel,
                 system: systemPrompt,
                 messages,
-                ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
 
             const text = result.text;

@@ -41,7 +41,7 @@ export class InstanceManager {
                 printQRInTerminal: false,
                 auth: state,
                 logger: logger.child({ module: 'baileys' }) as any,
-                browser: ['WazzupAuto', 'Chrome', '1.0.0'],
+                browser: ['alChatBot', 'Chrome', '1.0.0'],
             });
 
             sessions.set(instanceId, sock);

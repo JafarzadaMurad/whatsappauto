@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,6 +13,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const { user, isAuthenticated, logout, hasHydrated } = useAuthStore();
     const pathname = usePathname();
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [collapsed, setCollapsed] = useState(false);
     const [networksExpanded, setNetworksExpanded] = useState(true);
     const [aiExpanded, setAiExpanded] = useState(true);
 
@@ -71,25 +72,60 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             {/* Sidebar */}
             <motion.aside
-                className={`fixed inset-y-0 left-0 z-50 w-64 bg-card border-r border-border transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:w-64 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+                animate={{ width: collapsed ? 72 : 256 }}
+                transition={{ duration: 0.2, ease: 'easeInOut' }}
+                className={`fixed inset-y-0 left-0 z-50 bg-card border-r border-border transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col overflow-hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
             >
-                <div className="h-16 flex items-center justify-between px-6 border-b border-border">
-                    <div className="flex items-center gap-2 text-primary font-bold text-xl">
-                        <MessageSquare className="w-6 h-6" />
-                        WazzupAuto
-                    </div>
-                    <button className="lg:hidden text-muted-foreground" onClick={() => setSidebarOpen(false)}>
-                        <X className="w-5 h-5" />
-                    </button>
+                <div className="h-16 flex items-center justify-between px-4 border-b border-border min-w-0">
+                    {!collapsed ? (
+                        <>
+                            <div className="flex items-center gap-2 text-primary font-bold text-xl whitespace-nowrap">
+                                <MessageSquare className="w-6 h-6 flex-shrink-0" />
+                                alChatBot
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <button className="hidden lg:block p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(true)}>
+                                    <PanelLeftClose className="w-4 h-4" />
+                                </button>
+                                <button className="lg:hidden text-muted-foreground" onClick={() => setSidebarOpen(false)}>
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <button className="w-full flex justify-center p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(false)}>
+                            <PanelLeft className="w-5 h-5" />
+                        </button>
+                    )}
                 </div>
 
-                <div className="p-4 flex-1 overflow-y-auto">
+                <div className="p-2 flex-1 overflow-y-auto overflow-x-hidden">
                     <nav className="space-y-1">
                         {navLinks.map((item) => {
                             if (item.isGroup) {
-                                const isNetworks = item.name === 'Networks';
                                 const expanded = item.name === 'Networks' ? networksExpanded : aiExpanded;
                                 const setExpanded = item.name === 'Networks' ? setNetworksExpanded : setAiExpanded;
+
+                                if (collapsed) {
+                                    // Collapsed: show only group icon
+                                    const hasActiveChild = item.children?.some(c => pathname.startsWith(c.href));
+                                    return (
+                                        <div key={item.name} className="space-y-1">
+                                            <div className={`flex justify-center p-2.5 rounded-xl ${hasActiveChild ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`} title={item.name}>
+                                                <item.icon className="w-5 h-5" />
+                                            </div>
+                                            {item.children?.map(child => {
+                                                const isChildActive = pathname.startsWith(child.href);
+                                                return (
+                                                    <Link key={child.name} href={child.href} title={child.name}
+                                                        className={`flex justify-center p-2.5 rounded-xl transition-colors ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
+                                                        <child.icon className="w-4 h-4" />
+                                                    </Link>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                }
 
                                 return (
                                     <div key={item.name} className="space-y-1">
@@ -98,10 +134,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                             className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors font-medium"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <item.icon className="w-5 h-5" />
-                                                {item.name}
+                                                <item.icon className="w-5 h-5 flex-shrink-0" />
+                                                <span className="truncate">{item.name}</span>
                                             </div>
-                                            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                            {expanded ? <ChevronDown className="w-4 h-4 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 flex-shrink-0" />}
                                         </button>
                                         <AnimatePresence>
                                             {expanded && (
@@ -112,15 +148,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                     className="overflow-hidden pl-10 space-y-1"
                                                 >
                                                     {item.children?.map(child => {
-                                                        const isChildActive = pathname === child.href;
+                                                        const isChildActive = pathname.startsWith(child.href);
                                                         return (
                                                             <Link
                                                                 key={child.name}
                                                                 href={child.href}
                                                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium text-sm ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
                                                             >
-                                                                <child.icon className="w-4 h-4" />
-                                                                {child.name}
+                                                                <child.icon className="w-4 h-4 flex-shrink-0" />
+                                                                <span className="truncate">{child.name}</span>
                                                             </Link>
                                                         )
                                                     })}
@@ -133,32 +169,58 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                             const isActive = pathname === item.href;
                             const Icon = item.icon;
+
+                            if (collapsed) {
+                                return (
+                                    <Link key={item.name} href={item.href!} title={item.name}
+                                        className={`flex justify-center p-2.5 rounded-xl transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
+                                        <Icon className="w-5 h-5" />
+                                    </Link>
+                                );
+                            }
+
                             return (
                                 <Link
                                     key={item.name}
                                     href={item.href!}
                                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
                                 >
-                                    <Icon className="w-5 h-5" />
-                                    {item.name}
+                                    <Icon className="w-5 h-5 flex-shrink-0" />
+                                    <span className="truncate">{item.name}</span>
                                 </Link>
                             );
                         })}
                     </nav>
                 </div>
 
-                <div className="p-4 border-t border-border">
-                    <div className="px-3 py-3 rounded-xl bg-secondary/30 mb-2">
-                        <p className="text-sm font-medium text-foreground truncate">{user?.name || 'User'}</p>
-                        <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-                    </div>
-                    <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-destructive hover:bg-destructive/10 transition-colors font-medium"
-                    >
-                        <LogOut className="w-5 h-5" />
-                        Sign out
-                    </button>
+                <div className="p-2 border-t border-border">
+                    {!collapsed ? (
+                        <>
+                            <div className="px-3 py-3 rounded-xl bg-secondary/30 mb-2">
+                                <p className="text-sm font-medium text-foreground truncate">{user?.name || 'User'}</p>
+                                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                            </div>
+                            <button
+                                onClick={handleLogout}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-destructive hover:bg-destructive/10 transition-colors font-medium"
+                            >
+                                <LogOut className="w-5 h-5 flex-shrink-0" />
+                                Sign out
+                            </button>
+                        </>
+                    ) : (
+                        <div className="space-y-1">
+                            <div className="flex justify-center p-2.5 rounded-xl bg-secondary/30" title={user?.email || ''}>
+                                <div className="w-5 h-5 rounded-full bg-primary/20 text-primary text-xs flex items-center justify-center font-bold">
+                                    {(user?.name || 'U')[0].toUpperCase()}
+                                </div>
+                            </div>
+                            <button onClick={handleLogout} title="Sign out"
+                                className="w-full flex justify-center p-2.5 rounded-xl text-destructive hover:bg-destructive/10 transition-colors">
+                                <LogOut className="w-5 h-5" />
+                            </button>
+                        </div>
+                    )}
                 </div>
             </motion.aside>
 
@@ -168,7 +230,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <button onClick={() => setSidebarOpen(true)} className="p-2 text-foreground">
                         <Menu className="w-6 h-6" />
                     </button>
-                    <div className="ml-4 font-bold text-lg">WazzupAuto</div>
+                    <div className="ml-4 font-bold text-lg">alChatBot</div>
                 </header>
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8">

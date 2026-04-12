@@ -13,7 +13,7 @@ function buildTableTools(allowedTableIds: string[]) {
         listTables: (tool as any)({
             description: 'List all available data tables with their column structure. Call this first to understand what data you have access to.',
             parameters: z.object({
-                _: z.string().optional().describe('unused')
+                reason: z.string().describe('Brief reason for listing tables')
             }),
             execute: async () => {
                 const tables = await prisma.customTable.findMany({

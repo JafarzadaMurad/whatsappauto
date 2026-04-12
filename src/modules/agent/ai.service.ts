@@ -124,7 +124,7 @@ export class AiService {
             // Configure AI model
             let aiModel: any;
             if (providerInfo.provider === 'OPENAI') {
-                aiModel = createOpenAI({ apiKey: providerInfo.apiKey })(agent.model);
+                aiModel = createOpenAI({ apiKey: providerInfo.apiKey, compatibility: 'compatible' }).chat(agent.model);
             } else if (providerInfo.provider === 'CLAUDE') {
                 aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
             } else if (providerInfo.provider === 'GEMINI') {

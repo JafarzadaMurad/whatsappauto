@@ -135,7 +135,7 @@ export class InstanceManager {
                             });
 
                             // Trigger AI Agent Response (fire & forget)
-                            AiService.handleIncomingMessage(instanceId, remoteJid).catch(err => {
+                            AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {
                                 logger.error({ err, instanceId }, 'Error triggering AI service');
                             });
                         }

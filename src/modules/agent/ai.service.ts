@@ -4,11 +4,16 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText, type ModelMessage } from 'ai';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
-import { sessions } from '../whatsapp/instance.manager';
-import { io } from '../../server';
+import type { WASocket } from '@whiskeysockets/baileys';
+import type { Server } from 'socket.io';
 
 export class AiService {
-    static async handleIncomingMessage(instanceId: string, remoteJid: string) {
+    static async handleIncomingMessage(
+        instanceId: string,
+        remoteJid: string,
+        sock: WASocket,
+        io: Server
+    ) {
         try {
             // 1. Fetch Instance with Agent and API Keys
             const instance = await prisma.instance.findUnique({
@@ -72,7 +77,6 @@ export class AiService {
             if (!text) return;
 
             // 5. Send WhatsApp message and Save to DB
-            const sock = sessions.get(instanceId);
             if (sock) {
                 const sentMsg = await sock.sendMessage(remoteJid, { text });
 

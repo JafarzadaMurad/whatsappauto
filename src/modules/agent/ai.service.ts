@@ -157,6 +157,11 @@ export class AiService {
             } as any);
 
             const text = result.text;
+            const toolCalls = result.steps?.filter((s: any) => s.toolCalls?.length > 0) || [];
+            if (toolCalls.length > 0) {
+                logger.info({ tools: toolCalls.map((s: any) => s.toolCalls.map((tc: any) => tc.toolName)).flat() },
+                    `[${instanceId}] AI used tools`);
+            }
             if (!text) return;
 
             // Send and save

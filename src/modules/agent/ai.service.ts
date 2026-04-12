@@ -1,21 +1,24 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText, tool, zodSchema, stepCountIs } from 'ai';
+import { generateText, zodSchema, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
 
+function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
+    const wrapped = zodSchema(schema);
+    return { description, parameters: wrapped, inputSchema: wrapped, execute };
+}
+
 function buildTableTools(allowedTableIds: string[]) {
     return {
-        listTables: (tool as any)({
-            description: 'List all available data tables with their column structure. Call this first to understand what data you have access to.',
-            parameters: zodSchema(z.object({
-                reason: z.string().describe('Brief reason for listing tables')
-            })),
-            execute: async () => {
+        listTables: makeTool(
+            'List all available data tables with their column structure. Call this first to understand what data you have access to.',
+            z.object({ reason: z.string().describe('Brief reason for listing tables') }),
+            async () => {
                 const tables = await prisma.customTable.findMany({
                     where: { id: { in: allowedTableIds } },
                     select: { id: true, name: true, description: true, columns: true }
@@ -27,16 +30,16 @@ function buildTableTools(allowedTableIds: string[]) {
                     columns: (t.columns as any[]).map((c: any) => ({ name: c.name, type: c.type }))
                 }));
             }
-        }),
+        ),
 
-        searchTable: (tool as any)({
-            description: 'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
-            parameters: zodSchema(z.object({
+        searchTable: makeTool(
+            'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
+            z.object({
                 tableId: z.string().describe('The table ID from listTables'),
                 column: z.string().describe('The column name to search in'),
                 query: z.string().describe('The search term')
-            })),
-            execute: async ({ tableId, column, query }: any) => {
+            }),
+            async ({ tableId, column, query }) => {
                 if (!allowedTableIds.includes(tableId)) {
                     return { error: 'Access denied to this table' };
                 }
@@ -50,21 +53,18 @@ function buildTableTools(allowedTableIds: string[]) {
                     const val = data[column];
                     return val != null && String(val).toLowerCase().includes(q);
                 });
-                return {
-                    results: matched.map(r => r.data),
-                    count: matched.length
-                };
+                return { results: matched.map(r => r.data), count: matched.length };
             }
-        }),
+        ),
 
-        getTableRows: (tool as any)({
-            description: 'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
-            parameters: zodSchema(z.object({
+        getTableRows: makeTool(
+            'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
+            z.object({
                 tableId: z.string().describe('The table ID from listTables'),
                 limit: z.number().max(10).optional().default(10).describe('Max rows to return (max 10)'),
                 offset: z.number().optional().default(0).describe('Number of rows to skip')
-            })),
-            execute: async ({ tableId, limit = 10, offset = 0 }: any) => {
+            }),
+            async ({ tableId, limit = 10, offset = 0 }) => {
                 if (!allowedTableIds.includes(tableId)) {
                     return { error: 'Access denied to this table' };
                 }
@@ -84,7 +84,7 @@ function buildTableTools(allowedTableIds: string[]) {
                     hasMore: (offset || 0) + safeLimit < total
                 };
             }
-        })
+        )
     };
 }
 

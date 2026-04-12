@@ -1,11 +1,92 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText } from 'ai';
+import { generateText, tool, zodSchema, stepCountIs } from 'ai';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
+
+function buildTableTools(allowedTableIds: string[]) {
+    return {
+        listTables: (tool as any)({
+            description: 'List all available data tables with their column structure. Call this first to understand what data you have access to.',
+            parameters: zodSchema(z.object({
+                reason: z.string().describe('Brief reason for listing tables')
+            })),
+            execute: async () => {
+                const tables = await prisma.customTable.findMany({
+                    where: { id: { in: allowedTableIds } },
+                    select: { id: true, name: true, description: true, columns: true }
+                });
+                return tables.map((t: any) => ({
+                    id: t.id,
+                    name: t.name,
+                    description: t.description,
+                    columns: (t.columns as any[]).map((c: any) => ({ name: c.name, type: c.type }))
+                }));
+            }
+        }),
+
+        searchTable: (tool as any)({
+            description: 'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
+            parameters: zodSchema(z.object({
+                tableId: z.string().describe('The table ID from listTables'),
+                column: z.string().describe('The column name to search in'),
+                query: z.string().describe('The search term')
+            })),
+            execute: async ({ tableId, column, query }: any) => {
+                if (!allowedTableIds.includes(tableId)) {
+                    return { error: 'Access denied to this table' };
+                }
+                const allRows = await prisma.customRow.findMany({
+                    where: { tableId },
+                    take: 50
+                });
+                const q = query.toLowerCase();
+                const matched = allRows.filter(row => {
+                    const data = row.data as Record<string, any>;
+                    const val = data[column];
+                    return val != null && String(val).toLowerCase().includes(q);
+                });
+                return {
+                    results: matched.map(r => r.data),
+                    count: matched.length
+                };
+            }
+        }),
+
+        getTableRows: (tool as any)({
+            description: 'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
+            parameters: zodSchema(z.object({
+                tableId: z.string().describe('The table ID from listTables'),
+                limit: z.number().max(10).optional().default(10).describe('Max rows to return (max 10)'),
+                offset: z.number().optional().default(0).describe('Number of rows to skip')
+            })),
+            execute: async ({ tableId, limit = 10, offset = 0 }: any) => {
+                if (!allowedTableIds.includes(tableId)) {
+                    return { error: 'Access denied to this table' };
+                }
+                const safeLimit = Math.min(limit || 10, 10);
+                const [rows, total] = await Promise.all([
+                    prisma.customRow.findMany({
+                        where: { tableId },
+                        take: safeLimit,
+                        skip: offset || 0,
+                        orderBy: { createdAt: 'asc' }
+                    }),
+                    prisma.customRow.count({ where: { tableId } })
+                ]);
+                return {
+                    rows: rows.map(r => r.data),
+                    total,
+                    hasMore: (offset || 0) + safeLimit < total
+                };
+            }
+        })
+    };
+}
 
 export class AiService {
     static async handleIncomingMessage(
@@ -42,28 +123,6 @@ export class AiService {
                 return;
             }
 
-            // Fetch data tables context if agent has access
-            let dataContext = '';
-            if (agent.allowedTableIds && agent.allowedTableIds.length > 0) {
-                const tables = await prisma.customTable.findMany({
-                    where: { id: { in: agent.allowedTableIds } },
-                    include: { rows: { take: 50 } }
-                });
-
-                if (tables.length > 0) {
-                    const tableTexts = tables.map(table => {
-                        const columns = (table.columns as any[]).map((c: any) => c.name);
-                        const header = columns.join(' | ');
-                        const rowLines = table.rows.map(row => {
-                            const data = row.data as Record<string, any>;
-                            return columns.map(col => data[col] ?? '').join(' | ');
-                        });
-                        return `## ${table.name}\n${header}\n${rowLines.join('\n')}`;
-                    });
-                    dataContext = `\n\n---\nDATA TABLES:\n\n${tableTexts.join('\n\n')}`;
-                }
-            }
-
             // Fetch chat history
             const history = await prisma.message.findMany({
                 where: { instanceId, remoteJid },
@@ -79,13 +138,22 @@ export class AiService {
 
             if (messages.length === 0) return;
 
-            // Generate AI response
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + dataContext;
+            // Build system prompt and tools
+            const hasTableAccess = agent.allowedTableIds && agent.allowedTableIds.length > 0;
 
+            let systemPrompt = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
+            if (hasTableAccess) {
+                systemPrompt += '\n\nYou have access to data tables via tools. Use listTables first to see available tables and their columns, then searchTable or getTableRows to look up data. Always use tools to find data — never guess.';
+            }
+
+            const tools = hasTableAccess ? buildTableTools(agent.allowedTableIds) : undefined;
+
+            // Generate AI response with tool calling (up to 5 steps)
             const result = await generateText({
                 model: aiModel,
                 system: systemPrompt,
                 messages,
+                ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
 
             const text = result.text;

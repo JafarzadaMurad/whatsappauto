@@ -1,8 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateText, tool, stepCountIs } from 'ai';
-import { z } from 'zod';
+import { generateText, tool, stepCountIs, jsonSchema } from 'ai';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
@@ -12,8 +11,12 @@ function buildTableTools(allowedTableIds: string[]) {
     return {
         listTables: (tool as any)({
             description: 'List all available data tables with their column structure. Call this first to understand what data you have access to.',
-            parameters: z.object({
-                reason: z.string().describe('Brief reason for listing tables')
+            parameters: jsonSchema({
+                type: 'object',
+                properties: {
+                    reason: { type: 'string', description: 'Brief reason for listing tables' }
+                },
+                required: ['reason']
             }),
             execute: async () => {
                 const tables = await prisma.customTable.findMany({
@@ -31,10 +34,14 @@ function buildTableTools(allowedTableIds: string[]) {
 
         searchTable: (tool as any)({
             description: 'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
-            parameters: z.object({
-                tableId: z.string().describe('The table ID from listTables'),
-                column: z.string().describe('The column name to search in'),
-                query: z.string().describe('The search term')
+            parameters: jsonSchema({
+                type: 'object',
+                properties: {
+                    tableId: { type: 'string', description: 'The table ID from listTables' },
+                    column: { type: 'string', description: 'The column name to search in' },
+                    query: { type: 'string', description: 'The search term' }
+                },
+                required: ['tableId', 'column', 'query']
             }),
             execute: async ({ tableId, column, query }: { tableId: string; column: string; query: string }) => {
                 if (!allowedTableIds.includes(tableId)) {
@@ -59,20 +66,25 @@ function buildTableTools(allowedTableIds: string[]) {
 
         getTableRows: (tool as any)({
             description: 'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
-            parameters: z.object({
-                tableId: z.string().describe('The table ID from listTables'),
-                limit: z.number().max(10).optional().default(10).describe('Max rows (max 10)'),
-                offset: z.number().optional().default(0).describe('Rows to skip')
+            parameters: jsonSchema({
+                type: 'object',
+                properties: {
+                    tableId: { type: 'string', description: 'The table ID from listTables' },
+                    limit: { type: 'number', description: 'Max rows to return (max 10)', default: 10 },
+                    offset: { type: 'number', description: 'Number of rows to skip', default: 0 }
+                },
+                required: ['tableId']
             }),
-            execute: async ({ tableId, limit, offset }: { tableId: string; limit: number; offset: number }) => {
+            execute: async ({ tableId, limit = 10, offset = 0 }: { tableId: string; limit: number; offset: number }) => {
                 if (!allowedTableIds.includes(tableId)) {
                     return { error: 'Access denied to this table' };
                 }
+                const safeLimit = Math.min(limit || 10, 10);
                 const [rows, total] = await Promise.all([
                     prisma.customRow.findMany({
                         where: { tableId },
-                        take: limit,
-                        skip: offset,
+                        take: safeLimit,
+                        skip: offset || 0,
                         orderBy: { createdAt: 'asc' }
                     }),
                     prisma.customRow.count({ where: { tableId } })
@@ -80,7 +92,7 @@ function buildTableTools(allowedTableIds: string[]) {
                 return {
                     rows: rows.map(r => r.data),
                     total,
-                    hasMore: offset + limit < total
+                    hasMore: (offset || 0) + safeLimit < total
                 };
             }
         })

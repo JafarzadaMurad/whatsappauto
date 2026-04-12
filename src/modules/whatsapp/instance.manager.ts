@@ -11,6 +11,7 @@ import { prisma } from '../../lib/prisma';
 import { io } from '../../server';
 import qrcode from 'qrcode';
 import { webhookQueue } from '../webhook/webhook.dispatcher';
+import { AiService } from '../agent/ai.service';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -97,9 +98,25 @@ export class InstanceManager {
                 if (m.type === 'notify') {
                     for (const msg of m.messages) {
                         const isStatus = msg.key.remoteJid === 'status@broadcast';
-                        if (!msg.key.fromMe && msg.message && !isStatus) {
-                            logger.info(`[${instanceId}] New message from ${msg.key.remoteJid}`);
+                        const remoteJid = msg.key.remoteJid;
+
+                        if (!msg.key.fromMe && msg.message && !isStatus && remoteJid && !isJidGroup(remoteJid)) {
+                            logger.info(`[${instanceId}] New message from ${remoteJid}`);
                             logger.debug({ event: 'message.new' }, `[${instanceId}] Adding message to webhook queue`);
+
+                            const content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[Media/Unsupported]';
+
+                            // Save incoming message to DB
+                            await prisma.message.create({
+                                data: {
+                                    instanceId,
+                                    remoteJid: remoteJid,
+                                    isFromMe: false,
+                                    messageType: msg.message?.conversation || msg.message?.extendedTextMessage ? 'text' : 'media',
+                                    content: content,
+                                    timestamp: new Date((msg.messageTimestamp as number) * 1000 || Date.now())
+                                }
+                            });
 
                             // Send to webhook queue
                             webhookQueue.add('new-message', {
@@ -112,9 +129,14 @@ export class InstanceManager {
                             io.emit(`message.new-${instanceId}`, {
                                 id: msg.key.id,
                                 isFromMe: msg.key.fromMe,
-                                content: msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[Media/Unsupported]',
+                                content: content,
                                 status: 'DELIVERED',
                                 timestamp: new Date().toISOString()
+                            });
+
+                            // Trigger AI Agent Response (fire & forget)
+                            AiService.handleIncomingMessage(instanceId, remoteJid).catch(err => {
+                                logger.error({ err, instanceId }, 'Error triggering AI service');
                             });
                         }
                     }

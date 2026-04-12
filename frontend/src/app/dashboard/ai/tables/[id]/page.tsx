@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, FormEvent, use } from "react";
+import { useEffect, useState, useRef, useCallback, FormEvent, use } from "react";
 import { ArrowLeft, Loader2, Plus, Type, Hash, ToggleLeft, Link as LinkIcon, Settings2, Trash2, ChevronDown, CheckSquare, Search, Columns, Clock } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
@@ -129,23 +129,31 @@ export default function TableDataPage({ params }: { params: Promise<{ id: string
         setActiveColMenu(null);
     };
 
-    const handleUpdateRowData = async (rowId: string, colName: string, value: any) => {
-        const rowData = rows.find(r => r.id === rowId);
-        if (!rowData || rowData.data[colName] === value) return; // No change
+    // Debounce timers for each cell
+    const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-        setSaving(true);
-        // Optimistic UI
-        setRows(rows.map(r => r.id === rowId ? { ...r, data: { ...r.data, [colName]: value } } : r));
+    const handleUpdateRowData = (rowId: string, colName: string, value: any) => {
+        // Optimistic UI update (instant)
+        setRows(prev => prev.map(r => r.id === rowId ? { ...r, data: { ...r.data, [colName]: value } } : r));
 
-        try {
-            await api.put(`/tables/${id}/rows/${rowId}`, {
-                data: { ...rowData.data, [colName]: value }
-            });
-        } catch (err) {
-            console.error("Failed to update cell", err);
-        } finally {
-            setSaving(false);
-        }
+        // Debounced API call
+        const key = `${rowId}:${colName}`;
+        if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
+
+        debounceTimers.current[key] = setTimeout(async () => {
+            setSaving(true);
+            try {
+                const currentRow = rows.find(r => r.id === rowId);
+                await api.put(`/tables/${id}/rows/${rowId}`, {
+                    data: { ...currentRow?.data, [colName]: value }
+                });
+            } catch (err) {
+                console.error("Failed to update cell", err);
+            } finally {
+                setSaving(false);
+                delete debounceTimers.current[key];
+            }
+        }, 500);
     };
 
     const handleCreateRow = async () => {

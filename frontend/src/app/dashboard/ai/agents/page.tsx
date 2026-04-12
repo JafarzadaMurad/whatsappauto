@@ -320,8 +320,8 @@ export default function AiAgentsPage() {
                                         <span>{agent.instances?.length || 0} Instance(s)</span>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2 font-medium text-foreground">
-                                    <ShieldCheck className="w-4 h-4 text-emerald-500" /> Active
+                                <div className={`flex items-center gap-2 font-medium ${agent.isActive !== false ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                                    <ShieldCheck className="w-4 h-4" /> {agent.isActive !== false ? 'Active' : 'Inactive'}
                                 </div>
                             </div>
                         </div>

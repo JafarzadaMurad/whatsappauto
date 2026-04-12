@@ -106,6 +106,7 @@ export class AiService {
             });
 
             if (!instance?.agent?.provider) return;
+            if (!(instance.agent as any).isActive) return;
 
             const agent = instance.agent;
             const providerInfo = agent.provider;

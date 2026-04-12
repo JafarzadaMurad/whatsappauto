@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -105,6 +105,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         return [];
     };
 
+    const toggleActive = async () => {
+        try {
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, isActive: !agent.isActive });
+            setAgent({ ...agent, isActive: !agent.isActive });
+        } catch (err) { console.error(err); }
+    };
+
     const formatJid = (jid: string) => {
         if (jid.includes('@lid')) return jid.split('@')[0].slice(-6) + '...';
         return jid.replace('@s.whatsapp.net', '');
@@ -146,6 +153,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             {agent.provider?.provider} &bull; {agent.model}
                         </span>
                     </div>
+                    <button
+                        onClick={toggleActive}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all border ${agent.isActive ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20' : 'bg-secondary/50 text-muted-foreground border-border hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'}`}
+                    >
+                        <Power className="w-4 h-4" />
+                        {agent.isActive ? 'Active' : 'Inactive'}
+                    </button>
                     {agent.instances?.length > 0 && (
                         <div className="flex gap-2 ml-4">
                             {agent.instances.map((inst: any) => (

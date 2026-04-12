@@ -7,7 +7,8 @@ const createAgentSchema = z.object({
     providerId: z.string().uuid(),
     model: z.string().min(1),
     systemPrompt: z.string().optional(),
-    allowedTableIds: z.array(z.string()).optional()
+    allowedTableIds: z.array(z.string()).optional(),
+    isActive: z.boolean().optional()
 });
 
 export class AgentController {
@@ -83,7 +84,8 @@ export class AgentController {
                     providerId: data.providerId,
                     model: data.model,
                     systemPrompt: data.systemPrompt,
-                    allowedTableIds: data.allowedTableIds || []
+                    allowedTableIds: data.allowedTableIds || [],
+                    ...(data.isActive !== undefined ? { isActive: data.isActive } : {})
                 }
             });
 

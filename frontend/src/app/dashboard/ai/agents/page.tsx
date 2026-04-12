@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Bot, Plus, Loader2, Trash2, Database, ShieldCheck, X, Wifi, WifiOff, MessageSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -12,6 +13,7 @@ export default function AiAgentsPage() {
     const [loading, setLoading] = useState(true);
 
     // Form modal state
+    const router = useRouter();
     const [formOpen, setFormOpen] = useState(false);
     const [editingAgent, setEditingAgent] = useState<any>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -51,16 +53,6 @@ export default function AiAgentsPage() {
 
     const openCreate = () => {
         resetForm();
-        setFormOpen(true);
-    };
-
-    const openEdit = (agent: any) => {
-        setEditingAgent(agent);
-        setName(agent.name);
-        setProviderId(agent.providerId);
-        setModel(agent.model);
-        setSystemPrompt(agent.systemPrompt || "");
-        setAllowedTableIds(agent.allowedTableIds || []);
         setFormOpen(true);
     };
 
@@ -271,7 +263,7 @@ export default function AiAgentsPage() {
                         <div
                             key={agent.id}
                             className="bg-card border border-border rounded-2xl p-6 shadow-sm hover:border-primary/50 transition-colors flex flex-col group cursor-pointer"
-                            onClick={() => openEdit(agent)}
+                            onClick={() => router.push(`/dashboard/ai/agents/${agent.id}`)}
                         >
                             <div className="flex items-start justify-between mb-2">
                                 <div className="flex items-center gap-4">

@@ -157,16 +157,26 @@ export class AiService {
             } as any);
 
             const text = result.text;
-            const toolCalls = result.steps?.filter((s: any) => s.toolCalls?.length > 0) || [];
-            if (toolCalls.length > 0) {
-                logger.info({ tools: toolCalls.map((s: any) => s.toolCalls.map((tc: any) => tc.toolName)).flat() },
-                    `[${instanceId}] AI used tools`);
-            }
             if (!text) return;
 
-            // Send and save
+            // Extract tool calls from steps
+            const extractedToolCalls = (result.steps || []).flatMap((step: any) =>
+                (step.toolCalls || []).map((tc: any) => ({
+                    toolName: tc.toolName,
+                    args: tc.args,
+                    accessType: tc.toolName === 'listTables' ? 'list' : tc.toolName === 'searchTable' ? 'search' : 'rows',
+                }))
+            );
+
+            if (extractedToolCalls.length > 0) {
+                logger.info({ tools: extractedToolCalls.map((tc: any) => tc.toolName) },
+                    `[${instanceId}] AI used tools`);
+            }
+
+            // Send WhatsApp message
             const sentMsg = await sock.sendMessage(remoteJid, { text });
 
+            // Save message to DB
             const saved = await prisma.message.create({
                 data: {
                     instanceId,
@@ -178,6 +188,25 @@ export class AiService {
                 }
             });
 
+            // Save conversation log with token usage
+            const lastUserMsg = messages[messages.length - 1]?.content || '';
+            await prisma.aiConversationLog.create({
+                data: {
+                    agentId: agent.id,
+                    instanceId,
+                    remoteJid,
+                    userMessage: typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg),
+                    agentReply: text,
+                    promptTokens: (result as any).usage?.inputTokens || 0,
+                    completionTokens: (result as any).usage?.outputTokens || 0,
+                    totalTokens: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
+                    provider: providerInfo.provider,
+                    model: agent.model,
+                    toolCalls: extractedToolCalls,
+                }
+            });
+
+            // Real-time emit
             io.emit(`message.new-${instanceId}`, {
                 id: sentMsg?.key?.id || saved.id,
                 isFromMe: true,

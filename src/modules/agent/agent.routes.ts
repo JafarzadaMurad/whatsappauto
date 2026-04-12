@@ -12,5 +12,8 @@ router.get('/:id', controller.getAgent.bind(controller));
 router.post('/', controller.createAgent.bind(controller));
 router.put('/:id', controller.updateAgent.bind(controller));
 router.delete('/:id', controller.deleteAgent.bind(controller));
+router.get('/:id/conversations', controller.getConversations.bind(controller));
+router.get('/:id/messages', controller.getConversationMessages.bind(controller));
+router.get('/:id/stats', controller.getTokenStats.bind(controller));
 
 export default router;

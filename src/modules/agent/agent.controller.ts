@@ -108,4 +108,100 @@ export class AgentController {
             return res.status(500).json({ success: false, message: error.message });
         }
     }
+
+    async getConversations(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+
+            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const logs = await prisma.aiConversationLog.findMany({
+                where: { agentId: id },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            // Group by remoteJid
+            const grouped: Record<string, any> = {};
+            for (const log of logs) {
+                if (!grouped[log.remoteJid]) {
+                    grouped[log.remoteJid] = {
+                        remoteJid: log.remoteJid,
+                        messageCount: 0,
+                        totalTokens: 0,
+                        lastMessageAt: log.createdAt,
+                    };
+                }
+                grouped[log.remoteJid].messageCount++;
+                grouped[log.remoteJid].totalTokens += log.totalTokens;
+            }
+
+            return res.json({ success: true, conversations: Object.values(grouped) });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async getConversationMessages(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const remoteJid = req.query.remoteJid as string;
+
+            if (!remoteJid) return res.status(400).json({ success: false, message: 'remoteJid required' });
+
+            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const messages = await prisma.aiConversationLog.findMany({
+                where: { agentId: id, remoteJid },
+                orderBy: { createdAt: 'asc' }
+            });
+
+            return res.json({ success: true, messages });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async getTokenStats(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+
+            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const logs = await prisma.aiConversationLog.findMany({
+                where: { agentId: id },
+                select: { provider: true, model: true, promptTokens: true, completionTokens: true, totalTokens: true }
+            });
+
+            // Group by provider + model
+            const statsMap: Record<string, any> = {};
+            for (const log of logs) {
+                const key = `${log.provider}:${log.model}`;
+                if (!statsMap[key]) {
+                    statsMap[key] = { provider: log.provider, model: log.model, promptTokens: 0, completionTokens: 0, totalTokens: 0, requestCount: 0 };
+                }
+                statsMap[key].promptTokens += log.promptTokens;
+                statsMap[key].completionTokens += log.completionTokens;
+                statsMap[key].totalTokens += log.totalTokens;
+                statsMap[key].requestCount++;
+            }
+
+            const stats = Object.values(statsMap);
+            const totals = {
+                promptTokens: stats.reduce((s: number, x: any) => s + x.promptTokens, 0),
+                completionTokens: stats.reduce((s: number, x: any) => s + x.completionTokens, 0),
+                totalTokens: stats.reduce((s: number, x: any) => s + x.totalTokens, 0),
+                requestCount: stats.reduce((s: number, x: any) => s + x.requestCount, 0),
+            };
+
+            return res.json({ success: true, stats, totals });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
 }

@@ -8,15 +8,17 @@ import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
 
+// ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
     const wrapped = zodSchema(schema);
     return { description, parameters: wrapped, inputSchema: wrapped, execute };
 }
 
+// ─── SKILL: Data Tables ───
 function buildTableTools(allowedTableIds: string[]) {
     return {
         listTables: makeTool(
-            'List all available data tables with their column structure. Call this first to understand what data you have access to.',
+            'List all available data tables with their column structure.',
             z.object({ reason: z.string().describe('Brief reason for listing tables') }),
             async () => {
                 const tables = await prisma.customTable.findMany({
@@ -24,70 +26,148 @@ function buildTableTools(allowedTableIds: string[]) {
                     select: { id: true, name: true, description: true, columns: true }
                 });
                 return tables.map((t: any) => ({
-                    id: t.id,
-                    name: t.name,
-                    description: t.description,
+                    id: t.id, name: t.name, description: t.description,
                     columns: (t.columns as any[]).map((c: any) => ({ name: c.name, type: c.type }))
                 }));
             }
         ),
-
         searchTable: makeTool(
-            'Search for rows in a table where a column contains a specific value (case-insensitive partial match). Returns matching rows.',
+            'Search rows in a table by column value (case-insensitive partial match).',
             z.object({
-                tableId: z.string().describe('The table ID from listTables'),
-                column: z.string().describe('The column name to search in'),
-                query: z.string().describe('The search term')
+                tableId: z.string().describe('Table ID from listTables'),
+                column: z.string().describe('Column name to search'),
+                query: z.string().describe('Search term')
             }),
             async ({ tableId, column, query }) => {
-                if (!allowedTableIds.includes(tableId)) {
-                    return { error: 'Access denied to this table' };
-                }
-                const allRows = await prisma.customRow.findMany({
-                    where: { tableId },
-                    take: 50
-                });
+                if (!allowedTableIds.includes(tableId)) return { error: 'Access denied' };
+                const rows = await prisma.customRow.findMany({ where: { tableId }, take: 50 });
                 const q = query.toLowerCase();
-                const matched = allRows.filter(row => {
-                    const data = row.data as Record<string, any>;
-                    const val = data[column];
+                const matched = rows.filter(row => {
+                    const val = (row.data as any)[column];
                     return val != null && String(val).toLowerCase().includes(q);
                 });
                 return { results: matched.map(r => r.data), count: matched.length };
             }
         ),
-
         getTableRows: makeTool(
-            'Get rows from a table with pagination (max 10 per call). Use offset to paginate.',
+            'Get rows from a table with pagination (max 10 per call).',
             z.object({
-                tableId: z.string().describe('The table ID from listTables'),
-                limit: z.number().max(10).optional().default(10).describe('Max rows to return (max 10)'),
-                offset: z.number().optional().default(0).describe('Number of rows to skip')
+                tableId: z.string().describe('Table ID from listTables'),
+                limit: z.number().max(10).optional().default(10).describe('Max rows (max 10)'),
+                offset: z.number().optional().default(0).describe('Rows to skip')
             }),
             async ({ tableId, limit = 10, offset = 0 }) => {
-                if (!allowedTableIds.includes(tableId)) {
-                    return { error: 'Access denied to this table' };
-                }
+                if (!allowedTableIds.includes(tableId)) return { error: 'Access denied' };
                 const safeLimit = Math.min(limit || 10, 10);
                 const [rows, total] = await Promise.all([
-                    prisma.customRow.findMany({
-                        where: { tableId },
-                        take: safeLimit,
-                        skip: offset || 0,
-                        orderBy: { createdAt: 'asc' }
-                    }),
+                    prisma.customRow.findMany({ where: { tableId }, take: safeLimit, skip: offset || 0, orderBy: { createdAt: 'asc' } }),
                     prisma.customRow.count({ where: { tableId } })
                 ]);
-                return {
-                    rows: rows.map(r => r.data),
-                    total,
-                    hasMore: (offset || 0) + safeLimit < total
-                };
+                return { rows: rows.map(r => r.data), total, hasMore: (offset || 0) + safeLimit < total };
             }
         )
     };
 }
 
+// ─── SKILL: CRM ───
+function buildCrmTools(userId: string) {
+    return {
+        upsertClient: makeTool(
+            'Create or update a client in the CRM. Use this to save contact info, update status, add tags, or write a summary about the conversation.',
+            z.object({
+                phone: z.string().describe('Phone number of the client (digits only, e.g. 994551234567)'),
+                name: z.string().optional().describe('Client name if known'),
+                status: z.string().optional().describe('CRM status: NEW, LEAD, INTERESTED, PURCHASED, SPAM, etc.'),
+                tags: z.array(z.string()).optional().describe('Tags like ["VIP", "wholesale", "returning"]'),
+                summary: z.string().optional().describe('Brief summary of the conversation/client needs'),
+                customFields: z.record(z.string(), z.any()).optional().describe('Any additional key-value data about the client')
+            }),
+            async ({ phone, name, status, tags, summary, customFields }) => {
+                const cleanPhone = phone.replace(/[^0-9]/g, '');
+                const client = await prisma.client.upsert({
+                    where: { userId_phone: { userId, phone: cleanPhone } },
+                    update: {
+                        ...(name !== undefined ? { name } : {}),
+                        ...(status !== undefined ? { status } : {}),
+                        ...(tags !== undefined ? { tags } : {}),
+                        ...(summary !== undefined ? { summary } : {}),
+                        ...(customFields !== undefined ? { customFields } : {}),
+                    },
+                    create: {
+                        userId,
+                        phone: cleanPhone,
+                        name: name || null,
+                        status: status || 'NEW',
+                        tags: tags || [],
+                        summary: summary || null,
+                        customFields: customFields || null,
+                    }
+                });
+                return { success: true, clientId: client.id, phone: client.phone, status: client.status };
+            }
+        ),
+        getClient: makeTool(
+            'Get a client from CRM by phone number.',
+            z.object({
+                phone: z.string().describe('Phone number to look up')
+            }),
+            async ({ phone }) => {
+                const cleanPhone = phone.replace(/[^0-9]/g, '');
+                const client = await prisma.client.findUnique({
+                    where: { userId_phone: { userId, phone: cleanPhone } }
+                });
+                if (!client) return { found: false };
+                return { found: true, name: client.name, status: client.status, tags: client.tags, summary: client.summary, customFields: client.customFields };
+            }
+        ),
+        searchClients: makeTool(
+            'Search clients in CRM by name, status, or tags.',
+            z.object({
+                query: z.string().optional().describe('Search by name (partial match)'),
+                status: z.string().optional().describe('Filter by status'),
+                tag: z.string().optional().describe('Filter by tag')
+            }),
+            async ({ query, status, tag }) => {
+                const clients = await prisma.client.findMany({
+                    where: {
+                        userId,
+                        ...(query ? { name: { contains: query, mode: 'insensitive' as any } } : {}),
+                        ...(status ? { status } : {}),
+                        ...(tag ? { tags: { has: tag } } : {}),
+                    },
+                    take: 20,
+                    orderBy: { updatedAt: 'desc' }
+                });
+                return { results: clients.map(c => ({ phone: c.phone, name: c.name, status: c.status, tags: c.tags, summary: c.summary })), count: clients.length };
+            }
+        )
+    };
+}
+
+// ─── Skill Registry ───
+const SKILL_DESCRIPTIONS: Record<string, string> = {
+    tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
+    crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
+};
+
+function buildToolsForSkills(skills: string[], allowedTableIds: string[], userId: string) {
+    let tools: Record<string, any> = {};
+    let prompts: string[] = [];
+
+    if (skills.includes('tables') && allowedTableIds.length > 0) {
+        tools = { ...tools, ...buildTableTools(allowedTableIds) };
+        prompts.push(SKILL_DESCRIPTIONS.tables);
+    }
+
+    if (skills.includes('crm')) {
+        tools = { ...tools, ...buildCrmTools(userId) };
+        prompts.push(SKILL_DESCRIPTIONS.crm);
+    }
+
+    return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n') : '' };
+}
+
+// ─── Main AI Service ───
 export class AiService {
     static async handleIncomingMessage(
         instanceId: string,
@@ -98,11 +178,7 @@ export class AiService {
         try {
             const instance = await prisma.instance.findUnique({
                 where: { id: instanceId },
-                include: {
-                    agent: {
-                        include: { provider: true }
-                    }
-                }
+                include: { agent: { include: { provider: true } } }
             });
 
             if (!instance?.agent?.provider) return;
@@ -139,17 +215,13 @@ export class AiService {
 
             if (messages.length === 0) return;
 
-            // Build system prompt and tools
-            const hasTableAccess = agent.allowedTableIds && agent.allowedTableIds.length > 0;
+            // Build tools based on agent skills
+            const skills = (agent as any).skills || [];
+            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId);
 
-            let systemPrompt = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
-            if (hasTableAccess) {
-                systemPrompt += '\n\nYou have access to data tables via tools. Use listTables first to see available tables and their columns, then searchTable or getTableRows to look up data. Always use tools to find data — never guess.';
-            }
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + skillPrompt;
 
-            const tools = hasTableAccess ? buildTableTools(agent.allowedTableIds) : undefined;
-
-            // Generate AI response with tool calling (up to 5 steps)
+            // Generate AI response
             const result = await generateText({
                 model: aiModel,
                 system: systemPrompt,
@@ -160,12 +232,11 @@ export class AiService {
             const text = result.text;
             if (!text) return;
 
-            // Extract tool calls from steps
+            // Extract tool calls
             const extractedToolCalls = (result.steps || []).flatMap((step: any) =>
                 (step.toolCalls || []).map((tc: any) => ({
                     toolName: tc.toolName,
                     args: tc.args,
-                    accessType: tc.toolName === 'listTables' ? 'list' : tc.toolName === 'searchTable' ? 'search' : 'rows',
                 }))
             );
 
@@ -179,41 +250,28 @@ export class AiService {
 
             // Save message to DB
             const saved = await prisma.message.create({
-                data: {
-                    instanceId,
-                    remoteJid,
-                    isFromMe: true,
-                    messageType: 'text',
-                    content: text,
-                    timestamp: new Date()
-                }
+                data: { instanceId, remoteJid, isFromMe: true, messageType: 'text', content: text, timestamp: new Date() }
             });
 
-            // Save conversation log with token usage
+            // Save conversation log
             const lastUserMsg = messages[messages.length - 1]?.content || '';
             await prisma.aiConversationLog.create({
                 data: {
-                    agentId: agent.id,
-                    instanceId,
-                    remoteJid,
+                    agentId: agent.id, instanceId, remoteJid,
                     userMessage: typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg),
                     agentReply: text,
                     promptTokens: (result as any).usage?.inputTokens || 0,
                     completionTokens: (result as any).usage?.outputTokens || 0,
                     totalTokens: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
-                    provider: providerInfo.provider,
-                    model: agent.model,
+                    provider: providerInfo.provider, model: agent.model,
                     toolCalls: extractedToolCalls,
                 }
             });
 
             // Real-time emit
             io.emit(`message.new-${instanceId}`, {
-                id: sentMsg?.key?.id || saved.id,
-                isFromMe: true,
-                content: text,
-                status: 'DELIVERED',
-                timestamp: new Date().toISOString()
+                id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
+                status: 'DELIVERED', timestamp: new Date().toISOString()
             });
 
             logger.info(`[${instanceId}] AI replied to ${remoteJid}`);

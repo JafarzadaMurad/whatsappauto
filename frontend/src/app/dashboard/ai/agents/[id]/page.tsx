@@ -31,6 +31,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [model, setModel] = useState("");
     const [systemPrompt, setSystemPrompt] = useState("");
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
+    const [skills, setSkills] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -49,6 +50,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setModel(a.model);
                     setSystemPrompt(a.systemPrompt || "");
                     setAllowedTableIds(a.allowedTableIds || []);
+                    setSkills(a.skills || []);
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -90,7 +92,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const handleSave = async () => {
         setSaving(true);
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
         } catch (err) { console.error(err); }
@@ -107,7 +109,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -371,6 +373,30 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
                         <div>
                             <h3 className="font-semibold flex items-center gap-2 mb-2">
+                                <Wrench className="w-4 h-4 text-muted-foreground" /> Skills
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-3">Enable capabilities for this agent.</p>
+                            <div className="space-y-2">
+                                {[
+                                    { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
+                                    { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
+                                ].map(skill => (
+                                    <label key={skill.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${skills.includes(skill.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
+                                        <input type="checkbox" checked={skills.includes(skill.id)}
+                                            onChange={() => setSkills(prev => prev.includes(skill.id) ? prev.filter(s => s !== skill.id) : [...prev, skill.id])}
+                                            className="w-4 h-4 accent-primary rounded" />
+                                        <div>
+                                            <div className="font-medium text-sm">{skill.name}</div>
+                                            <div className="text-xs text-muted-foreground">{skill.desc}</div>
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        {skills.includes('tables') && (
+                        <div>
+                            <h3 className="font-semibold flex items-center gap-2 mb-2">
                                 <Database className="w-4 h-4 text-muted-foreground" /> Knowledge Base
                             </h3>
                             {tables.length === 0 ? (
@@ -391,6 +417,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 </div>
                             )}
                         </div>
+                        )}
 
                         <button onClick={handleSave} disabled={saving}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70">

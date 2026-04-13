@@ -157,6 +157,7 @@ model Agent {
 
   systemPrompt    String?  @db.Text
   allowedTableIds String[] // IDs of CustomTable models this agent can access
+  skills          String[] // e.g. ["crm", "tables"]
   isActive        Boolean  @default(true)
 
   createdAt DateTime @default(now())
@@ -220,10 +221,11 @@ model Client {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  phone  String // RemoteJid
-  name   String?
-  status String   @default("NEW") // Custom CRM Status e.g., "Lead", "Purchased"
-  tags   String[]
+  phone   String // RemoteJid
+  name    String?
+  status  String   @default("NEW") // Custom CRM Status e.g., "Lead", "Purchased"
+  tags    String[]
+  summary String?  @db.Text // AI-generated summary of interactions
 
   customFields Json? // Additional CRM data AI extracts or user defines
 

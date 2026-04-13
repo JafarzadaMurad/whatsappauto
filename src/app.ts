@@ -13,6 +13,7 @@ import customTableRoutes from './modules/customtable/customtable.routes';
 import clientRoutes from './modules/client/client.routes';
 import agentRoutes from './modules/agent/agent.routes';
 import campaignRoutes from './modules/campaign/campaign.routes';
+import instagramRoutes from './modules/instagram/instagram.routes';
 
 const app: Express = express();
 
@@ -47,6 +48,7 @@ app.use('/api/tables', customTableRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/campaigns', campaignRoutes);
+app.use('/api/instagram', instagramRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

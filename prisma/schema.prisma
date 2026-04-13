@@ -7,6 +7,13 @@ datasource db {
   provider = "postgresql"
 }
 
+// System-wide config (Meta App credentials, etc.)
+model SystemConfig {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -24,7 +31,8 @@ model User {
   agents       Agent[]
   customTables CustomTable[]
   clients      Client[]
-  campaigns    Campaign[]
+  campaigns         Campaign[]
+  instagramAccounts InstagramAccount[]
 }
 
 model Instance {
@@ -163,9 +171,10 @@ model Agent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  instances        Instance[] // Instances using this agent
-  conversationLogs AiConversationLog[]
-  campaigns        Campaign[]
+  instances         Instance[] // Instances using this agent
+  conversationLogs  AiConversationLog[]
+  campaigns         Campaign[]
+  instagramAccounts InstagramAccount[]
 }
 
 model AiConversationLog {
@@ -275,4 +284,26 @@ model CampaignRecipient {
   updatedAt  DateTime  @updatedAt
 
   @@unique([campaignId, remoteJid])
+}
+
+// -----------------------------------------
+// Instagram Integration
+// -----------------------------------------
+
+model InstagramAccount {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  igUserId    String  @unique // Instagram User ID from API
+  igUsername   String  // @username
+  accessToken String  @db.Text // Long-lived access token
+  pageId      String? // Facebook Page ID (needed for some API calls)
+
+  agentId String?
+  agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

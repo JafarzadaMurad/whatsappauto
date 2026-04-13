@@ -215,11 +215,23 @@ export class AiService {
 
             if (messages.length === 0) return;
 
+            // Get contact info
+            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const contact = await prisma.contact.findFirst({
+                where: { instanceId, remoteJid }
+            });
+            const client = await prisma.client.findUnique({
+                where: { userId_phone: { userId: agent.userId, phone } }
+            }).catch(() => null);
+
+            const contactName = client?.name || contact?.pushName || contact?.name || null;
+            const contactContext = `\n\nCurrent contact info:\n- Phone: ${phone}${contactName ? `\n- Name: ${contactName}` : ''}${client?.status ? `\n- CRM Status: ${client.status}` : ''}${client?.tags?.length ? `\n- Tags: ${client.tags.join(', ')}` : ''}${client?.summary ? `\n- Summary: ${client.summary}` : ''}\nYou already have this info — do NOT ask the customer for their phone number or name.`;
+
             // Build tools based on agent skills
             const skills = (agent as any).skills || [];
             const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId);
 
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + skillPrompt;
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 
             // Generate AI response
             const result = await generateText({

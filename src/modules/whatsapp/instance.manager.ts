@@ -106,6 +106,15 @@ export class InstanceManager {
 
                             const content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[Media/Unsupported]';
 
+                            // Upsert contact with pushName
+                            if (msg.pushName) {
+                                await prisma.contact.upsert({
+                                    where: { instanceId_remoteJid: { instanceId, remoteJid } },
+                                    update: { pushName: msg.pushName },
+                                    create: { instanceId, remoteJid, pushName: msg.pushName }
+                                }).catch(() => {});
+                            }
+
                             // Save incoming message to DB
                             await prisma.message.create({
                                 data: {

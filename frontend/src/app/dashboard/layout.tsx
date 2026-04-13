@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Instagram } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -38,7 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare },
-                { name: 'Instagram', href: '/dashboard/instagram', icon: Instagram }
+                { name: 'Camera', href: '/dashboard/instagram', icon: Camera }
             ]
         },
         { name: 'CRM / Clients', href: '/dashboard/crm', icon: Users },

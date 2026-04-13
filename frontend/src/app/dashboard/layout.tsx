@@ -38,7 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare },
-                { name: 'Camera', href: '/dashboard/instagram', icon: Camera }
+                { name: 'Instagram', href: '/dashboard/instagram', icon: Camera }
             ]
         },
         { name: 'CRM / Clients', href: '/dashboard/crm', icon: Users },

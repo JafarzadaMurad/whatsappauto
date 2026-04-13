@@ -24,7 +24,7 @@ export class InstagramController {
                 return res.status(500).json({ success: false, message: 'Instagram App ID not configured' });
             }
 
-            const redirectUri = `${req.protocol}://${req.get('host')}/api/instagram/callback`;
+            const redirectUri = `https://${req.get('host')}/api/instagram/callback`;
             const scope = 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments';
             const url = `https://www.instagram.com/oauth/authorize?enable_fb_login=0&force_authentication=1&client_id=${cfg.META_IG_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}`;
 
@@ -42,7 +42,7 @@ export class InstagramController {
             if (!code) return res.status(400).send('Missing code parameter');
 
             const cfg = await getMetaConfig();
-            const redirectUri = `${req.protocol}://${req.get('host')}/api/instagram/callback`;
+            const redirectUri = `https://${req.get('host')}/api/instagram/callback`;
 
             // Exchange code for short-lived token
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({

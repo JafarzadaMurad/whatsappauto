@@ -90,9 +90,10 @@ export class InstagramController {
 
             return res.redirect(`${frontendUrl}/dashboard/instagram/callback?${params.toString()}`);
         } catch (error: any) {
-            logger.error({ err: error }, 'Instagram OAuth callback failed');
+            const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            logger.error({ err: error, responseData: error.response?.data, status: error.response?.status }, 'Instagram OAuth callback failed: ' + detail);
             const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
-            return res.redirect(`${frontendUrl}/dashboard/instagram?error=${encodeURIComponent(error.message)}`);
+            return res.redirect(`${frontendUrl}/dashboard/instagram?error=${encodeURIComponent(detail)}`);
         }
     }
 

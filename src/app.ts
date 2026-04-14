@@ -16,6 +16,7 @@ import campaignRoutes from './modules/campaign/campaign.routes';
 import instagramRoutes from './modules/instagram/instagram.routes';
 
 const app: Express = express();
+app.set('trust proxy', 1);
 
 // Security Middlewares
 app.use(helmet());

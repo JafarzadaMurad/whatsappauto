@@ -13,7 +13,7 @@ function getRedirectUri() {
 
 async function getMetaConfig() {
     const rows = await prisma.systemConfig.findMany({
-        where: { key: { in: ['META_APP_ID', 'META_APP_SECRET', 'META_IG_APP_ID'] } }
+        where: { key: { in: ['META_APP_ID', 'META_APP_SECRET', 'META_IG_APP_ID', 'META_IG_APP_SECRET'] } }
     });
     const cfg: Record<string, string> = {};
     rows.forEach(r => { cfg[r.key] = r.value; });
@@ -50,9 +50,11 @@ export class InstagramController {
             const redirectUri = getRedirectUri();
 
             // Exchange code for short-lived token
+            const igSecret = cfg.META_IG_APP_SECRET || cfg.META_APP_SECRET;
+            logger.info({ redirectUri, clientId: cfg.META_IG_APP_ID, codeLength: code?.length }, 'Instagram token exchange attempt');
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
                 client_id: cfg.META_IG_APP_ID,
-                client_secret: cfg.META_APP_SECRET,
+                client_secret: igSecret,
                 grant_type: 'authorization_code',
                 redirect_uri: redirectUri,
                 code,

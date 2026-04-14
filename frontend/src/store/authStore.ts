@@ -29,7 +29,7 @@ export const useAuthStore = create<AuthState>()(
             setHasHydrated: (state) => set({ hasHydrated: state }),
         }),
         {
-            name: 'wazzup-auth-storage',
+            name: 'alchatbot-auth-storage',
             onRehydrateStorage: () => (state) => {
                 state?.setHasHydrated(true);
             }

@@ -44,13 +44,14 @@ export class InstagramController {
     async handleCallback(req: Request, res: Response) {
         try {
             const code = req.query.code as string;
+            logger.info({ codeStart: code?.slice(0, 20), fullUrl: req.originalUrl?.slice(0, 80) }, 'Instagram callback received');
             if (!code) return res.status(400).send('Missing code parameter');
 
             const cfg = await getMetaConfig();
             const redirectUri = getRedirectUri();
 
             // Exchange code for short-lived token
-            const igSecret = cfg.META_IG_APP_SECRET || cfg.META_APP_SECRET; // Try IG App Secret first
+            const igSecret = cfg.META_APP_SECRET;
             logger.info({ redirectUri, clientId: cfg.META_IG_APP_ID, codeLength: code?.length }, 'Instagram token exchange attempt');
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
                 client_id: cfg.META_IG_APP_ID,

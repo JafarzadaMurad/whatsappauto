@@ -14,6 +14,7 @@ router.get('/callback', controller.handleCallback.bind(controller));
 
 // Authenticated endpoints
 router.get('/auth-url', authMiddleware, controller.getAuthUrl.bind(controller));
+router.post('/exchange-code', authMiddleware, controller.exchangeCode.bind(controller));
 router.get('/accounts', authMiddleware, controller.getAccounts.bind(controller));
 router.post('/accounts', authMiddleware, controller.saveAccount.bind(controller));
 router.put('/accounts/:id', authMiddleware, controller.updateAccount.bind(controller));

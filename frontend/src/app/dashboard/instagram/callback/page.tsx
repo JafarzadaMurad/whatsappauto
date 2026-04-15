@@ -1,21 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import api from "@/lib/api";
 
-export default function InstagramCallbackPage() {
+function CallbackContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
     const [error, setError] = useState("");
 
     useEffect(() => {
-        const save = async () => {
-            const igUserId = searchParams.get('igUserId');
-            const username = searchParams.get('username');
-            const token = searchParams.get('token');
+        const process = async () => {
+            const code = searchParams.get('code');
             const errorParam = searchParams.get('error');
 
             if (errorParam) {
@@ -24,18 +22,28 @@ export default function InstagramCallbackPage() {
                 return;
             }
 
-            if (!igUserId || !token) {
-                setError('Missing parameters');
+            if (!code) {
+                setError('No authorization code received');
                 setStatus('error');
                 return;
             }
 
             try {
+                // Exchange code for token via backend
+                const exchangeRes = await api.post('/instagram/exchange-code', { code });
+                if (!exchangeRes.data.success) {
+                    setError(exchangeRes.data.message || 'Token exchange failed');
+                    setStatus('error');
+                    return;
+                }
+
+                // Save account
                 await api.post('/instagram/accounts', {
-                    igUserId,
-                    username,
-                    accessToken: token,
+                    igUserId: exchangeRes.data.igUserId,
+                    username: exchangeRes.data.username,
+                    accessToken: exchangeRes.data.accessToken,
                 });
+
                 setStatus('success');
                 setTimeout(() => router.push('/dashboard/instagram'), 2000);
             } catch (err: any) {
@@ -44,8 +52,8 @@ export default function InstagramCallbackPage() {
             }
         };
 
-        save();
-    }, [searchParams, router]);
+        process();
+    }, []);
 
     return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
@@ -67,7 +75,7 @@ export default function InstagramCallbackPage() {
                 <>
                     <XCircle className="w-12 h-12 text-destructive mb-4" />
                     <h2 className="text-xl font-semibold">Connection Failed</h2>
-                    <p className="text-muted-foreground mt-2">{error}</p>
+                    <p className="text-muted-foreground mt-2 max-w-md">{error}</p>
                     <button onClick={() => router.push('/dashboard/instagram')}
                         className="mt-4 px-6 py-2.5 bg-secondary rounded-xl text-sm font-medium hover:bg-secondary/80 transition-colors">
                         Back to Instagram
@@ -75,5 +83,13 @@ export default function InstagramCallbackPage() {
                 </>
             )}
         </div>
+    );
+}
+
+export default function InstagramCallbackPage() {
+    return (
+        <Suspense fallback={<div className="flex justify-center items-center min-h-[60vh]"><Loader2 className="w-8 h-8 animate-spin" /></div>}>
+            <CallbackContent />
+        </Suspense>
     );
 }

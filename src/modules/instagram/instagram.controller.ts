@@ -8,7 +8,7 @@ import { InstagramAiService } from './instagram.ai.service';
 const VERIFY_TOKEN = 'alchatbot_verify_2024';
 function getRedirectUri() {
     const base = config.FRONTEND_URL || 'https://chatbot.tur.al';
-    return `${base.replace(/\/$/, '')}/api/instagram/callback`;
+    return `${base.replace(/\/$/, '')}/dashboard/instagram/callback`;
 }
 
 async function getMetaConfig() {
@@ -97,6 +97,54 @@ export class InstagramController {
             logger.error({ err: error, responseData: error.response?.data, status: error.response?.status }, 'Instagram OAuth callback failed: ' + detail);
             const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
             return res.redirect(`${frontendUrl}/dashboard/instagram?error=${encodeURIComponent(detail)}`);
+        }
+    }
+
+    // ─── Exchange code for token (called from frontend) ───
+    async exchangeCode(req: Request, res: Response) {
+        try {
+            const { code } = req.body;
+            if (!code) return res.status(400).json({ success: false, message: 'Missing code' });
+
+            const cfg = await getMetaConfig();
+            const redirectUri = getRedirectUri();
+            const igSecret = cfg.META_APP_SECRET;
+
+            logger.info({ redirectUri, codeLength: code?.length }, 'Instagram code exchange');
+
+            // Exchange code for short-lived token
+            const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
+                client_id: cfg.META_IG_APP_ID,
+                client_secret: igSecret,
+                grant_type: 'authorization_code',
+                redirect_uri: redirectUri,
+                code,
+            }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+
+            const shortToken = tokenRes.data.access_token;
+            const igUserId = String(tokenRes.data.user_id);
+
+            // Exchange for long-lived token
+            const longTokenRes = await axios.get('https://graph.instagram.com/access_token', {
+                params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
+            });
+            const longToken = longTokenRes.data.access_token;
+
+            // Get profile
+            const profileRes = await axios.get(`https://graph.instagram.com/v21.0/${igUserId}`, {
+                params: { fields: 'user_id,username', access_token: longToken }
+            });
+
+            return res.json({
+                success: true,
+                igUserId,
+                username: profileRes.data.username || 'unknown',
+                accessToken: longToken,
+            });
+        } catch (error: any) {
+            const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            logger.error({ err: error, responseData: error.response?.data }, 'Instagram code exchange failed: ' + detail);
+            return res.status(400).json({ success: false, message: detail });
         }
     }
 

@@ -114,30 +114,21 @@ export class InstagramController {
 
             require('fs').writeFileSync('/tmp/ig-debug.json', JSON.stringify({ redirectUri, clientId: cfg.META_IG_APP_ID, codeStart: code.slice(0, 30), secret: igSecret.slice(0, 5) + '...' }, null, 2));
 
-            // Exchange code for short-lived token via Graph API
-            const tokenRes = await axios.get('https://graph.instagram.com/oauth/access_token', {
-                params: {
-                    client_id: cfg.META_IG_APP_ID,
-                    client_secret: igSecret,
-                    grant_type: 'authorization_code',
-                    redirect_uri: redirectUri,
-                    code,
-                }
-            });
+            // 1. Exchange code for short-lived token (POST to api.instagram.com)
+            const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token',
+                `client_id=${cfg.META_IG_APP_ID}&client_secret=${igSecret}&grant_type=authorization_code&redirect_uri=${encodeURIComponent(redirectUri)}&code=${code}`,
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
 
             const shortToken = tokenRes.data.access_token;
             const igUserId = String(tokenRes.data.user_id);
 
-            // Exchange for long-lived token
-            const longTokenRes = await axios.get('https://graph.instagram.com/access_token', {
-                params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
-            });
-            const longToken = longTokenRes.data.access_token;
+            // 2. Exchange for long-lived token (60 days)
+            const longTokenRes = await axios.get(`https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${igSecret}&access_token=${shortToken}`);
+            const longToken = longTokenRes.data.access_token || shortToken;
 
-            // Get profile
-            const profileRes = await axios.get(`https://graph.instagram.com/v21.0/${igUserId}`, {
-                params: { fields: 'user_id,username', access_token: longToken }
-            });
+            // 3. Get profile
+            const profileRes = await axios.get(`https://graph.instagram.com/v18.0/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${longToken}`);
 
             return res.json({
                 success: true,

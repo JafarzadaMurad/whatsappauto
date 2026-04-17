@@ -112,7 +112,7 @@ export class InstagramController {
             const redirectUri = getRedirectUri();
             const igSecret = cfg.META_APP_SECRET;
 
-            console.log('[IG] redirect_uri:', redirectUri, 'client_id:', cfg.META_IG_APP_ID, 'code:', code.slice(0, 20) + '...');
+            require('fs').writeFileSync('/tmp/ig-debug.json', JSON.stringify({ redirectUri, clientId: cfg.META_IG_APP_ID, codeStart: code.slice(0, 30), secret: igSecret.slice(0, 5) + '...' }, null, 2));
 
             // Exchange code for short-lived token
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
@@ -145,8 +145,8 @@ export class InstagramController {
             });
         } catch (error: any) {
             const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-            console.log('[IG] EXCHANGE ERROR:', detail);
-            logger.error({ err: error, responseData: error.response?.data }, 'Instagram code exchange failed: ' + detail);
+            require('fs').writeFileSync('/tmp/ig-error.json', JSON.stringify({ detail, responseData: error.response?.data, status: error.response?.status }, null, 2));
+            logger.error({ responseData: error.response?.data }, 'Instagram code exchange failed: ' + detail);
             return res.status(400).json({ success: false, message: detail });
         }
     }

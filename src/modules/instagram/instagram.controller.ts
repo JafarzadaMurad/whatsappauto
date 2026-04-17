@@ -104,14 +104,15 @@ export class InstagramController {
     async exchangeCode(req: Request, res: Response) {
         try {
             const rawCode = req.body.code;
+            console.log('[IG] exchangeCode called, code length:', rawCode?.length);
             if (!rawCode) return res.status(400).json({ success: false, message: 'Missing code' });
-            const code = rawCode.replace(/#.*$/, '').trim(); // Remove #_ fragment
+            const code = rawCode.replace(/#.*$/, '').trim();
 
             const cfg = await getMetaConfig();
             const redirectUri = getRedirectUri();
             const igSecret = cfg.META_APP_SECRET;
 
-            logger.info({ redirectUri, codeLength: code?.length }, 'Instagram code exchange');
+            console.log('[IG] redirect_uri:', redirectUri, 'client_id:', cfg.META_IG_APP_ID, 'code:', code.slice(0, 20) + '...');
 
             // Exchange code for short-lived token
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
@@ -144,6 +145,7 @@ export class InstagramController {
             });
         } catch (error: any) {
             const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            console.log('[IG] EXCHANGE ERROR:', detail);
             logger.error({ err: error, responseData: error.response?.data }, 'Instagram code exchange failed: ' + detail);
             return res.status(400).json({ success: false, message: detail });
         }

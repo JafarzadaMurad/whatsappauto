@@ -132,7 +132,9 @@ export class InstagramController {
             }
 
             // 3. Get profile (use user_id from profile, not from token exchange)
-            const profileRes = await axios.get(`https://graph.instagram.com/v18.0/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${longToken}`);
+            const profileRes = await axios.get('https://graph.instagram.com/me', {
+                params: { fields: 'user_id,username', access_token: longToken }
+            });
             const igUserId = String(profileRes.data.user_id || profileRes.data.id);
 
             return res.json({

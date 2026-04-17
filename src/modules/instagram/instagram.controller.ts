@@ -177,11 +177,11 @@ export class InstagramController {
                 create: { userId, igUserId, igUsername: username, accessToken, agentId: agentId || null }
             });
 
-            // Subscribe to webhooks for this account
+            // Subscribe to webhooks for this account (use me/ endpoint with Bearer auth)
             try {
-                await axios.post(`https://graph.instagram.com/v25.0/${igUserId}/subscribed_apps`,
-                    `subscribed_fields=messages,comments&access_token=${accessToken}`,
-                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                await axios.post('https://graph.instagram.com/v25.0/me/subscribed_apps',
+                    'subscribed_fields=messages,comments',
+                    { headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
                 );
                 logger.info(`Subscribed to webhooks for IG user ${igUserId}`);
             } catch (subErr: any) {

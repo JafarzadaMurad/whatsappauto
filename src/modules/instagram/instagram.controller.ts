@@ -123,19 +123,29 @@ export class InstagramController {
             const shortToken = tokenRes.data.access_token;
             const tokenUserId = String(tokenRes.data.user_id);
 
-            // 2. Exchange for long-lived token (60 days)
-            const longTokenRes = await axios.get(`https://graph.instagram.com/access_token`, {
-                params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
-            });
-            const longToken = longTokenRes.data.access_token;
-            if (!longToken) throw new Error('Failed to get long-lived token');
+            // 2. Exchange for long-lived token (60 days) - uses IG App Secret per docs
+            let longToken = shortToken;
+            try {
+                const longTokenRes = await axios.get('https://graph.instagram.com/access_token', {
+                    params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
+                });
+                if (longTokenRes.data.access_token) longToken = longTokenRes.data.access_token;
+            } catch (e: any) {
+                require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify(e.response?.data || e.message));
+            }
 
-            // 3. Get profile
-            const profileRes = await axios.get('https://graph.instagram.com/me', {
-                params: { fields: 'user_id,username', access_token: longToken }
-            });
-            const username = profileRes.data.username || 'unknown';
-            const igUserId = String(profileRes.data.user_id || profileRes.data.id || tokenUserId);
+            // 3. Get profile via v25.0
+            let username = 'unknown';
+            let igUserId = tokenUserId;
+            try {
+                const profileRes = await axios.get('https://graph.instagram.com/v25.0/me', {
+                    params: { fields: 'user_id,username', access_token: longToken }
+                });
+                username = profileRes.data.username || 'unknown';
+                igUserId = String(profileRes.data.user_id || profileRes.data.id || tokenUserId);
+            } catch (e: any) {
+                require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify(e.response?.data || e.message));
+            }
 
             return res.json({
                 success: true,
@@ -169,9 +179,9 @@ export class InstagramController {
 
             // Subscribe to webhooks for this account
             try {
-                await axios.post('https://graph.instagram.com/v18.0/me/subscribed_apps',
-                    'subscribed_fields=messages,comments',
-                    { headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+                await axios.post(`https://graph.instagram.com/v25.0/${igUserId}/subscribed_apps`,
+                    `subscribed_fields=messages,comments&access_token=${accessToken}`,
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
                 );
                 logger.info(`Subscribed to webhooks for IG user ${igUserId}`);
             } catch (subErr: any) {

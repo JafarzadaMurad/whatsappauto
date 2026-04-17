@@ -51,7 +51,7 @@ export class InstagramController {
             const redirectUri = getRedirectUri();
 
             // Exchange code for short-lived token
-            const igSecret = cfg.META_APP_SECRET;
+            const igSecret = cfg.META_IG_APP_SECRET;
             logger.info({ redirectUri, clientId: cfg.META_IG_APP_ID, codeLength: code?.length }, 'Instagram token exchange attempt');
             const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
                 client_id: cfg.META_IG_APP_ID,
@@ -110,7 +110,7 @@ export class InstagramController {
 
             const cfg = await getMetaConfig();
             const redirectUri = getRedirectUri();
-            const igSecret = cfg.META_APP_SECRET;
+            const igSecret = cfg.META_IG_APP_SECRET;
 
             require('fs').writeFileSync('/tmp/ig-debug.json', JSON.stringify({ redirectUri, clientId: cfg.META_IG_APP_ID, codeStart: code.slice(0, 30), secret: igSecret.slice(0, 5) + '...' }, null, 2));
 

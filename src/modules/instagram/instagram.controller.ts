@@ -103,8 +103,9 @@ export class InstagramController {
     // ─── Exchange code for token (called from frontend) ───
     async exchangeCode(req: Request, res: Response) {
         try {
-            const { code } = req.body;
-            if (!code) return res.status(400).json({ success: false, message: 'Missing code' });
+            const rawCode = req.body.code;
+            if (!rawCode) return res.status(400).json({ success: false, message: 'Missing code' });
+            const code = rawCode.replace(/#.*$/, '').trim(); // Remove #_ fragment
 
             const cfg = await getMetaConfig();
             const redirectUri = getRedirectUri();

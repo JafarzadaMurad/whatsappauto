@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import api from "@/lib/api";
@@ -10,34 +10,36 @@ function CallbackContent() {
     const searchParams = useSearchParams();
     const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
     const [error, setError] = useState("");
+    const processed = useRef(false);
 
     useEffect(() => {
-        const process = async () => {
-            const code = searchParams.get('code');
-            const errorParam = searchParams.get('error');
+        if (processed.current) return;
+        processed.current = true;
 
-            if (errorParam) {
-                setError(errorParam);
-                setStatus('error');
-                return;
-            }
+        const code = searchParams.get('code');
+        const errorParam = searchParams.get('error') || searchParams.get('error_message');
 
-            if (!code) {
-                setError('No authorization code received');
-                setStatus('error');
-                return;
-            }
+        if (errorParam) {
+            setError(errorParam);
+            setStatus('error');
+            return;
+        }
 
-            try {
-                // Exchange code for token via backend
-                const exchangeRes = await api.post('/instagram/exchange-code', { code });
+        if (!code) {
+            setError('No authorization code received');
+            setStatus('error');
+            return;
+        }
+
+        // Send immediately
+        api.post('/instagram/exchange-code', { code })
+            .then(async (exchangeRes) => {
                 if (!exchangeRes.data.success) {
                     setError(exchangeRes.data.message || 'Token exchange failed');
                     setStatus('error');
                     return;
                 }
 
-                // Save account
                 await api.post('/instagram/accounts', {
                     igUserId: exchangeRes.data.igUserId,
                     username: exchangeRes.data.username,
@@ -46,13 +48,11 @@ function CallbackContent() {
 
                 setStatus('success');
                 setTimeout(() => router.push('/dashboard/instagram'), 2000);
-            } catch (err: any) {
+            })
+            .catch((err: any) => {
                 setError(err.response?.data?.message || err.message);
                 setStatus('error');
-            }
-        };
-
-        process();
+            });
     }, []);
 
     return (
@@ -75,7 +75,7 @@ function CallbackContent() {
                 <>
                     <XCircle className="w-12 h-12 text-destructive mb-4" />
                     <h2 className="text-xl font-semibold">Connection Failed</h2>
-                    <p className="text-muted-foreground mt-2 max-w-md">{error}</p>
+                    <p className="text-muted-foreground mt-2 max-w-md break-all text-sm">{error}</p>
                     <button onClick={() => router.push('/dashboard/instagram')}
                         className="mt-4 px-6 py-2.5 bg-secondary rounded-xl text-sm font-medium hover:bg-secondary/80 transition-colors">
                         Back to Instagram

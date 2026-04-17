@@ -121,14 +121,19 @@ export class InstagramController {
             );
 
             const shortToken = tokenRes.data.access_token;
-            const igUserId = String(tokenRes.data.user_id);
 
             // 2. Exchange for long-lived token (60 days)
-            const longTokenRes = await axios.get(`https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${igSecret}&access_token=${shortToken}`);
-            const longToken = longTokenRes.data.access_token || shortToken;
+            let longToken = shortToken;
+            try {
+                const longTokenRes = await axios.get(`https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${igSecret}&access_token=${shortToken}`);
+                longToken = longTokenRes.data.access_token || shortToken;
+            } catch (e) {
+                // If long-lived exchange fails, use short-lived token
+            }
 
-            // 3. Get profile
+            // 3. Get profile (use user_id from profile, not from token exchange)
             const profileRes = await axios.get(`https://graph.instagram.com/v18.0/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${longToken}`);
+            const igUserId = String(profileRes.data.user_id || profileRes.data.id);
 
             return res.json({
                 success: true,

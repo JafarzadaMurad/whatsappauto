@@ -114,14 +114,16 @@ export class InstagramController {
 
             require('fs').writeFileSync('/tmp/ig-debug.json', JSON.stringify({ redirectUri, clientId: cfg.META_IG_APP_ID, codeStart: code.slice(0, 30), secret: igSecret.slice(0, 5) + '...' }, null, 2));
 
-            // Exchange code for short-lived token
-            const tokenRes = await axios.post('https://api.instagram.com/oauth/access_token', new URLSearchParams({
-                client_id: cfg.META_IG_APP_ID,
-                client_secret: igSecret,
-                grant_type: 'authorization_code',
-                redirect_uri: redirectUri,
-                code,
-            }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+            // Exchange code for short-lived token via Graph API
+            const tokenRes = await axios.get('https://graph.instagram.com/oauth/access_token', {
+                params: {
+                    client_id: cfg.META_IG_APP_ID,
+                    client_secret: igSecret,
+                    grant_type: 'authorization_code',
+                    redirect_uri: redirectUri,
+                    code,
+                }
+            });
 
             const shortToken = tokenRes.data.access_token;
             const igUserId = String(tokenRes.data.user_id);

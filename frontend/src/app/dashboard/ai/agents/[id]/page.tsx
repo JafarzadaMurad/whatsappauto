@@ -32,6 +32,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [systemPrompt, setSystemPrompt] = useState("");
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
+    const [allowedUrls, setAllowedUrls] = useState<string>("");
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -51,6 +52,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setSystemPrompt(a.systemPrompt || "");
                     setAllowedTableIds(a.allowedTableIds || []);
                     setSkills(a.skills || []);
+                    setAllowedUrls((a.allowedUrls || []).join('\n'));
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -92,7 +94,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const handleSave = async () => {
         setSaving(true);
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean) });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
         } catch (err) { console.error(err); }
@@ -109,7 +111,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean), isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -380,6 +382,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 {[
                                     { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
+                                    { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
                                 ].map(skill => (
                                     <label key={skill.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${skills.includes(skill.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
                                         <input type="checkbox" checked={skills.includes(skill.id)}
@@ -416,6 +419,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     ))}
                                 </div>
                             )}
+                        </div>
+                        )}
+
+                        {skills.includes('http') && (
+                        <div>
+                            <h3 className="font-semibold flex items-center gap-2 mb-2">
+                                <Wrench className="w-4 h-4 text-muted-foreground" /> Allowed URL Patterns
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-2">One pattern per line. Use <code className="bg-secondary px-1 rounded">*</code> as wildcard. Empty = all URLs allowed (not recommended).</p>
+                            <textarea value={allowedUrls} onChange={e => setAllowedUrls(e.target.value)} rows={4}
+                                placeholder={"https://api.example.com/*\nhttps://hooks.zapier.com/*"}
+                                className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm font-mono" />
                         </div>
                         )}
 

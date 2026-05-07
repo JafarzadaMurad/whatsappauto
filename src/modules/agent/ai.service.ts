@@ -144,13 +144,62 @@ function buildCrmTools(userId: string) {
     };
 }
 
+// ─── SKILL: HTTP API Requests ───
+import axios from 'axios';
+
+function urlAllowed(url: string, patterns: string[]): boolean {
+    if (!patterns || patterns.length === 0) return true; // no restriction
+    return patterns.some(p => {
+        const regex = new RegExp('^' + p.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+        return regex.test(url);
+    });
+}
+
+function buildHttpTools(allowedUrls: string[]) {
+    return {
+        httpRequest: makeTool(
+            'Make an HTTP API request to an external endpoint. Use this to call external APIs, webhooks, or services.',
+            z.object({
+                url: z.string().describe('Full URL to call (e.g. https://api.example.com/data)'),
+                method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).describe('HTTP method'),
+                headers: z.record(z.string(), z.string()).optional().describe('Optional request headers as key-value pairs (e.g. {"Authorization": "Bearer xxx"})'),
+                body: z.any().optional().describe('Optional request body (object for JSON, string for raw text)'),
+                queryParams: z.record(z.string(), z.string()).optional().describe('Optional query string parameters as key-value pairs')
+            }),
+            async ({ url, method, headers, body, queryParams }) => {
+                if (!urlAllowed(url, allowedUrls)) {
+                    return { error: 'URL not in allowed list', allowedPatterns: allowedUrls };
+                }
+                try {
+                    const res = await axios.request({
+                        url,
+                        method,
+                        headers: headers || {},
+                        data: body,
+                        params: queryParams,
+                        timeout: 30000,
+                        maxContentLength: 1024 * 1024, // 1MB
+                        validateStatus: () => true, // don't throw on non-2xx
+                    });
+                    let data: any = res.data;
+                    if (typeof data === 'string' && data.length > 5000) data = data.slice(0, 5000) + '...[truncated]';
+                    return { status: res.status, data };
+                } catch (err: any) {
+                    return { error: err.message, code: err.code };
+                }
+            }
+        )
+    };
+}
+
 // ─── Skill Registry ───
 const SKILL_DESCRIPTIONS: Record<string, string> = {
     tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
     crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
+    http: 'You can call external HTTP APIs via httpRequest. Specify URL, method (GET/POST/PUT/PATCH/DELETE), optional headers, body, and queryParams.',
 };
 
-function buildToolsForSkills(skills: string[], allowedTableIds: string[], userId: string) {
+function buildToolsForSkills(skills: string[], allowedTableIds: string[], userId: string, allowedUrls: string[] = []) {
     let tools: Record<string, any> = {};
     let prompts: string[] = [];
 
@@ -162,6 +211,11 @@ function buildToolsForSkills(skills: string[], allowedTableIds: string[], userId
     if (skills.includes('crm')) {
         tools = { ...tools, ...buildCrmTools(userId) };
         prompts.push(SKILL_DESCRIPTIONS.crm);
+    }
+
+    if (skills.includes('http')) {
+        tools = { ...tools, ...buildHttpTools(allowedUrls) };
+        prompts.push(SKILL_DESCRIPTIONS.http);
     }
 
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n') : '' };
@@ -229,7 +283,7 @@ export class AiService {
 
             // Build tools based on agent skills
             const skills = (agent as any).skills || [];
-            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId);
+            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId, (agent as any).allowedUrls || []);
 
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 

@@ -9,6 +9,7 @@ const createAgentSchema = z.object({
     systemPrompt: z.string().optional(),
     allowedTableIds: z.array(z.string()).optional(),
     skills: z.array(z.string()).optional(),
+    allowedUrls: z.array(z.string()).optional(),
     isActive: z.boolean().optional()
 });
 
@@ -59,7 +60,8 @@ export class AgentController {
                     model: data.model,
                     systemPrompt: data.systemPrompt || "",
                     allowedTableIds: data.allowedTableIds || [],
-                    skills: data.skills || []
+                    skills: data.skills || [],
+                    allowedUrls: data.allowedUrls || []
                 }
             });
 
@@ -88,6 +90,7 @@ export class AgentController {
                     systemPrompt: data.systemPrompt,
                     allowedTableIds: data.allowedTableIds || [],
                     skills: data.skills || [],
+                    allowedUrls: data.allowedUrls || [],
                     ...(data.isActive !== undefined ? { isActive: data.isActive } : {})
                 }
             });

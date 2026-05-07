@@ -82,6 +82,48 @@ function buildTableTools(allowedTableIds: string[]) {
     };
 }
 
+// ─── SKILL: HTTP API Requests ───
+function urlAllowed(url: string, patterns: string[]): boolean {
+    if (!patterns || patterns.length === 0) return true;
+    return patterns.some(p => {
+        const regex = new RegExp('^' + p.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+        return regex.test(url);
+    });
+}
+
+function buildHttpTools(allowedUrls: string[]) {
+    return {
+        httpRequest: makeTool(
+            'Make an HTTP API request to an external endpoint.',
+            z.object({
+                url: z.string().describe('Full URL to call'),
+                method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).describe('HTTP method'),
+                headers: z.record(z.string(), z.string()).optional().describe('Optional headers'),
+                body: z.any().optional().describe('Optional request body'),
+                queryParams: z.record(z.string(), z.string()).optional().describe('Optional query params')
+            }),
+            async ({ url, method, headers, body, queryParams }) => {
+                if (!urlAllowed(url, allowedUrls)) {
+                    return { error: 'URL not in allowed list', allowedPatterns: allowedUrls };
+                }
+                try {
+                    const res = await axios.request({
+                        url, method,
+                        headers: headers || {}, data: body, params: queryParams,
+                        timeout: 30000, maxContentLength: 1024 * 1024,
+                        validateStatus: () => true,
+                    });
+                    let data: any = res.data;
+                    if (typeof data === 'string' && data.length > 5000) data = data.slice(0, 5000) + '...[truncated]';
+                    return { status: res.status, data };
+                } catch (err: any) {
+                    return { error: err.message, code: err.code };
+                }
+            }
+        )
+    };
+}
+
 // ─── Send Instagram DM ───
 async function sendIgMessage(igUserId: string, recipientId: string, text: string, accessToken: string) {
     await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
@@ -194,6 +236,10 @@ export class InstagramAiService {
         if (skills.includes('tables') && agent.allowedTableIds?.length > 0) {
             tools = { ...tools, ...buildTableTools(agent.allowedTableIds) };
             skillPrompts.push('You have access to data tables via listTables, searchTable, getTableRows.');
+        }
+        if (skills.includes('http')) {
+            tools = { ...tools, ...buildHttpTools(agent.allowedUrls || []) };
+            skillPrompts.push('You can call external HTTP APIs via httpRequest (URL, method, optional headers/body/queryParams).');
         }
 
         const platformNote = type === 'dm'

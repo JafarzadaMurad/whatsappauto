@@ -68,7 +68,7 @@ export default function AiAgentsPage() {
             if (editingAgent) {
                 await api.put(`/agents/${editingAgent.id}`, { name, providerId, model, systemPrompt, allowedTableIds });
             } else {
-                await api.post('/agents', { name, providerId, model, systemPrompt, allowedTableIds, skills: [] });
+                await api.post('/agents', { name, providerId, model, systemPrompt, allowedTableIds, skills: [], allowedUrls: [] });
             }
             const reload = await api.get('/agents');
             setAgents(reload.data.agents);

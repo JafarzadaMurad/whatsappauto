@@ -123,28 +123,28 @@ export class InstagramController {
             const shortToken = tokenRes.data.access_token;
             const tokenUserId = String(tokenRes.data.user_id);
 
-            // 2. Exchange for long-lived token (60 days) - uses IG App Secret per docs
+            // 2. Exchange for long-lived token (60 days)
             let longToken = shortToken;
             try {
-                const longTokenRes = await axios.get('https://graph.instagram.com/access_token', {
-                    params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
-                });
+                const longTokenRes = await axios.get(
+                    `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(igSecret)}&access_token=${encodeURIComponent(shortToken)}`
+                );
                 if (longTokenRes.data.access_token) longToken = longTokenRes.data.access_token;
             } catch (e: any) {
-                require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify(e.response?.data || e.message));
+                require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));
             }
 
-            // 3. Get profile via v25.0
+            // 3. Get profile
             let username = 'unknown';
             let igUserId = tokenUserId;
             try {
-                const profileRes = await axios.get('https://graph.instagram.com/v25.0/me', {
-                    params: { fields: 'user_id,username', access_token: longToken }
-                });
+                const profileRes = await axios.get(
+                    `https://graph.instagram.com/me?fields=user_id,username&access_token=${encodeURIComponent(longToken)}`
+                );
                 username = profileRes.data.username || 'unknown';
                 igUserId = String(profileRes.data.user_id || profileRes.data.id || tokenUserId);
             } catch (e: any) {
-                require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify(e.response?.data || e.message));
+                require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));
             }
 
             return res.json({

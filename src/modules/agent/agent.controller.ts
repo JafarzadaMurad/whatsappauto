@@ -85,7 +85,7 @@ export class AgentController {
                 where: { id },
                 data: {
                     name: data.name,
-                    providerId: data.providerId,
+                    provider: { connect: { id: data.providerId } },
                     model: data.model,
                     systemPrompt: data.systemPrompt,
                     allowedTableIds: data.allowedTableIds || [],

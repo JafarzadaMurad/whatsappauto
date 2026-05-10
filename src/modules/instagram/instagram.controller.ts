@@ -30,7 +30,7 @@ export class InstagramController {
             }
 
             const redirectUri = getRedirectUri();
-            const scope = 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments';
+            const scope = 'instagram_business_basic,instagram_business_manage_messages';
             const url = `https://www.instagram.com/oauth/authorize?enable_fb_login=0&force_authentication=1&client_id=${cfg.META_IG_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}`;
 
             return res.json({ success: true, url });

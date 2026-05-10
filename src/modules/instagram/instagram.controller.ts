@@ -126,25 +126,38 @@ export class InstagramController {
             // 2. Exchange for long-lived token (60 days)
             let longToken = shortToken;
             try {
-                const longTokenRes = await axios.get(
-                    `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(igSecret)}&access_token=${encodeURIComponent(shortToken)}`
+                const longTokenRes = await axios.post('https://graph.instagram.com/access_token',
+                    `grant_type=ig_exchange_token&client_secret=${encodeURIComponent(igSecret)}&access_token=${encodeURIComponent(shortToken)}`,
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
                 );
                 if (longTokenRes.data.access_token) longToken = longTokenRes.data.access_token;
             } catch (e: any) {
                 require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));
             }
 
-            // 3. Get profile
+            // 3. Get profile (try GET, then POST as fallback)
             let username = 'unknown';
             let igUserId = tokenUserId;
-            try {
-                const profileRes = await axios.get(
-                    `https://graph.instagram.com/me?fields=user_id,username&access_token=${encodeURIComponent(longToken)}`
-                );
-                username = profileRes.data.username || 'unknown';
-                igUserId = String(profileRes.data.user_id || profileRes.data.id || tokenUserId);
-            } catch (e: any) {
-                require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));
+            const profileEndpoints = [
+                { url: 'https://graph.instagram.com/me', method: 'GET' as const },
+                { url: 'https://graph.instagram.com/v25.0/me', method: 'GET' as const },
+                { url: `https://graph.instagram.com/${tokenUserId}`, method: 'GET' as const },
+            ];
+            for (const ep of profileEndpoints) {
+                try {
+                    const r = await axios.request({
+                        url: ep.url, method: ep.method,
+                        params: { fields: 'user_id,username', access_token: longToken }
+                    });
+                    if (r.data.username || r.data.user_id) {
+                        username = r.data.username || 'unknown';
+                        igUserId = String(r.data.user_id || r.data.id || tokenUserId);
+                        require('fs').writeFileSync('/tmp/ig-profile-success.json', JSON.stringify({ endpoint: ep.url, data: r.data }));
+                        break;
+                    }
+                } catch (e: any) {
+                    require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ endpoint: ep.url, data: e.response?.data, status: e.response?.status }));
+                }
             }
 
             return res.json({

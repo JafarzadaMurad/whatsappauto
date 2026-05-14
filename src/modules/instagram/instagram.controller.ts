@@ -6,6 +6,19 @@ import axios from 'axios';
 import { InstagramAiService } from './instagram.ai.service';
 
 const VERIFY_TOKEN = 'alchatbot_verify_2024';
+
+// In-memory cache to deduplicate webhook events (Meta sometimes sends duplicates)
+const processedEvents = new Map<string, number>();
+function isDuplicate(key: string): boolean {
+    const now = Date.now();
+    // Cleanup old entries (older than 10 minutes)
+    for (const [k, t] of processedEvents.entries()) {
+        if (now - t > 600000) processedEvents.delete(k);
+    }
+    if (processedEvents.has(key)) return true;
+    processedEvents.set(key, now);
+    return false;
+}
 function getRedirectUri() {
     const base = config.FRONTEND_URL || 'https://chatbot.tur.al';
     return `${base.replace(/\/$/, '')}/dashboard/instagram/callback`;
@@ -292,7 +305,14 @@ export class InstagramController {
                     if (messaging.message && messaging.sender?.id !== igUserId) {
                         const senderId = messaging.sender.id;
                         const text = messaging.message.text;
+                        const mid = messaging.message.mid;
                         if (!text) continue;
+
+                        // Dedupe by message ID
+                        if (mid && isDuplicate(`dm:${mid}`)) {
+                            logger.info(`[IG] Duplicate DM ignored: ${mid}`);
+                            continue;
+                        }
 
                         logger.info(`[IG] DM from ${senderId} to ${igUserId}: ${text}`);
                         InstagramAiService.handleDm(igUserId, senderId, text).catch(err => {
@@ -311,6 +331,12 @@ export class InstagramController {
                         const mediaId = comment.media?.id;
 
                         if (!text || !from || from.id === igUserId) continue;
+
+                        // Dedupe by comment ID
+                        if (isDuplicate(`comment:${commentId}`)) {
+                            logger.info(`[IG] Duplicate comment ignored: ${commentId}`);
+                            continue;
+                        }
 
                         logger.info(`[IG] Comment from ${from.username} on media ${mediaId}: ${text}`);
                         InstagramAiService.handleComment(igUserId, commentId, text, from, mediaId).catch(err => {

@@ -295,6 +295,8 @@ export class InstagramController {
 
         try {
             const body = req.body;
+            // Debug: log every incoming webhook to see what Meta sends
+            logger.info({ webhook: JSON.stringify(body).slice(0, 500) }, '[IG] webhook received');
             if (body.object !== 'instagram') return;
 
             for (const entry of body.entry || []) {

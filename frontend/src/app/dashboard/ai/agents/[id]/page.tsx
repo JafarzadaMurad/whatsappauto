@@ -143,7 +143,6 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [systemPrompt, setSystemPrompt] = useState("");
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
-    const [allowedUrls, setAllowedUrls] = useState<string>("");
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
@@ -166,7 +165,6 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setSystemPrompt(a.systemPrompt || "");
                     setAllowedTableIds(a.allowedTableIds || []);
                     setSkills(a.skills || []);
-                    setAllowedUrls((a.allowedUrls || []).join('\n'));
                     setHttpTools(((a.httpTools as HttpToolTemplate[]) || []).map((t: any) => ({
                         ...t,
                         id: t.id || Math.random().toString(36).slice(2)
@@ -270,7 +268,6 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean),
                 httpTools
             });
             const res = await api.get(`/agents/${id}`);
@@ -289,7 +286,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean), httpTools, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -602,21 +599,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
                         {skills.includes('http') && (
                         <div>
-                            <h3 className="font-semibold flex items-center gap-2 mb-2">
-                                <Wrench className="w-4 h-4 text-muted-foreground" /> Allowed URL Patterns (generic tool)
-                            </h3>
-                            <p className="text-sm text-muted-foreground mb-2">One pattern per line. Use <code className="bg-secondary px-1 rounded">*</code> as wildcard. Empty = all URLs allowed (not recommended). Applies to the generic <code className="bg-secondary px-1 rounded">httpRequest</code> tool.</p>
-                            <textarea value={allowedUrls} onChange={e => setAllowedUrls(e.target.value)} rows={4}
-                                placeholder={"https://api.example.com/*\nhttps://hooks.zapier.com/*"}
-                                className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm font-mono" />
-                        </div>
-                        )}
-
-                        {skills.includes('http') && (
-                        <div>
                             <div className="flex items-center justify-between mb-2">
                                 <h3 className="font-semibold flex items-center gap-2">
-                                    <Wrench className="w-4 h-4 text-muted-foreground" /> Custom HTTP Tools
+                                    <Wrench className="w-4 h-4 text-muted-foreground" /> HTTP Tools
                                 </h3>
                                 <button
                                     type="button"

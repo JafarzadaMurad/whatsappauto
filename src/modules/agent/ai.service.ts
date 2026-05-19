@@ -147,14 +147,6 @@ function buildCrmTools(userId: string) {
 // ─── SKILL: HTTP API Requests ───
 import axios from 'axios';
 
-function urlAllowed(url: string, patterns: string[]): boolean {
-    if (!patterns || patterns.length === 0) return true; // no restriction
-    return patterns.some(p => {
-        const regex = new RegExp('^' + p.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
-        return regex.test(url);
-    });
-}
-
 // Structured HTTP tool template types (n8n-style)
 export type ValueSpec =
     | { mode: 'fixed'; value: string }
@@ -410,39 +402,9 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
     };
 }
 
-export function buildHttpTools(allowedUrls: string[], httpTools: HttpToolTemplate[] = []) {
+export function buildHttpTools(httpTools: HttpToolTemplate[] = []) {
     const tools: Record<string, any> = {};
-
-    // Generic ad-hoc tool (always available when http skill is on)
-    tools.httpRequest = makeTool(
-        'Make an HTTP API request to an external endpoint. Use this when no dedicated tool exists for the API you need.',
-        z.object({
-            url: z.string().describe('Full URL to call (e.g. https://api.example.com/data)'),
-            method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).describe('HTTP method'),
-            headers: z.record(z.string(), z.string()).optional().describe('Optional request headers as key-value pairs'),
-            body: z.any().optional().describe('Optional request body (object for JSON, string for raw text)'),
-            queryParams: z.record(z.string(), z.string()).optional().describe('Optional query string parameters as key-value pairs')
-        }),
-        async ({ url, method, headers, body, queryParams }) => {
-            if (!urlAllowed(url, allowedUrls)) {
-                return { error: 'URL not in allowed list', allowedPatterns: allowedUrls };
-            }
-            try {
-                const res = await axios.request({
-                    url, method, headers: headers || {}, data: body, params: queryParams,
-                    timeout: 30000, maxContentLength: 1024 * 1024, validateStatus: () => true,
-                });
-                let data: any = res.data;
-                if (typeof data === 'string' && data.length > 5000) data = data.slice(0, 5000) + '...[truncated]';
-                return { status: res.status, data };
-            } catch (err: any) {
-                return { error: err.message, code: err.code };
-            }
-        }
-    );
-
-    // Add user-defined templated HTTP tools as named tools
-    const usedNames = new Set<string>(['httpRequest']);
+    const usedNames = new Set<string>();
     (httpTools || []).forEach((tpl, idx) => {
         if (!tpl || !tpl.method || !tpl.url) return;
         let toolName = sanitizeName(tpl.name, `httpTool${idx + 1}`);
@@ -464,14 +426,13 @@ export function buildHttpTools(allowedUrls: string[], httpTools: HttpToolTemplat
 const SKILL_DESCRIPTIONS: Record<string, string> = {
     tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
     crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
-    http: 'You can call external HTTP APIs via httpRequest. Specify URL, method (GET/POST/PUT/PATCH/DELETE), optional headers, body, and queryParams.',
+    http: 'You can call external HTTP APIs via the dedicated tools listed below.',
 };
 
 function buildToolsForSkills(
     skills: string[],
     allowedTableIds: string[],
     userId: string,
-    allowedUrls: string[] = [],
     httpTools: HttpToolTemplate[] = []
 ) {
     let tools: Record<string, any> = {};
@@ -487,15 +448,12 @@ function buildToolsForSkills(
         prompts.push(SKILL_DESCRIPTIONS.crm);
     }
 
-    if (skills.includes('http')) {
-        tools = { ...tools, ...buildHttpTools(allowedUrls, httpTools) };
-        prompts.push(SKILL_DESCRIPTIONS.http);
-        if (httpTools && httpTools.length > 0) {
-            const list = httpTools
-                .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
-                .join('\n');
-            prompts.push(`You also have these dedicated HTTP tools available — prefer them over the generic httpRequest when applicable:\n${list}`);
-        }
+    if (skills.includes('http') && httpTools && httpTools.length > 0) {
+        tools = { ...tools, ...buildHttpTools(httpTools) };
+        const list = httpTools
+            .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
+            .join('\n');
+        prompts.push(`You can call these dedicated HTTP tools:\n${list}`);
     }
 
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n') : '' };
@@ -564,7 +522,7 @@ export class AiService {
             // Build tools based on agent skills
             const skills = (agent as any).skills || [];
             const httpTools = (((agent as any).httpTools) || []) as HttpToolTemplate[];
-            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId, (agent as any).allowedUrls || [], httpTools);
+            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId, httpTools);
 
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 

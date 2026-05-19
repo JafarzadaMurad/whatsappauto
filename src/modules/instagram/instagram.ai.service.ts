@@ -200,11 +200,10 @@ export class InstagramAiService {
         }
         if (skills.includes('http')) {
             const httpTools = ((agent.httpTools as any) || []) as HttpToolTemplate[];
-            tools = { ...tools, ...buildHttpToolsShared(agent.allowedUrls || [], httpTools) };
-            skillPrompts.push('You can call external HTTP APIs via httpRequest (URL, method, optional headers/body/queryParams).');
             if (httpTools.length > 0) {
+                tools = { ...tools, ...buildHttpToolsShared(httpTools) };
                 const list = httpTools.map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`).join('\n');
-                skillPrompts.push(`You also have these dedicated HTTP tools available — prefer them over the generic httpRequest when applicable:\n${list}`);
+                skillPrompts.push(`You can call these dedicated HTTP tools:\n${list}`);
             }
         }
 

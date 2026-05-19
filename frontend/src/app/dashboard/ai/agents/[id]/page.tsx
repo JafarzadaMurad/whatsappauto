@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -133,6 +133,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [allowedUrls, setAllowedUrls] = useState<string>("");
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
+    const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -193,6 +194,44 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
             if (res.data.success) setChatMessages(res.data.messages);
         } catch (err) { console.error(err); }
         finally { setLoadingChat(false); }
+    };
+
+    // Collect AI-mode fields a test panel needs (URL, each AI query/header/body param, raw body)
+    const aiFieldsOf = (tool: HttpToolTemplate): { key: string; label: string }[] => {
+        const out: { key: string; label: string }[] = [];
+        if (tool.url.mode === 'ai') out.push({ key: 'url', label: 'URL — ' + tool.url.description });
+        (tool.queryParams || []).forEach(p => {
+            if (p.value.mode === 'ai') out.push({ key: `query.${p.name}`, label: `?${p.name} — ${p.value.description}` });
+        });
+        (tool.headers || []).forEach(h => {
+            if (h.value.mode === 'ai') out.push({ key: `header.${h.name}`, label: `${h.name}: — ${h.value.description}` });
+        });
+        if (tool.bodyType === 'json') {
+            (tool.bodyParams || []).forEach(b => {
+                if (b.value.mode === 'ai') out.push({ key: `body.${b.name}`, label: `body.${b.name} — ${b.value.description}` });
+            });
+        } else if (tool.bodyType === 'raw' && tool.rawBody?.mode === 'ai') {
+            out.push({ key: 'body', label: 'Raw body — ' + tool.rawBody.description });
+        }
+        return out;
+    };
+
+    const runTest = async (tool: HttpToolTemplate) => {
+        const current = testStates[tool.id] || { values: {}, response: null, loading: false };
+        setTestStates(prev => ({ ...prev, [tool.id]: { ...current, loading: true } }));
+        try {
+            const res = await api.post(`/agents/test-http-tool`, { template: tool, aiValues: current.values });
+            setTestStates(prev => ({ ...prev, [tool.id]: { ...current, loading: false, response: res.data.result ?? res.data } }));
+        } catch (err: any) {
+            setTestStates(prev => ({ ...prev, [tool.id]: { ...current, loading: false, response: { error: err.response?.data?.message || err.message } } }));
+        }
+    };
+
+    const setTestValue = (toolId: string, key: string, value: string) => {
+        setTestStates(prev => {
+            const cur = prev[toolId] || { values: {}, response: null, loading: false };
+            return { ...prev, [toolId]: { ...cur, values: { ...cur.values, [key]: value } } };
+        });
     };
 
     const handleSave = async () => {
@@ -690,6 +729,69 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                         {tool.bodyType === 'raw' && (
                                                             <div className="mt-2">
                                                                 <ValueInput spec={tool.rawBody || { mode: 'fixed', value: '' }} onChange={v => update({ rawBody: v })} placeholder='{"key":"value"}' />
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Test Panel */}
+                                                    <div className="pt-3 mt-2 border-t border-dashed border-border">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <h4 className="text-sm font-semibold flex items-center gap-2 text-muted-foreground">
+                                                                <Play className="w-3.5 h-3.5" /> Test this tool
+                                                            </h4>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => runTest(tool)}
+                                                                disabled={testStates[tool.id]?.loading}
+                                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors disabled:opacity-60"
+                                                            >
+                                                                {testStates[tool.id]?.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                                                                Run Test
+                                                            </button>
+                                                        </div>
+
+                                                        {(() => {
+                                                            const aiFields = aiFieldsOf(tool);
+                                                            if (aiFields.length === 0) {
+                                                                return <p className="text-xs text-muted-foreground">All values are fixed — nothing to fill in. Click "Run Test".</p>;
+                                                            }
+                                                            return (
+                                                                <div className="space-y-2">
+                                                                    <p className="text-xs text-muted-foreground">Provide test values for AI-filled fields:</p>
+                                                                    {aiFields.map(f => (
+                                                                        <div key={f.key}>
+                                                                            <label className="text-xs text-muted-foreground block mb-0.5">{f.label}</label>
+                                                                            <input
+                                                                                type="text"
+                                                                                value={testStates[tool.id]?.values?.[f.key] || ''}
+                                                                                onChange={e => setTestValue(tool.id, f.key, e.target.value)}
+                                                                                placeholder="test value"
+                                                                                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+                                                                            />
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            );
+                                                        })()}
+
+                                                        {testStates[tool.id]?.response && (
+                                                            <div className="mt-3">
+                                                                <div className="flex items-center gap-2 mb-1.5">
+                                                                    <span className="text-xs text-muted-foreground">Response:</span>
+                                                                    {testStates[tool.id].response.status !== undefined && (
+                                                                        <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${testStates[tool.id].response.status >= 200 && testStates[tool.id].response.status < 300 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                            {testStates[tool.id].response.status}
+                                                                        </span>
+                                                                    )}
+                                                                    {testStates[tool.id].response.error && (
+                                                                        <span className="text-xs font-mono font-semibold px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">error</span>
+                                                                    )}
+                                                                </div>
+                                                                <pre className="bg-secondary/50 border border-border rounded-lg p-3 text-xs font-mono overflow-auto max-h-64 whitespace-pre-wrap break-all">
+{typeof testStates[tool.id].response.data === 'object'
+    ? JSON.stringify(testStates[tool.id].response.data, null, 2)
+    : (testStates[tool.id].response.data ?? testStates[tool.id].response.error ?? '')}
+                                                                </pre>
                                                             </div>
                                                         )}
                                                     </div>

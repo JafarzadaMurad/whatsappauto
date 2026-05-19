@@ -237,7 +237,7 @@ function resolveValue(spec: ValueSpec, aiVal: string | undefined): string {
     return aiVal ?? '';
 }
 
-function buildTemplateExecutor(tpl: HttpToolTemplate) {
+export function buildTemplateExecutor(tpl: HttpToolTemplate) {
     return async (args: Record<string, any>) => {
         try {
             // URL

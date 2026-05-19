@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate } from './ai.service';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -240,6 +241,50 @@ export class AgentController {
 
             return res.json({ success: true, stats, totals });
         } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async testHttpTool(req: Request, res: Response) {
+        try {
+            const schema = z.object({
+                template: httpToolTemplateSchema,
+                aiValues: z.record(z.string(), z.string()).optional()
+            });
+            const { template, aiValues } = schema.parse(req.body);
+
+            // Map UI aiValues (keyed by raw param name) -> executor arg shape
+            // (executor expects keys like `query_<sanitized>`, `header_<sanitized>`, `body_<sanitized>`, `url`, `body`)
+            const args: Record<string, string> = {};
+            if (template.url.mode === 'ai' && aiValues?.url !== undefined) args.url = aiValues.url;
+            (template.queryParams || []).forEach((p, i) => {
+                if (p.value.mode === 'ai') {
+                    const key = `query_${sanitizeName(p.name, `p${i}`)}`;
+                    args[key] = aiValues?.[`query.${p.name}`] ?? '';
+                }
+            });
+            (template.headers || []).forEach((h, i) => {
+                if (h.value.mode === 'ai') {
+                    const key = `header_${sanitizeName(h.name, `h${i}`)}`;
+                    args[key] = aiValues?.[`header.${h.name}`] ?? '';
+                }
+            });
+            if (template.bodyType === 'json') {
+                (template.bodyParams || []).forEach((b, i) => {
+                    if (b.value.mode === 'ai') {
+                        const key = `body_${sanitizeName(b.name, `b${i}`)}`;
+                        args[key] = aiValues?.[`body.${b.name}`] ?? '';
+                    }
+                });
+            } else if (template.bodyType === 'raw' && template.rawBody?.mode === 'ai') {
+                args.body = aiValues?.body ?? '';
+            }
+
+            const executor = buildTemplateExecutor(template as HttpToolTemplate);
+            const result = await executor(args);
+            return res.json({ success: true, result });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }

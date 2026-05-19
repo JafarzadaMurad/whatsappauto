@@ -164,6 +164,18 @@ export type HttpToolTemplate = {
     id?: string;
     name: string;          // tool name shown to AI (e.g. "getWeather")
     description: string;   // what this tool does
+
+    // 'form' (default): structured fields below. 'raw': use rawRequest string.
+    inputMode?: 'form' | 'raw';
+    // Raw HTTP request text. Format:
+    //   METHOD https://url
+    //   Header-Name: value
+    //   Header-Name: value
+    //
+    //   body (optional, any text/JSON)
+    // Anywhere in the text, {{description}} marks an AI-filled placeholder.
+    rawRequest?: string;
+
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     url: ValueSpec;
     auth?:
@@ -176,6 +188,58 @@ export type HttpToolTemplate = {
     bodyParams?: Array<{ name: string; value: ValueSpec }>; // for json
     rawBody?: ValueSpec; // for raw
 };
+
+// Extract {{description}} placeholders from raw request text.
+// Returns parsed placeholders and a template string with markers.
+export function parseRawPlaceholders(text: string): { template: string; placeholders: { key: string; description: string }[] } {
+    const placeholders: { key: string; description: string }[] = [];
+    const seen = new Map<string, string>(); // description → key (dedupe)
+    let idx = 0;
+    const template = text.replace(/\{\{([^}]+)\}\}/g, (_m, desc) => {
+        const trimmed = String(desc).trim();
+        let key = seen.get(trimmed);
+        if (!key) {
+            key = `ai_${idx++}`;
+            seen.set(trimmed, key);
+            placeholders.push({ key, description: trimmed });
+        }
+        return `[[__AI_PARAM_${key}__]]`;
+    });
+    return { template, placeholders };
+}
+
+// Parse a raw HTTP request text. Returns components with placeholder markers
+// preserved inline so they can be substituted later.
+export function parseRawRequest(text: string): { method: string; url: string; headers: Record<string, string>; body: string } {
+    const lines = text.split(/\r?\n/);
+    let i = 0;
+    while (i < lines.length && !lines[i].trim()) i++;
+    const firstLine = (lines[i] || '').trim();
+    const m = firstLine.match(/^(GET|POST|PUT|PATCH|DELETE)\s+(\S.*)$/i);
+    let method = 'GET';
+    let url = '';
+    if (m) {
+        method = m[1].toUpperCase();
+        url = m[2].trim();
+    } else {
+        url = firstLine; // fall back: treat whole first line as URL
+    }
+    i++;
+    const headers: Record<string, string> = {};
+    for (; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.trim()) { i++; break; }
+        const hm = line.match(/^([^:]+):\s*(.*)$/);
+        if (hm) headers[hm[1].trim()] = hm[2];
+    }
+    const body = lines.slice(i).join('\n').replace(/^\s+|\s+$/g, '');
+    return { method, url, headers, body };
+}
+
+// Replace placeholder markers [[__AI_PARAM_<key>__]] with AI-provided values.
+function applyPlaceholders(s: string, values: Record<string, string>): string {
+    return s.replace(/\[\[__AI_PARAM_([^\]]+)__\]\]/g, (_m, key) => values[key] ?? '');
+}
 
 // Transliterate non-ASCII (esp. Azerbaijani/Turkish) chars to ASCII so tool names
 // remain readable rather than becoming a string of underscores.
@@ -198,30 +262,38 @@ export function sanitizeName(s: string, fallback: string): string {
 function buildTemplateSchema(tpl: HttpToolTemplate) {
     const shape: Record<string, any> = {};
 
-    if (tpl.url?.mode === 'ai') {
-        shape['url'] = z.string().describe(tpl.url.description || 'Full URL to call');
-    }
-    (tpl.queryParams || []).forEach((p, i) => {
-        if (p.value?.mode === 'ai') {
-            const key = `query_${sanitizeName(p.name, `p${i}`)}`;
-            shape[key] = z.string().describe(p.value.description || `Value for query param "${p.name}"`);
+    if (tpl.inputMode === 'raw') {
+        // Raw mode: extract {{description}} placeholders from rawRequest text
+        const { placeholders } = parseRawPlaceholders(tpl.rawRequest || '');
+        placeholders.forEach(ph => {
+            shape[ph.key] = z.string().describe(ph.description);
+        });
+    } else {
+        if (tpl.url?.mode === 'ai') {
+            shape['url'] = z.string().describe(tpl.url.description || 'Full URL to call');
         }
-    });
-    (tpl.headers || []).forEach((h, i) => {
-        if (h.value?.mode === 'ai') {
-            const key = `header_${sanitizeName(h.name, `h${i}`)}`;
-            shape[key] = z.string().describe(h.value.description || `Value for header "${h.name}"`);
-        }
-    });
-    if (tpl.bodyType === 'json') {
-        (tpl.bodyParams || []).forEach((b, i) => {
-            if (b.value?.mode === 'ai') {
-                const key = `body_${sanitizeName(b.name, `b${i}`)}`;
-                shape[key] = z.string().describe(b.value.description || `Value for body field "${b.name}"`);
+        (tpl.queryParams || []).forEach((p, i) => {
+            if (p.value?.mode === 'ai') {
+                const key = `query_${sanitizeName(p.name, `p${i}`)}`;
+                shape[key] = z.string().describe(p.value.description || `Value for query param "${p.name}"`);
             }
         });
-    } else if (tpl.bodyType === 'raw' && tpl.rawBody?.mode === 'ai') {
-        shape['body'] = z.string().describe(tpl.rawBody.description || 'Raw request body');
+        (tpl.headers || []).forEach((h, i) => {
+            if (h.value?.mode === 'ai') {
+                const key = `header_${sanitizeName(h.name, `h${i}`)}`;
+                shape[key] = z.string().describe(h.value.description || `Value for header "${h.name}"`);
+            }
+        });
+        if (tpl.bodyType === 'json') {
+            (tpl.bodyParams || []).forEach((b, i) => {
+                if (b.value?.mode === 'ai') {
+                    const key = `body_${sanitizeName(b.name, `b${i}`)}`;
+                    shape[key] = z.string().describe(b.value.description || `Value for body field "${b.name}"`);
+                }
+            });
+        } else if (tpl.bodyType === 'raw' && tpl.rawBody?.mode === 'ai') {
+            shape['body'] = z.string().describe(tpl.rawBody.description || 'Raw request body');
+        }
     }
 
     // Always include an optional reason for logging clarity (and to ensure non-empty schema)
@@ -240,6 +312,40 @@ function resolveValue(spec: ValueSpec, aiVal: string | undefined): string {
 export function buildTemplateExecutor(tpl: HttpToolTemplate) {
     return async (args: Record<string, any>) => {
         try {
+            // RAW MODE: parse rawRequest text, substitute placeholders, send
+            if (tpl.inputMode === 'raw') {
+                const { template, placeholders } = parseRawPlaceholders(tpl.rawRequest || '');
+                const values: Record<string, string> = {};
+                placeholders.forEach(ph => { values[ph.key] = args[ph.key] ?? ''; });
+                const filled = applyPlaceholders(template, values);
+                const parsed = parseRawRequest(filled);
+                if (!parsed.url) return { error: 'No URL in raw request' };
+
+                let data: any = undefined;
+                if (parsed.body) {
+                    const ct = Object.entries(parsed.headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] || '';
+                    if (ct.toLowerCase().includes('application/json')) {
+                        try { data = JSON.parse(parsed.body); } catch { data = parsed.body; }
+                    } else {
+                        data = parsed.body;
+                    }
+                }
+                const res = await axios.request({
+                    url: parsed.url,
+                    method: parsed.method as any,
+                    headers: parsed.headers,
+                    data,
+                    timeout: 30000,
+                    maxContentLength: 1024 * 1024,
+                    validateStatus: () => true,
+                });
+                let responseData: any = res.data;
+                if (typeof responseData === 'string' && responseData.length > 5000) {
+                    responseData = responseData.slice(0, 5000) + '...[truncated]';
+                }
+                return { status: res.status, data: responseData };
+            }
+
             // URL
             const url = tpl.url.mode === 'fixed' ? tpl.url.value : (args.url || '');
             if (!url) return { error: 'No URL provided' };

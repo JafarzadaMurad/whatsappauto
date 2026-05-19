@@ -23,6 +23,8 @@ type HttpToolTemplate = {
     id: string;
     name: string;
     description: string;
+    inputMode?: "form" | "raw";
+    rawRequest?: string;
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     url: ValueSpec;
     auth?: HttpAuth;
@@ -33,10 +35,21 @@ type HttpToolTemplate = {
     rawBody?: ValueSpec;
 };
 
+const RAW_REQUEST_PLACEHOLDER = `POST https://api.example.com/orders
+Content-Type: application/json
+Authorization: Bearer {{API key from session}}
+
+{
+  "customer": "{{customer name from conversation}}",
+  "quantity": {{quantity number}}
+}`;
+
 const newTool = (): HttpToolTemplate => ({
     id: Math.random().toString(36).slice(2),
     name: "newTool",
     description: "",
+    inputMode: "form",
+    rawRequest: "",
     method: "GET",
     url: { mode: "fixed", value: "" },
     auth: { type: "none" },
@@ -199,6 +212,24 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     // Collect AI-mode fields a test panel needs (URL, each AI query/header/body param, raw body)
     const aiFieldsOf = (tool: HttpToolTemplate): { key: string; label: string }[] => {
         const out: { key: string; label: string }[] = [];
+
+        if (tool.inputMode === 'raw') {
+            // Extract {{description}} placeholders from rawRequest
+            const text = tool.rawRequest || '';
+            const seen = new Set<string>();
+            const re = /\{\{([^}]+)\}\}/g;
+            let m: RegExpExecArray | null;
+            let idx = 0;
+            while ((m = re.exec(text)) !== null) {
+                const desc = m[1].trim();
+                if (seen.has(desc)) continue;
+                seen.add(desc);
+                out.push({ key: `ai_${idx}`, label: desc });
+                idx++;
+            }
+            return out;
+        }
+
         if (tool.url.mode === 'ai') out.push({ key: 'url', label: 'URL — ' + tool.url.description });
         (tool.queryParams || []).forEach(p => {
             if (p.value.mode === 'ai') out.push({ key: `query.${p.name}`, label: `?${p.name} — ${p.value.description}` });
@@ -654,6 +685,42 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none" />
                                                     </div>
 
+                                                    {/* Mode toggle: Form (structured) vs Raw (text) */}
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Input Mode</label>
+                                                        <div className="mt-1 flex gap-1 bg-secondary/30 p-1 rounded-lg w-fit">
+                                                            {(['form', 'raw'] as const).map(m => (
+                                                                <button
+                                                                    key={m}
+                                                                    type="button"
+                                                                    onClick={() => update({ inputMode: m })}
+                                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${(tool.inputMode || 'form') === m ? 'bg-card text-foreground border border-border' : 'text-muted-foreground hover:text-foreground'}`}
+                                                                >
+                                                                    {m === 'form' ? 'Form (structured)' : 'Raw (text)'}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Raw mode: single textarea with {{description}} placeholders */}
+                                                    {tool.inputMode === 'raw' && (
+                                                        <div>
+                                                            <label className="text-xs font-medium text-muted-foreground">Raw HTTP Request</label>
+                                                            <p className="text-xs text-muted-foreground mt-0.5 mb-1">
+                                                                Format: <code className="bg-secondary px-1 rounded">METHOD URL</code>, then headers, blank line, then body. Use <code className="bg-secondary px-1 rounded text-amber-400">{`{{description}}`}</code> anywhere to mark an AI-filled placeholder.
+                                                            </p>
+                                                            <textarea
+                                                                value={tool.rawRequest || ''}
+                                                                onChange={e => update({ rawRequest: e.target.value })}
+                                                                rows={10}
+                                                                placeholder={RAW_REQUEST_PLACEHOLDER}
+                                                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y font-mono"
+                                                            />
+                                                        </div>
+                                                    )}
+
+                                                    {tool.inputMode !== 'raw' && (
+                                                    <>
                                                     <div>
                                                         <label className="text-xs font-medium text-muted-foreground">URL</label>
                                                         <div className="mt-1">
@@ -732,6 +799,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             </div>
                                                         )}
                                                     </div>
+                                                    </>
+                                                    )}
 
                                                     {/* Test Panel */}
                                                     <div className="pt-3 mt-2 border-t border-dashed border-border">

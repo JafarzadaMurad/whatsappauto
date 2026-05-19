@@ -17,6 +17,8 @@ const httpToolTemplateSchema = z.object({
     id: z.string().optional(),
     name: z.string().min(1),
     description: z.string().default(''),
+    inputMode: z.enum(['form', 'raw']).optional(),
+    rawRequest: z.string().optional(),
     method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
     url: valueSpecSchema,
     auth: z.union([
@@ -256,6 +258,15 @@ export class AgentController {
             // Map UI aiValues (keyed by raw param name) -> executor arg shape
             // (executor expects keys like `query_<sanitized>`, `header_<sanitized>`, `body_<sanitized>`, `url`, `body`)
             const args: Record<string, string> = {};
+
+            // Raw mode: aiValues are already keyed as ai_0, ai_1, ... matching parser output
+            if (template.inputMode === 'raw') {
+                Object.assign(args, aiValues || {});
+                const executor = buildTemplateExecutor(template as HttpToolTemplate);
+                const result = await executor(args);
+                return res.json({ success: true, result });
+            }
+
             if (template.url.mode === 'ai' && aiValues?.url !== undefined) args.url = aiValues.url;
             (template.queryParams || []).forEach((p, i) => {
                 if (p.value.mode === 'ai') {

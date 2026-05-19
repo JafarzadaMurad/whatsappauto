@@ -558,115 +558,144 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
                         </div>
 
+                        {/* Memory — promoted out of Skills, lives right under System Prompt */}
+                        <div className={`rounded-xl border ${skills.includes('memory') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
+                            <label className="flex items-center gap-3 p-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={skills.includes('memory')}
+                                    onChange={() => setSkills(prev => prev.includes('memory') ? prev.filter(s => s !== 'memory') : [...prev, 'memory'])}
+                                    className="w-4 h-4 accent-primary rounded"
+                                />
+                                <div className="flex-1">
+                                    <div className="font-medium text-sm flex items-center gap-2">
+                                        <MessageSquare className="w-4 h-4 text-muted-foreground" /> Memory
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Agent looks back through prior messages on demand (search, range, stats). Default history shrinks to 3 turns and the model fetches older context only when needed — big token savings on long chats.
+                                    </div>
+                                </div>
+                            </label>
+                            {skills.includes('memory') && (
+                                <div className="border-t border-border p-4">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="text-xs font-medium text-muted-foreground">Memory Prompt</label>
+                                        {(skillPrompts['memory'] || '').trim().length > 0 && (
+                                            <button type="button"
+                                                onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n['memory']; return n; })}
+                                                className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+                                                Reset to default
+                                            </button>
+                                        )}
+                                    </div>
+                                    <textarea
+                                        value={skillPrompts['memory'] ?? ''}
+                                        onChange={e => setSkillPrompts(prev => ({ ...prev, memory: e.target.value }))}
+                                        rows={5}
+                                        placeholder={DEFAULT_SKILL_PROMPTS.memory}
+                                        className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                    {!(skillPrompts['memory'] || '').trim() && (
+                                        <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Skills — each card hosts its checkbox AND (when checked) its own panel */}
                         <div>
                             <h3 className="font-semibold flex items-center gap-2 mb-2">
                                 <Wrench className="w-4 h-4 text-muted-foreground" /> Skills
                             </h3>
-                            <p className="text-sm text-muted-foreground mb-3">Enable capabilities for this agent.</p>
-                            <div className="space-y-2">
+                            <p className="text-sm text-muted-foreground mb-3">Enable capabilities for this agent. Each enabled skill opens its own configuration panel below.</p>
+                            <div className="space-y-3">
                                 {[
                                     { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
-                                    { id: 'memory', name: 'Conversation Memory', desc: 'Look back through prior messages on demand (search, range, stats) — saves tokens on long chats' },
-                                ].map(skill => (
-                                    <label key={skill.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${skills.includes(skill.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
-                                        <input type="checkbox" checked={skills.includes(skill.id)}
-                                            onChange={() => setSkills(prev => prev.includes(skill.id) ? prev.filter(s => s !== skill.id) : [...prev, skill.id])}
-                                            className="w-4 h-4 accent-primary rounded" />
-                                        <div>
-                                            <div className="font-medium text-sm">{skill.name}</div>
-                                            <div className="text-xs text-muted-foreground">{skill.desc}</div>
-                                        </div>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Per-skill prompt overrides (only for skills that have a default prompt) */}
-                        {skills.some(s => DEFAULT_SKILL_PROMPTS[s]) && (
-                        <div>
-                            <h3 className="font-semibold flex items-center gap-2 mb-2">
-                                <Wrench className="w-4 h-4 text-muted-foreground" /> Skill Prompts
-                            </h3>
-                            <p className="text-sm text-muted-foreground mb-3">
-                                Each enabled skill has a default instruction prompt the agent receives. Override it below if you want to customize behavior. Leave blank to use the default shown as placeholder.
-                            </p>
-                            <div className="space-y-3">
-                                {skills.filter(s => DEFAULT_SKILL_PROMPTS[s]).map(skillId => {
-                                    const def = DEFAULT_SKILL_PROMPTS[skillId];
-                                    const value = skillPrompts[skillId] ?? '';
-                                    const isOverridden = value.trim().length > 0;
+                                ].map(skill => {
+                                    const enabled = skills.includes(skill.id);
+                                    const promptVal = skillPrompts[skill.id] ?? '';
+                                    const isOverridden = promptVal.trim().length > 0;
                                     return (
-                                        <div key={skillId}>
-                                            <div className="flex items-center justify-between mb-1">
-                                                <label className="text-xs font-medium text-muted-foreground capitalize">{skillId} skill prompt</label>
-                                                {isOverridden && (
-                                                    <button type="button"
-                                                        onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n[skillId]; return n; })}
-                                                        className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
-                                                        Reset to default
-                                                    </button>
-                                                )}
-                                            </div>
-                                            <textarea
-                                                value={value}
-                                                onChange={e => setSkillPrompts(prev => ({ ...prev, [skillId]: e.target.value }))}
-                                                rows={4}
-                                                placeholder={def}
-                                                className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
-                                            {!isOverridden && (
-                                                <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                        )}
+                                        <div key={skill.id} className={`rounded-xl border overflow-hidden ${enabled ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
+                                            <label className="flex items-center gap-3 p-3 cursor-pointer">
+                                                <input type="checkbox" checked={enabled}
+                                                    onChange={() => setSkills(prev => prev.includes(skill.id) ? prev.filter(s => s !== skill.id) : [...prev, skill.id])}
+                                                    className="w-4 h-4 accent-primary rounded" />
+                                                <div className="flex-1">
+                                                    <div className="font-medium text-sm">{skill.name}</div>
+                                                    <div className="text-xs text-muted-foreground">{skill.desc}</div>
+                                                </div>
+                                            </label>
+                                            {enabled && (
+                                                <div className="border-t border-border p-4 space-y-4">
+                                                    {/* Skill prompt override */}
+                                                    <div>
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <label className="text-xs font-medium text-muted-foreground">{skill.name} Prompt</label>
+                                                            {isOverridden && (
+                                                                <button type="button"
+                                                                    onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n[skill.id]; return n; })}
+                                                                    className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+                                                                    Reset to default
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        <textarea
+                                                            value={promptVal}
+                                                            onChange={e => setSkillPrompts(prev => ({ ...prev, [skill.id]: e.target.value }))}
+                                                            rows={3}
+                                                            placeholder={DEFAULT_SKILL_PROMPTS[skill.id]}
+                                                            className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                                        {!isOverridden && (
+                                                            <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                                        )}
+                                                    </div>
 
-                        {skills.includes('tables') && (
-                        <div>
-                            <h3 className="font-semibold flex items-center gap-2 mb-2">
-                                <Database className="w-4 h-4 text-muted-foreground" /> Knowledge Base
-                            </h3>
-                            {tables.length === 0 ? (
-                                <div className="bg-secondary/50 border border-dashed border-border rounded-xl p-4 text-center text-sm text-muted-foreground">No data tables created yet.</div>
-                            ) : (
-                                <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                                    {tables.map(table => (
-                                        <label key={table.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${allowedTableIds.includes(table.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
-                                            <input type="checkbox" checked={allowedTableIds.includes(table.id)}
-                                                onChange={() => setAllowedTableIds(prev => prev.includes(table.id) ? prev.filter(t => t !== table.id) : [...prev, table.id])}
-                                                className="w-4 h-4 accent-primary rounded" />
-                                            <div>
-                                                <div className="font-medium text-sm">{table.name}</div>
-                                                <div className="text-xs text-muted-foreground">{table.columns.length} columns</div>
-                                            </div>
-                                        </label>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        )}
+                                                    {/* Tables-specific: knowledge base selector */}
+                                                    {skill.id === 'tables' && (
+                                                        <div>
+                                                            <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-2">
+                                                                <Database className="w-3.5 h-3.5" /> Knowledge Base
+                                                            </div>
+                                                            {tables.length === 0 ? (
+                                                                <div className="bg-secondary/50 border border-dashed border-border rounded-xl p-3 text-center text-xs text-muted-foreground">No data tables created yet.</div>
+                                                            ) : (
+                                                                <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                                                                    {tables.map(table => (
+                                                                        <label key={table.id} className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${allowedTableIds.includes(table.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
+                                                                            <input type="checkbox" checked={allowedTableIds.includes(table.id)}
+                                                                                onChange={() => setAllowedTableIds(prev => prev.includes(table.id) ? prev.filter(t => t !== table.id) : [...prev, table.id])}
+                                                                                className="w-4 h-4 accent-primary rounded" />
+                                                                            <div>
+                                                                                <div className="font-medium text-sm">{table.name}</div>
+                                                                                <div className="text-xs text-muted-foreground">{table.columns.length} columns</div>
+                                                                            </div>
+                                                                        </label>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
 
-                        {skills.includes('http') && (
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <h3 className="font-semibold flex items-center gap-2">
-                                    <Wrench className="w-4 h-4 text-muted-foreground" /> HTTP Tools
-                                </h3>
-                                <button
-                                    type="button"
-                                    onClick={() => { const t = newTool(); setHttpTools([...httpTools, t]); setExpandedTool(t.id); }}
-                                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
-                                >
-                                    <Plus className="w-4 h-4" /> Add Tool
-                                </button>
-                            </div>
-                            <p className="text-sm text-muted-foreground mb-3">
-                                Pre-configure named HTTP tools the agent can call. Each value can be a <span className="text-foreground">fixed</span> value or <span className="text-amber-400">AI-filled</span> at call time (provide a description so the model knows what to put).
-                            </p>
+                                                    {/* HTTP-specific: tools manager */}
+                                                    {skill.id === 'http' && (
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                                                                    <Wrench className="w-3.5 h-3.5" /> HTTP Tools
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => { const t = newTool(); setHttpTools([...httpTools, t]); setExpandedTool(t.id); }}
+                                                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
+                                                                >
+                                                                    <Plus className="w-3 h-3" /> Add Tool
+                                                                </button>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground mb-2">
+                                                                Each value can be a <span className="text-foreground">fixed</span> value or <span className="text-amber-400">AI-filled</span> at call time.
+                                                            </p>
                             <div className="space-y-2">
                                 {httpTools.length === 0 && (
                                     <div className="bg-secondary/30 border border-dashed border-border rounded-xl p-4 text-center text-sm text-muted-foreground">
@@ -908,8 +937,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     );
                                 })}
                             </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                        )}
 
                         <button onClick={handleSave} disabled={saving}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70">

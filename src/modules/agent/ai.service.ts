@@ -177,10 +177,21 @@ export type HttpToolTemplate = {
     rawBody?: ValueSpec; // for raw
 };
 
-// sanitize a name to valid JS identifier
+// Transliterate non-ASCII (esp. Azerbaijani/Turkish) chars to ASCII so tool names
+// remain readable rather than becoming a string of underscores.
+const TRANSLIT: Record<string, string> = {
+    'ə': 'a', 'Ə': 'A', 'ı': 'i', 'İ': 'I', 'ş': 's', 'Ş': 'S',
+    'ç': 'c', 'Ç': 'C', 'ğ': 'g', 'Ğ': 'G', 'ö': 'o', 'Ö': 'O',
+    'ü': 'u', 'Ü': 'U', 'â': 'a', 'î': 'i', 'û': 'u'
+};
+
+// sanitize a name to valid OpenAI/Anthropic tool name: ^[a-zA-Z0-9_-]+$
 export function sanitizeName(s: string, fallback: string): string {
-    const cleaned = (s || '').replace(/[^a-zA-Z0-9_]/g, '_').replace(/^[0-9]/, '_$&');
-    return cleaned || fallback;
+    const transliterated = (s || '').split('').map(c => TRANSLIT[c] ?? c).join('');
+    const cleaned = transliterated.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^[0-9]/, '_$&');
+    // Collapse runs of underscores for readability
+    const compact = cleaned.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    return compact || fallback;
 }
 
 // build a Zod schema dynamically containing only AI-mode fields the model must fill

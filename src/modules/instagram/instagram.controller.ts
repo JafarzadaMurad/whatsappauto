@@ -136,13 +136,12 @@ export class InstagramController {
             const shortToken = tokenRes.data.access_token;
             const tokenUserId = String(tokenRes.data.user_id);
 
-            // 2. Exchange for long-lived token (60 days)
+            // 2. Exchange for long-lived token (60 days) - GET per docs
             let longToken = shortToken;
             try {
-                const longTokenRes = await axios.post('https://graph.instagram.com/access_token',
-                    `grant_type=ig_exchange_token&client_secret=${encodeURIComponent(igSecret)}&access_token=${encodeURIComponent(shortToken)}`,
-                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-                );
+                const longTokenRes = await axios.get('https://graph.instagram.com/access_token', {
+                    params: { grant_type: 'ig_exchange_token', client_secret: igSecret, access_token: shortToken }
+                });
                 if (longTokenRes.data.access_token) longToken = longTokenRes.data.access_token;
             } catch (e: any) {
                 require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));

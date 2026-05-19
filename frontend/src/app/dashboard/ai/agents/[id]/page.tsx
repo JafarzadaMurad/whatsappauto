@@ -1,12 +1,110 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
 type Tab = "conversations" | "usage" | "settings";
+
+type ValueSpec =
+    | { mode: "fixed"; value: string }
+    | { mode: "ai"; description: string };
+
+type NameValue = { name: string; value: ValueSpec };
+
+type HttpAuth =
+    | { type: "none" }
+    | { type: "bearer"; token: string }
+    | { type: "basic"; username: string; password: string };
+
+type HttpToolTemplate = {
+    id: string;
+    name: string;
+    description: string;
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    url: ValueSpec;
+    auth?: HttpAuth;
+    queryParams?: NameValue[];
+    headers?: NameValue[];
+    bodyType?: "none" | "json" | "raw";
+    bodyParams?: NameValue[];
+    rawBody?: ValueSpec;
+};
+
+const newTool = (): HttpToolTemplate => ({
+    id: Math.random().toString(36).slice(2),
+    name: "newTool",
+    description: "",
+    method: "GET",
+    url: { mode: "fixed", value: "" },
+    auth: { type: "none" },
+    queryParams: [],
+    headers: [],
+    bodyType: "none",
+    bodyParams: [],
+    rawBody: { mode: "fixed", value: "" }
+});
+
+// Value input: switchable between Fixed value and AI-described
+function ValueInput({ spec, onChange, placeholder }: { spec: ValueSpec; onChange: (v: ValueSpec) => void; placeholder?: string }) {
+    return (
+        <div className="flex gap-1.5">
+            <button
+                type="button"
+                onClick={() => onChange(spec.mode === "fixed" ? { mode: "ai", description: "" } : { mode: "fixed", value: "" })}
+                title={spec.mode === "fixed" ? "Switch to AI-filled" : "Switch to fixed value"}
+                className={`flex-shrink-0 flex items-center gap-1 px-2 rounded-lg border text-xs font-medium transition-colors ${spec.mode === "ai" ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-secondary/50 text-muted-foreground border-border hover:text-foreground"}`}
+            >
+                {spec.mode === "ai" ? <><Sparkles className="w-3 h-3" /> AI</> : "Fixed"}
+            </button>
+            <input
+                type="text"
+                value={spec.mode === "fixed" ? spec.value : spec.description}
+                onChange={e => onChange(spec.mode === "fixed" ? { mode: "fixed", value: e.target.value } : { mode: "ai", description: e.target.value })}
+                placeholder={spec.mode === "ai" ? "Describe what AI should put here" : (placeholder || "")}
+                className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+            />
+        </div>
+    );
+}
+
+function NameValueRows({ items, onChange, namePlaceholder }: { items: NameValue[]; onChange: (next: NameValue[]) => void; namePlaceholder: string }) {
+    return (
+        <div className="space-y-2">
+            {items.map((it, i) => (
+                <div key={i} className="flex gap-1.5 items-start">
+                    <input
+                        type="text"
+                        value={it.name}
+                        onChange={e => { const n = [...items]; n[i] = { ...it, name: e.target.value }; onChange(n); }}
+                        placeholder={namePlaceholder}
+                        className="w-40 flex-shrink-0 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+                    />
+                    <div className="flex-1">
+                        <ValueInput spec={it.value} onChange={v => { const n = [...items]; n[i] = { ...it, value: v }; onChange(n); }} placeholder="value" />
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onChange(items.filter((_, j) => j !== i))}
+                        className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title="Remove"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                </div>
+            ))}
+            <button
+                type="button"
+                onClick={() => onChange([...items, { name: "", value: { mode: "fixed", value: "" } }])}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 border border-dashed border-border transition-colors"
+            >
+                <Plus className="w-3 h-3" /> Add
+            </button>
+        </div>
+    );
+}
 
 export default function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
@@ -33,6 +131,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
     const [allowedUrls, setAllowedUrls] = useState<string>("");
+    const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
+    const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -53,6 +153,10 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setAllowedTableIds(a.allowedTableIds || []);
                     setSkills(a.skills || []);
                     setAllowedUrls((a.allowedUrls || []).join('\n'));
+                    setHttpTools(((a.httpTools as HttpToolTemplate[]) || []).map((t: any) => ({
+                        ...t,
+                        id: t.id || Math.random().toString(36).slice(2)
+                    })));
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -94,7 +198,11 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const handleSave = async () => {
         setSaving(true);
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean) });
+            await api.put(`/agents/${id}`, {
+                name, providerId, model, systemPrompt, allowedTableIds, skills,
+                allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean),
+                httpTools
+            });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
         } catch (err) { console.error(err); }
@@ -111,7 +219,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean), isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, allowedUrls: allowedUrls.split('\n').map(s => s.trim()).filter(Boolean), httpTools, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -425,12 +533,172 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         {skills.includes('http') && (
                         <div>
                             <h3 className="font-semibold flex items-center gap-2 mb-2">
-                                <Wrench className="w-4 h-4 text-muted-foreground" /> Allowed URL Patterns
+                                <Wrench className="w-4 h-4 text-muted-foreground" /> Allowed URL Patterns (generic tool)
                             </h3>
-                            <p className="text-sm text-muted-foreground mb-2">One pattern per line. Use <code className="bg-secondary px-1 rounded">*</code> as wildcard. Empty = all URLs allowed (not recommended).</p>
+                            <p className="text-sm text-muted-foreground mb-2">One pattern per line. Use <code className="bg-secondary px-1 rounded">*</code> as wildcard. Empty = all URLs allowed (not recommended). Applies to the generic <code className="bg-secondary px-1 rounded">httpRequest</code> tool.</p>
                             <textarea value={allowedUrls} onChange={e => setAllowedUrls(e.target.value)} rows={4}
                                 placeholder={"https://api.example.com/*\nhttps://hooks.zapier.com/*"}
                                 className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm font-mono" />
+                        </div>
+                        )}
+
+                        {skills.includes('http') && (
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="font-semibold flex items-center gap-2">
+                                    <Wrench className="w-4 h-4 text-muted-foreground" /> Custom HTTP Tools
+                                </h3>
+                                <button
+                                    type="button"
+                                    onClick={() => { const t = newTool(); setHttpTools([...httpTools, t]); setExpandedTool(t.id); }}
+                                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
+                                >
+                                    <Plus className="w-4 h-4" /> Add Tool
+                                </button>
+                            </div>
+                            <p className="text-sm text-muted-foreground mb-3">
+                                Pre-configure named HTTP tools the agent can call. Each value can be a <span className="text-foreground">fixed</span> value or <span className="text-amber-400">AI-filled</span> at call time (provide a description so the model knows what to put).
+                            </p>
+                            <div className="space-y-2">
+                                {httpTools.length === 0 && (
+                                    <div className="bg-secondary/30 border border-dashed border-border rounded-xl p-4 text-center text-sm text-muted-foreground">
+                                        No custom HTTP tools yet. Click "Add Tool" to create one.
+                                    </div>
+                                )}
+                                {httpTools.map((tool, idx) => {
+                                    const isOpen = expandedTool === tool.id;
+                                    const update = (patch: Partial<HttpToolTemplate>) => {
+                                        const next = [...httpTools];
+                                        next[idx] = { ...tool, ...patch };
+                                        setHttpTools(next);
+                                    };
+                                    const remove = () => setHttpTools(httpTools.filter(t => t.id !== tool.id));
+
+                                    return (
+                                        <div key={tool.id} className="bg-card border border-border rounded-xl overflow-hidden">
+                                            <div className="flex items-center gap-2 p-3 hover:bg-secondary/30 cursor-pointer" onClick={() => setExpandedTool(isOpen ? null : tool.id)}>
+                                                {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                                                <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${tool.method === 'GET' ? 'bg-emerald-500/10 text-emerald-400' : tool.method === 'POST' ? 'bg-blue-500/10 text-blue-400' : tool.method === 'DELETE' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                    {tool.method}
+                                                </span>
+                                                <span className="font-medium text-sm flex-1">{tool.name || <span className="text-muted-foreground italic">unnamed</span>}</span>
+                                                <span className="text-xs text-muted-foreground truncate max-w-[40%] font-mono">
+                                                    {tool.url.mode === 'fixed' ? tool.url.value : `[AI] ${tool.url.description}`}
+                                                </span>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); remove(); }} className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                            {isOpen && (
+                                                <div className="p-4 border-t border-border space-y-4">
+                                                    {/* Name + Method */}
+                                                    <div className="grid grid-cols-3 gap-3">
+                                                        <div className="col-span-2">
+                                                            <label className="text-xs font-medium text-muted-foreground">Tool Name</label>
+                                                            <input type="text" value={tool.name} onChange={e => update({ name: e.target.value })}
+                                                                placeholder="getWeather"
+                                                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono" />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs font-medium text-muted-foreground">Method</label>
+                                                            <select value={tool.method} onChange={e => update({ method: e.target.value as any })}
+                                                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                                                {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
+                                                            </select>
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Description (when AI should use this)</label>
+                                                        <textarea value={tool.description} onChange={e => update({ description: e.target.value })} rows={2}
+                                                            placeholder="Fetches the current weather for a given city"
+                                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none" />
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">URL</label>
+                                                        <div className="mt-1">
+                                                            <ValueInput spec={tool.url} onChange={v => update({ url: v })} placeholder="https://api.example.com/data" />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Authentication */}
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Authentication</label>
+                                                        <select
+                                                            value={tool.auth?.type || 'none'}
+                                                            onChange={e => {
+                                                                const t = e.target.value;
+                                                                if (t === 'none') update({ auth: { type: 'none' } });
+                                                                else if (t === 'bearer') update({ auth: { type: 'bearer', token: '' } });
+                                                                else update({ auth: { type: 'basic', username: '', password: '' } });
+                                                            }}
+                                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                                            <option value="none">None</option>
+                                                            <option value="bearer">Bearer Token</option>
+                                                            <option value="basic">Basic Auth</option>
+                                                        </select>
+                                                        {tool.auth?.type === 'bearer' && (
+                                                            <input type="password" value={tool.auth.token} onChange={e => update({ auth: { type: 'bearer', token: e.target.value } })}
+                                                                placeholder="token..."
+                                                                className="mt-2 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono" />
+                                                        )}
+                                                        {tool.auth?.type === 'basic' && (
+                                                            <div className="mt-2 grid grid-cols-2 gap-2">
+                                                                <input type="text" value={tool.auth.username} onChange={e => update({ auth: { type: 'basic', username: e.target.value, password: tool.auth && tool.auth.type === 'basic' ? tool.auth.password : '' } })}
+                                                                    placeholder="username"
+                                                                    className="bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                                                <input type="password" value={tool.auth.password} onChange={e => update({ auth: { type: 'basic', username: tool.auth && tool.auth.type === 'basic' ? tool.auth.username : '', password: e.target.value } })}
+                                                                    placeholder="password"
+                                                                    className="bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Query Parameters */}
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Query Parameters</label>
+                                                        <div className="mt-1">
+                                                            <NameValueRows items={tool.queryParams || []} onChange={v => update({ queryParams: v })} namePlaceholder="param name" />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Headers */}
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Headers</label>
+                                                        <div className="mt-1">
+                                                            <NameValueRows items={tool.headers || []} onChange={v => update({ headers: v })} namePlaceholder="Header-Name" />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Body */}
+                                                    <div>
+                                                        <label className="text-xs font-medium text-muted-foreground">Body</label>
+                                                        <select
+                                                            value={tool.bodyType || 'none'}
+                                                            onChange={e => update({ bodyType: e.target.value as any })}
+                                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                                            <option value="none">None</option>
+                                                            <option value="json">JSON (fields)</option>
+                                                            <option value="raw">Raw text</option>
+                                                        </select>
+                                                        {tool.bodyType === 'json' && (
+                                                            <div className="mt-2">
+                                                                <NameValueRows items={tool.bodyParams || []} onChange={v => update({ bodyParams: v })} namePlaceholder="field name" />
+                                                            </div>
+                                                        )}
+                                                        {tool.bodyType === 'raw' && (
+                                                            <div className="mt-2">
+                                                                <ValueInput spec={tool.rawBody || { mode: 'fixed', value: '' }} onChange={v => update({ rawBody: v })} placeholder='{"key":"value"}' />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
                         )}
 

@@ -166,7 +166,8 @@ model Agent {
   systemPrompt    String?  @db.Text
   allowedTableIds String[] // IDs of CustomTable models this agent can access
   skills          String[] // e.g. ["crm", "tables", "http"]
-  allowedUrls     String[] // URL patterns the agent can call via http skill
+  allowedUrls     String[] // URL patterns the generic httpRequest tool can call
+  httpTools       Json     @default("[]") // Array of HttpToolTemplate (n8n-style structured HTTP tools)
   isActive        Boolean  @default(true)
 
   createdAt DateTime @default(now())

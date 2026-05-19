@@ -2,6 +2,34 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 
+const valueSpecSchema = z.union([
+    z.object({ mode: z.literal('fixed'), value: z.string() }),
+    z.object({ mode: z.literal('ai'), description: z.string() })
+]);
+
+const nameValueSchema = z.object({
+    name: z.string(),
+    value: valueSpecSchema
+});
+
+const httpToolTemplateSchema = z.object({
+    id: z.string().optional(),
+    name: z.string().min(1),
+    description: z.string().default(''),
+    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+    url: valueSpecSchema,
+    auth: z.union([
+        z.object({ type: z.literal('none') }),
+        z.object({ type: z.literal('bearer'), token: z.string() }),
+        z.object({ type: z.literal('basic'), username: z.string(), password: z.string() })
+    ]).optional(),
+    queryParams: z.array(nameValueSchema).optional(),
+    headers: z.array(nameValueSchema).optional(),
+    bodyType: z.enum(['none', 'json', 'raw']).optional(),
+    bodyParams: z.array(nameValueSchema).optional(),
+    rawBody: valueSpecSchema.optional()
+});
+
 const createAgentSchema = z.object({
     name: z.string().min(1),
     providerId: z.string().uuid(),
@@ -10,6 +38,7 @@ const createAgentSchema = z.object({
     allowedTableIds: z.array(z.string()).optional(),
     skills: z.array(z.string()).optional(),
     allowedUrls: z.array(z.string()).optional(),
+    httpTools: z.array(httpToolTemplateSchema).optional(),
     isActive: z.boolean().optional()
 });
 
@@ -61,7 +90,8 @@ export class AgentController {
                     systemPrompt: data.systemPrompt || "",
                     allowedTableIds: data.allowedTableIds || [],
                     skills: data.skills || [],
-                    allowedUrls: data.allowedUrls || []
+                    allowedUrls: data.allowedUrls || [],
+                    httpTools: (data.httpTools || []) as any
                 }
             });
 
@@ -91,6 +121,7 @@ export class AgentController {
                     allowedTableIds: data.allowedTableIds || [],
                     skills: data.skills || [],
                     allowedUrls: data.allowedUrls || [],
+                    httpTools: (data.httpTools || []) as any,
                     ...(data.isActive !== undefined ? { isActive: data.isActive } : {})
                 }
             });

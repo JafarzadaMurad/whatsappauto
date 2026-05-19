@@ -165,9 +165,10 @@ model Agent {
 
   systemPrompt    String?  @db.Text
   allowedTableIds String[] // IDs of CustomTable models this agent can access
-  skills          String[] // e.g. ["crm", "tables", "http"]
+  skills          String[] // e.g. ["crm", "tables", "http", "memory"]
   allowedUrls     String[] // URL patterns the generic httpRequest tool can call
   httpTools       Json     @default("[]") // Array of HttpToolTemplate (n8n-style structured HTTP tools)
+  skillPrompts    Json     @default("{}") // Per-skill prompt overrides: { memory?: string, crm?: string, ... }
   isActive        Boolean  @default(true)
 
   createdAt DateTime @default(now())
@@ -197,6 +198,10 @@ model AiConversationLog {
   model     String // gpt-4o, etc. (snapshot)
 
   toolCalls Json @default("[]") // [{ toolName, args, accessType }]
+
+  // Prompt caching metrics (Anthropic / OpenAI report these)
+  cachedTokens          Int @default(0)
+  cacheCreationTokens   Int @default(0)
 
   createdAt DateTime @default(now())
 }

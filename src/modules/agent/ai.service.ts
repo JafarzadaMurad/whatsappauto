@@ -422,30 +422,194 @@ export function buildHttpTools(httpTools: HttpToolTemplate[] = []) {
     return tools;
 }
 
+// ─── Provider-aware caching helper ───
+// Anthropic needs explicit cache_control markers; OpenAI auto-caches matching
+// prefixes ≥1024 tokens with no code change; Gemini has no support here yet.
+export function applyAnthropicCacheControl(provider: string, messages: any[]): any[] {
+    if (provider !== 'CLAUDE' || messages.length === 0) return messages;
+    // Mark the last message as a cache breakpoint. Everything before it
+    // (system prompt + tool defs + earlier history) becomes the cached prefix.
+    const last = messages[messages.length - 1];
+    return [
+        ...messages.slice(0, -1),
+        {
+            ...last,
+            providerOptions: {
+                ...(last.providerOptions || {}),
+                anthropic: {
+                    ...((last.providerOptions || {}).anthropic || {}),
+                    cacheControl: { type: 'ephemeral' }
+                }
+            }
+        }
+    ];
+}
+
+export type CacheUsage = { cachedTokens: number; cacheCreationTokens: number };
+export function extractCacheUsage(provider: string, result: any): CacheUsage {
+    const usage = (result?.usage || {}) as any;
+    if (provider === 'CLAUDE') {
+        const pm = (result?.providerMetadata?.anthropic || {}) as any;
+        return {
+            cachedTokens: Number(pm.cacheReadInputTokens || usage.cacheReadInputTokens || 0),
+            cacheCreationTokens: Number(pm.cacheCreationInputTokens || usage.cacheCreationInputTokens || 0)
+        };
+    }
+    if (provider === 'OPENAI') {
+        const pm = (result?.providerMetadata?.openai || {}) as any;
+        return {
+            cachedTokens: Number(pm.cachedPromptTokens || usage.cachedInputTokens || 0),
+            cacheCreationTokens: 0
+        };
+    }
+    return { cachedTokens: 0, cacheCreationTokens: 0 };
+}
+
+// ─── SKILL: Conversation Memory ───
+// Lets the agent look back through prior messages on demand rather than
+// re-feeding all history every turn.
+export function buildMemoryTools(agentId: string, remoteJid: string) {
+    return {
+        conversationStats: makeTool(
+            'Get statistics about prior messages in this conversation (total turns, date range). Call when the user references earlier topics or you need to decide how far back to look.',
+            z.object({ reason: z.string().optional().describe('Brief reason for checking') }),
+            async () => {
+                const count = await prisma.aiConversationLog.count({ where: { agentId, remoteJid } });
+                if (count === 0) return { totalTurns: 0, totalMessages: 0 };
+                const [first, last] = await Promise.all([
+                    prisma.aiConversationLog.findFirst({ where: { agentId, remoteJid }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
+                    prisma.aiConversationLog.findFirst({ where: { agentId, remoteJid }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } })
+                ]);
+                return {
+                    totalTurns: count,
+                    totalMessages: count * 2,
+                    firstAt: first?.createdAt,
+                    lastAt: last?.createdAt
+                };
+            }
+        ),
+        searchMessages: makeTool(
+            'Search prior messages by keyword (case-insensitive partial match). Returns matching messages with their turn index.',
+            z.object({
+                query: z.string().describe('Search text'),
+                limit: z.number().optional().describe('Max results (default 10, max 20)')
+            }),
+            async ({ query, limit }) => {
+                const lim = Math.min(limit || 10, 20);
+                const all = await prisma.aiConversationLog.findMany({
+                    where: { agentId, remoteJid },
+                    orderBy: { createdAt: 'asc' },
+                    select: { userMessage: true, agentReply: true, createdAt: true }
+                });
+                const q = (query || '').toLowerCase();
+                if (!q) return { results: [], totalMatches: 0 };
+                const matches: any[] = [];
+                all.forEach((log, i) => {
+                    if (log.userMessage?.toLowerCase().includes(q)) {
+                        matches.push({ idx: i + 1, role: 'user', content: log.userMessage, at: log.createdAt });
+                    }
+                    if (log.agentReply?.toLowerCase().includes(q)) {
+                        matches.push({ idx: i + 1, role: 'assistant', content: log.agentReply, at: log.createdAt });
+                    }
+                });
+                return { results: matches.slice(0, lim), totalMatches: matches.length };
+            }
+        ),
+        getMessages: makeTool(
+            'Fetch a specific range of past turns by index (1 = oldest). Each turn returns the user message AND the assistant reply. Max 20 turns per call.',
+            z.object({
+                from: z.number().describe('Start turn index (1-based, oldest first)'),
+                to: z.number().describe('End turn index (inclusive)')
+            }),
+            async ({ from, to }) => {
+                const skip = Math.max(0, (from || 1) - 1);
+                const take = Math.max(1, Math.min((to || from) - (from || 1) + 1, 20));
+                const logs = await prisma.aiConversationLog.findMany({
+                    where: { agentId, remoteJid },
+                    orderBy: { createdAt: 'asc' },
+                    skip,
+                    take,
+                    select: { userMessage: true, agentReply: true, createdAt: true }
+                });
+                return {
+                    messages: logs.flatMap((log, i) => [
+                        { idx: skip + i + 1, role: 'user', content: log.userMessage, at: log.createdAt },
+                        { idx: skip + i + 1, role: 'assistant', content: log.agentReply, at: log.createdAt }
+                    ])
+                };
+            }
+        ),
+        getMessagesAround: makeTool(
+            'Get a few turns of context around a specific turn index (useful after searchMessages found a match). Returns "before" + the turn + "after".',
+            z.object({
+                idx: z.number().describe('Center turn index'),
+                before: z.number().optional().describe('Turns before (default 2)'),
+                after: z.number().optional().describe('Turns after (default 2)')
+            }),
+            async ({ idx, before, after }) => {
+                const b = before ?? 2;
+                const a = after ?? 2;
+                const from = Math.max(1, idx - b);
+                const to = idx + a;
+                const skip = from - 1;
+                const take = Math.min(to - from + 1, 20);
+                const logs = await prisma.aiConversationLog.findMany({
+                    where: { agentId, remoteJid },
+                    orderBy: { createdAt: 'asc' },
+                    skip,
+                    take,
+                    select: { userMessage: true, agentReply: true, createdAt: true }
+                });
+                return {
+                    messages: logs.flatMap((log, i) => [
+                        { idx: from + i, role: 'user', content: log.userMessage, at: log.createdAt },
+                        { idx: from + i, role: 'assistant', content: log.agentReply, at: log.createdAt }
+                    ])
+                };
+            }
+        )
+    };
+}
+
 // ─── Skill Registry ───
-const SKILL_DESCRIPTIONS: Record<string, string> = {
+export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
     crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
+    memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
 };
+
+function resolveSkillPrompt(skillId: string, skillPrompts?: Record<string, string>): string {
+    const custom = skillPrompts?.[skillId];
+    if (custom && custom.trim().length > 0) return custom;
+    return DEFAULT_SKILL_PROMPTS[skillId] || '';
+}
 
 function buildToolsForSkills(
     skills: string[],
     allowedTableIds: string[],
     userId: string,
-    httpTools: HttpToolTemplate[] = []
+    httpTools: HttpToolTemplate[] = [],
+    agentId: string = '',
+    remoteJid: string = '',
+    skillPrompts: Record<string, string> = {}
 ) {
     let tools: Record<string, any> = {};
     let prompts: string[] = [];
 
     if (skills.includes('tables') && allowedTableIds.length > 0) {
         tools = { ...tools, ...buildTableTools(allowedTableIds) };
-        prompts.push(SKILL_DESCRIPTIONS.tables);
+        prompts.push(resolveSkillPrompt('tables', skillPrompts));
     }
 
     if (skills.includes('crm')) {
         tools = { ...tools, ...buildCrmTools(userId) };
-        prompts.push(SKILL_DESCRIPTIONS.crm);
+        prompts.push(resolveSkillPrompt('crm', skillPrompts));
+    }
+
+    if (skills.includes('memory') && agentId && remoteJid) {
+        tools = { ...tools, ...buildMemoryTools(agentId, remoteJid) };
+        prompts.push(resolveSkillPrompt('memory', skillPrompts));
     }
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {
@@ -453,10 +617,10 @@ function buildToolsForSkills(
         const list = httpTools
             .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
             .join('\n');
-        prompts.push(`You can call these dedicated HTTP tools:\n${list}`);
+        prompts.push(resolveSkillPrompt('http', skillPrompts) + '\n' + list);
     }
 
-    return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n') : '' };
+    return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };
 }
 
 // ─── Main AI Service ───
@@ -492,11 +656,13 @@ export class AiService {
                 return;
             }
 
-            // Fetch chat history
+            // Fetch chat history (short window — agent uses memory tools for older context when needed)
+            const skills = (agent as any).skills || [];
+            const historyDepth = skills.includes('memory') ? 3 : 10;
             const history = await prisma.message.findMany({
                 where: { instanceId, remoteJid },
                 orderBy: { timestamp: 'desc' },
-                take: 15
+                take: historyDepth
             });
             history.reverse();
 
@@ -520,9 +686,12 @@ export class AiService {
             const contactContext = `\n\nCurrent contact info:\n- Phone: ${phone}${contactName ? `\n- Name: ${contactName}` : ''}${client?.status ? `\n- CRM Status: ${client.status}` : ''}${client?.tags?.length ? `\n- Tags: ${client.tags.join(', ')}` : ''}${client?.summary ? `\n- Summary: ${client.summary}` : ''}\nYou already have this info — do NOT ask the customer for their phone number or name.`;
 
             // Build tools based on agent skills
-            const skills = (agent as any).skills || [];
             const httpTools = (((agent as any).httpTools) || []) as HttpToolTemplate[];
-            const { tools, skillPrompt } = buildToolsForSkills(skills, agent.allowedTableIds, agent.userId, httpTools);
+            const skillPrompts = (((agent as any).skillPrompts) || {}) as Record<string, string>;
+            const { tools, skillPrompt } = buildToolsForSkills(
+                skills, agent.allowedTableIds, agent.userId, httpTools,
+                agent.id, remoteJid, skillPrompts
+            );
 
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 
@@ -530,12 +699,14 @@ export class AiService {
             const result = await generateText({
                 model: aiModel,
                 system: systemPrompt,
-                messages,
+                messages: applyAnthropicCacheControl(providerInfo.provider, messages),
                 ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
 
             const text = result.text;
             if (!text) return;
+
+            const cacheUsage = extractCacheUsage(providerInfo.provider, result);
 
             // Extract tool calls
             const extractedToolCalls = (result.steps || []).flatMap((step: any) =>
@@ -568,6 +739,8 @@ export class AiService {
                     promptTokens: (result as any).usage?.inputTokens || 0,
                     completionTokens: (result as any).usage?.outputTokens || 0,
                     totalTokens: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
+                    cachedTokens: cacheUsage.cachedTokens,
+                    cacheCreationTokens: cacheUsage.cacheCreationTokens,
                     provider: providerInfo.provider, model: agent.model,
                     toolCalls: extractedToolCalls,
                 }

@@ -42,6 +42,7 @@ const createAgentSchema = z.object({
     skills: z.array(z.string()).optional(),
     allowedUrls: z.array(z.string()).optional(),
     httpTools: z.array(httpToolTemplateSchema).optional(),
+    skillPrompts: z.record(z.string(), z.string()).optional(),
     isActive: z.boolean().optional()
 });
 
@@ -94,7 +95,8 @@ export class AgentController {
                     allowedTableIds: data.allowedTableIds || [],
                     skills: data.skills || [],
                     allowedUrls: data.allowedUrls || [],
-                    httpTools: (data.httpTools || []) as any
+                    httpTools: (data.httpTools || []) as any,
+                    skillPrompts: (data.skillPrompts || {}) as any
                 }
             });
 
@@ -125,6 +127,7 @@ export class AgentController {
                     skills: data.skills || [],
                     allowedUrls: data.allowedUrls || [],
                     httpTools: (data.httpTools || []) as any,
+                    skillPrompts: (data.skillPrompts || {}) as any,
                     ...(data.isActive !== undefined ? { isActive: data.isActive } : {})
                 }
             });

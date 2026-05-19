@@ -8,6 +8,14 @@ import { motion } from "framer-motion";
 
 type Tab = "conversations" | "usage" | "settings";
 
+// Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts
+const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
+    tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
+    crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
+    http: 'You can call external HTTP APIs via the dedicated tools listed below.',
+    memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
+};
+
 type ValueSpec =
     | { mode: "fixed"; value: string }
     | { mode: "ai"; description: string };
@@ -146,6 +154,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
+    const [skillPrompts, setSkillPrompts] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -169,6 +178,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         ...t,
                         id: t.id || Math.random().toString(36).slice(2)
                     })));
+                    setSkillPrompts((a.skillPrompts as Record<string, string>) || {});
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -268,7 +278,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools
+                httpTools, skillPrompts
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -286,7 +296,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -558,6 +568,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
+                                    { id: 'memory', name: 'Conversation Memory', desc: 'Look back through prior messages on demand (search, range, stats) — saves tokens on long chats' },
                                 ].map(skill => (
                                     <label key={skill.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${skills.includes(skill.id) ? 'bg-primary/5 border-primary/30' : 'bg-card border-border hover:bg-secondary/50'}`}>
                                         <input type="checkbox" checked={skills.includes(skill.id)}
@@ -571,6 +582,48 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 ))}
                             </div>
                         </div>
+
+                        {/* Per-skill prompt overrides (only for skills that have a default prompt) */}
+                        {skills.some(s => DEFAULT_SKILL_PROMPTS[s]) && (
+                        <div>
+                            <h3 className="font-semibold flex items-center gap-2 mb-2">
+                                <Wrench className="w-4 h-4 text-muted-foreground" /> Skill Prompts
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-3">
+                                Each enabled skill has a default instruction prompt the agent receives. Override it below if you want to customize behavior. Leave blank to use the default shown as placeholder.
+                            </p>
+                            <div className="space-y-3">
+                                {skills.filter(s => DEFAULT_SKILL_PROMPTS[s]).map(skillId => {
+                                    const def = DEFAULT_SKILL_PROMPTS[skillId];
+                                    const value = skillPrompts[skillId] ?? '';
+                                    const isOverridden = value.trim().length > 0;
+                                    return (
+                                        <div key={skillId}>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <label className="text-xs font-medium text-muted-foreground capitalize">{skillId} skill prompt</label>
+                                                {isOverridden && (
+                                                    <button type="button"
+                                                        onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n[skillId]; return n; })}
+                                                        className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+                                                        Reset to default
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <textarea
+                                                value={value}
+                                                onChange={e => setSkillPrompts(prev => ({ ...prev, [skillId]: e.target.value }))}
+                                                rows={4}
+                                                placeholder={def}
+                                                className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                            {!isOverridden && (
+                                                <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        )}
 
                         {skills.includes('tables') && (
                         <div>

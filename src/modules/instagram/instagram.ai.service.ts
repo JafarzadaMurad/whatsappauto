@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
-import { buildHttpTools as buildHttpToolsShared, sanitizeName, type HttpToolTemplate } from '../agent/ai.service';
+import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
 
 // Reuse the same makeTool + skill builders from WhatsApp AI service
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -151,7 +151,7 @@ export class InstagramAiService {
         if (!account?.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
 
         const agent = account.agent;
-        const text = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');
+        const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');
         if (!text) return;
 
         await sendIgMessage(igUserId, senderId, text, account.accessToken);
@@ -164,7 +164,11 @@ export class InstagramAiService {
                 remoteJid: `ig:${senderId}`,
                 userMessage: messageText,
                 agentReply: text,
-                promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                promptTokens: usage.promptTokens,
+                completionTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
+                cachedTokens: usage.cachedTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
                 provider: agent.provider.provider,
                 model: agent.model,
                 toolCalls: [],
@@ -185,7 +189,7 @@ export class InstagramAiService {
 
         const agent = account.agent;
         const context = `[Comment on post by @${from.username}]: ${commentText}`;
-        const text = await this.generateResponse(agent, account.userId, from.id, context, 'comment');
+        const { text, usage } = await this.generateResponse(agent, account.userId, from.id, context, 'comment');
         if (!text) return;
 
         await replyToComment(commentId, text, account.accessToken);
@@ -197,7 +201,11 @@ export class InstagramAiService {
                 remoteJid: `ig:${from.id}`,
                 userMessage: context,
                 agentReply: text,
-                promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                promptTokens: usage.promptTokens,
+                completionTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
+                cachedTokens: usage.cachedTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
                 provider: agent.provider.provider,
                 model: agent.model,
                 toolCalls: [],
@@ -208,7 +216,13 @@ export class InstagramAiService {
     }
 
     // ─── Shared AI generation ───
-    private static async generateResponse(agent: any, userId: string, contactId: string, messageText: string, type: 'dm' | 'comment'): Promise<string | null> {
+    private static async generateResponse(
+        agent: any,
+        userId: string,
+        contactId: string,
+        messageText: string,
+        type: 'dm' | 'comment'
+    ): Promise<{ text: string | null; usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number; cacheCreationTokens: number } }> {
         const providerInfo = agent.provider;
         let aiModel: any;
         if (providerInfo.provider === 'OPENAI') {
@@ -218,28 +232,36 @@ export class InstagramAiService {
         } else if (providerInfo.provider === 'GEMINI') {
             aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
         } else {
-            return null;
+            return { text: null, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cacheCreationTokens: 0 } };
         }
 
-        // Build tools based on skills
         const skills = agent.skills || [];
+        const remoteJid = `ig:${contactId}`;
+        const overrides = (agent.skillPrompts || {}) as Record<string, string>;
+        const resolvePrompt = (id: string) =>
+            (overrides[id] && overrides[id].trim().length > 0) ? overrides[id] : (DEFAULT_SKILL_PROMPTS[id] || '');
+
         let tools: Record<string, any> = {};
-        let skillPrompts: string[] = [];
+        let skillPromptParts: string[] = [];
 
         if (skills.includes('crm')) {
             tools = { ...tools, ...buildCrmTools(userId) };
-            skillPrompts.push('You can manage clients in the CRM via upsertClient tool.');
+            skillPromptParts.push(resolvePrompt('crm'));
         }
         if (skills.includes('tables') && agent.allowedTableIds?.length > 0) {
             tools = { ...tools, ...buildTableTools(agent.allowedTableIds) };
-            skillPrompts.push('You have access to data tables via listTables, searchTable, getTableRows.');
+            skillPromptParts.push(resolvePrompt('tables'));
+        }
+        if (skills.includes('memory')) {
+            tools = { ...tools, ...buildMemoryTools(agent.id, remoteJid) };
+            skillPromptParts.push(resolvePrompt('memory'));
         }
         if (skills.includes('http')) {
             const httpTools = ((agent.httpTools as any) || []) as HttpToolTemplate[];
             if (httpTools.length > 0) {
                 tools = { ...tools, ...buildHttpToolsShared(httpTools) };
                 const list = httpTools.map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`).join('\n');
-                skillPrompts.push(`You can call these dedicated HTTP tools:\n${list}`);
+                skillPromptParts.push(resolvePrompt('http') + '\n' + list);
             }
         }
 
@@ -249,16 +271,16 @@ export class InstagramAiService {
 
         const systemPrompt = (agent.systemPrompt || 'You are a helpful assistant.') +
             `\n\n${platformNote}\nContact ID: ${contactId}` +
-            (skillPrompts.length > 0 ? '\n\n' + skillPrompts.join('\n') : '');
+            (skillPromptParts.length > 0 ? '\n\n' + skillPromptParts.join('\n\n') : '');
 
         const hasTools = Object.keys(tools).length > 0;
 
-        // Build conversation history from prior logs for this agent + contact
-        const remoteJid = `ig:${contactId}`;
+        // Build conversation history (short window — agent uses memory tools for older context)
+        const historyDepth = skills.includes('memory') ? 3 : 10;
         const priorLogs = await prisma.aiConversationLog.findMany({
             where: { agentId: agent.id, remoteJid },
             orderBy: { createdAt: 'desc' },
-            take: 10,
+            take: historyDepth,
             select: { userMessage: true, agentReply: true }
         });
         priorLogs.reverse();
@@ -273,10 +295,21 @@ export class InstagramAiService {
         const result = await generateText({
             model: aiModel,
             system: systemPrompt,
-            messages,
+            messages: applyAnthropicCacheControl(providerInfo.provider, messages),
             ...(hasTools ? { tools, stopWhen: stepCountIs(5) } : {}),
         } as any);
 
-        return result.text || null;
+        const cache = extractCacheUsage(providerInfo.provider, result);
+        const usage = (result as any).usage || {};
+        return {
+            text: result.text || null,
+            usage: {
+                promptTokens: usage.inputTokens || 0,
+                completionTokens: usage.outputTokens || 0,
+                totalTokens: (usage.inputTokens || 0) + (usage.outputTokens || 0),
+                cachedTokens: cache.cachedTokens,
+                cacheCreationTokens: cache.cacheCreationTokens
+            }
+        };
     }
 }

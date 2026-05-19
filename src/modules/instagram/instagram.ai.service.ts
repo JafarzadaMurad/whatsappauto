@@ -253,10 +253,27 @@ export class InstagramAiService {
 
         const hasTools = Object.keys(tools).length > 0;
 
+        // Build conversation history from prior logs for this agent + contact
+        const remoteJid = `ig:${contactId}`;
+        const priorLogs = await prisma.aiConversationLog.findMany({
+            where: { agentId: agent.id, remoteJid },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            select: { userMessage: true, agentReply: true }
+        });
+        priorLogs.reverse();
+
+        const messages: { role: 'user' | 'assistant'; content: string }[] = [];
+        for (const log of priorLogs) {
+            if (log.userMessage) messages.push({ role: 'user', content: log.userMessage });
+            if (log.agentReply) messages.push({ role: 'assistant', content: log.agentReply });
+        }
+        messages.push({ role: 'user', content: messageText });
+
         const result = await generateText({
             model: aiModel,
             system: systemPrompt,
-            messages: [{ role: 'user' as const, content: messageText }],
+            messages,
             ...(hasTools ? { tools, stopWhen: stepCountIs(5) } : {}),
         } as any);
 

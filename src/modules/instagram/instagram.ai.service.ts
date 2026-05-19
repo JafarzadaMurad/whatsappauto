@@ -85,23 +85,59 @@ function buildTableTools(allowedTableIds: string[]) {
 
 // HTTP tool building is shared with WhatsApp agent — see ../agent/ai.service.ts
 
+// Instagram DM hard limit is 1000 chars. Keep a small safety margin.
+const IG_MAX_MESSAGE = 950;
+
+function truncateForIg(text: string): string {
+    if (!text || text.length <= IG_MAX_MESSAGE) return text;
+    return text.slice(0, IG_MAX_MESSAGE - 1) + '…';
+}
+
 // ─── Send Instagram DM ───
 async function sendIgMessage(igUserId: string, recipientId: string, text: string, accessToken: string) {
-    await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
-        recipient: { id: recipientId },
-        message: { text }
-    }, {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
-    });
+    const safe = truncateForIg(text);
+    try {
+        await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
+            recipient: { id: recipientId },
+            message: { text: safe }
+        }, {
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+        });
+    } catch (err: any) {
+        const ig = err.response?.data?.error;
+        logger.error({
+            status: err.response?.status,
+            ig_message: ig?.message,
+            ig_code: ig?.code,
+            ig_subcode: ig?.error_subcode,
+            ig_user_msg: ig?.error_user_msg,
+            text_length: safe.length
+        }, '[IG] sendIgMessage failed');
+        throw err;
+    }
 }
 
 // ─── Reply to Instagram Comment ───
 async function replyToComment(commentId: string, text: string, accessToken: string) {
-    await axios.post(`https://graph.instagram.com/v21.0/${commentId}/replies`, {
-        message: text
-    }, {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
-    });
+    const safe = truncateForIg(text);
+    try {
+        await axios.post(`https://graph.instagram.com/v21.0/${commentId}/replies`, {
+            message: safe
+        }, {
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+        });
+    } catch (err: any) {
+        const ig = err.response?.data?.error;
+        logger.error({
+            status: err.response?.status,
+            ig_message: ig?.message,
+            ig_code: ig?.code,
+            ig_subcode: ig?.error_subcode,
+            ig_user_msg: ig?.error_user_msg,
+            text_length: safe.length
+        }, '[IG] replyToComment failed');
+        throw err;
+    }
 }
 
 export class InstagramAiService {
@@ -208,8 +244,8 @@ export class InstagramAiService {
         }
 
         const platformNote = type === 'dm'
-            ? 'You are responding to an Instagram Direct Message.'
-            : 'You are responding to an Instagram comment on a post. Keep your reply concise and relevant to the comment.';
+            ? 'You are responding to an Instagram Direct Message. Your reply MUST be under 900 characters. If tool output is large, summarize the key items briefly instead of pasting raw JSON.'
+            : 'You are responding to an Instagram comment on a post. Your reply MUST be under 900 characters and concise.';
 
         const systemPrompt = (agent.systemPrompt || 'You are a helpful assistant.') +
             `\n\n${platformNote}\nContact ID: ${contactId}` +

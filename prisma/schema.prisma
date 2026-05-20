@@ -33,6 +33,7 @@ model User {
   clients      Client[]
   campaigns         Campaign[]
   instagramAccounts InstagramAccount[]
+  automations       Automation[]
 }
 
 model Instance {
@@ -311,6 +312,25 @@ model InstagramAccount {
   agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
   isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------
+// Visual Automations (workflow builder)
+// -----------------------------------------
+
+model Automation {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name     String
+  isActive Boolean @default(false)
+
+  nodes Json @default("[]") // React Flow nodes: [{ id, type, position, data }]
+  edges Json @default("[]") // React Flow edges: [{ id, source, target, sourceHandle }]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

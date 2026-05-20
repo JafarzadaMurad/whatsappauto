@@ -12,6 +12,7 @@ import { io } from '../../server';
 import qrcode from 'qrcode';
 import { webhookQueue } from '../webhook/webhook.dispatcher';
 import { AiService } from '../agent/ai.service';
+import { upsertCrmContact } from '../client/client.service';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -126,6 +127,21 @@ export class InstanceManager {
                                     timestamp: new Date((msg.messageTimestamp as number) * 1000 || Date.now())
                                 }
                             });
+
+                            // Auto-add the sender to CRM with channel info
+                            prisma.instance.findUnique({
+                                where: { id: instanceId },
+                                select: { userId: true, name: true }
+                            }).then(inst => {
+                                if (!inst) return;
+                                return upsertCrmContact({
+                                    userId: inst.userId,
+                                    phone: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+                                    name: msg.pushName || null,
+                                    channel: 'whatsapp',
+                                    sourceLabel: inst.name
+                                });
+                            }).catch(() => {});
 
                             // Send to webhook queue
                             webhookQueue.add('new-message', {

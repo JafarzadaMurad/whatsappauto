@@ -14,8 +14,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const pathname = usePathname();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [collapsed, setCollapsed] = useState(false);
-    const [networksExpanded, setNetworksExpanded] = useState(true);
-    const [aiExpanded, setAiExpanded] = useState(true);
+    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+        Networks: true, 'AI Workspace': true, CRM: true
+    });
 
     useEffect(() => {
         if (hasHydrated && !isAuthenticated) {
@@ -41,7 +42,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'Instagram', href: '/dashboard/instagram', icon: Camera }
             ]
         },
-        { name: 'CRM / Clients', href: '/dashboard/crm', icon: Users },
+        {
+            name: 'CRM',
+            icon: Users,
+            isGroup: true,
+            children: [
+                { name: 'Contacts', href: '/dashboard/crm', icon: Users }
+            ]
+        },
         {
             name: 'AI Workspace',
             icon: Bot,
@@ -106,8 +114,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <nav className="space-y-1">
                         {navLinks.map((item) => {
                             if (item.isGroup) {
-                                const expanded = item.name === 'Networks' ? networksExpanded : aiExpanded;
-                                const setExpanded = item.name === 'Networks' ? setNetworksExpanded : setAiExpanded;
+                                const expanded = expandedGroups[item.name] ?? true;
+                                const setExpanded = (v: boolean) => setExpandedGroups(p => ({ ...p, [item.name]: v }));
 
                                 if (collapsed) {
                                     // Collapsed: show only group icon

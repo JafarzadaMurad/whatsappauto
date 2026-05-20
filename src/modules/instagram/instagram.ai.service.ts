@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import axios from 'axios';
 import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
 import { AutomationEngine } from '../automation/automation.engine';
+import { upsertCrmContact } from '../client/client.service';
 
 // Reuse the same makeTool + skill builders from WhatsApp AI service
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -204,6 +205,15 @@ export class InstagramAiService {
         const contact = await prisma.instagramContact.findUnique({
             where: { igUserId_senderId: { igUserId, senderId } }
         }).catch(() => null);
+
+        // Auto-add the sender to CRM with channel info
+        await upsertCrmContact({
+            userId: account.userId,
+            phone: senderId,
+            name: contact?.name || contact?.username || null,
+            channel: 'instagram',
+            sourceLabel: account.igUsername ? '@' + account.igUsername : null
+        });
         const { matched } = await AutomationEngine.handleMessage({
             userId: account.userId,
             channel: 'instagram',

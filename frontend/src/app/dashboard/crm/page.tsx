@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Search, Filter, Phone, Tag, Loader2, ArrowRight } from "lucide-react";
+import { Users, Search, Filter, Phone, Tag, Loader2, ArrowRight, MessageSquare, Camera } from "lucide-react";
 import api from "@/lib/api";
 
 interface Client {
@@ -10,6 +10,8 @@ interface Client {
     name: string | null;
     status: string;
     tags: string[];
+    channel: string | null;
+    sourceLabel: string | null;
     customFields: Record<string, any> | null;
     createdAt: string;
     updatedAt: string;
@@ -56,8 +58,8 @@ export default function CrmPage() {
         <div className="max-w-7xl mx-auto space-y-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-foreground">CRM Clients</h1>
-                    <p className="text-muted-foreground mt-1">Manage all your contacts and AI-assigned lead statuses.</p>
+                    <h1 className="text-3xl font-bold text-foreground">Contacts</h1>
+                    <p className="text-muted-foreground mt-1">All people who messaged you across WhatsApp and Instagram, with AI-assigned lead statuses.</p>
                 </div>
             </div>
 
@@ -83,6 +85,7 @@ export default function CrmPage() {
                         <thead>
                             <tr className="bg-secondary/50 border-b border-border text-sm">
                                 <th className="px-6 py-4 font-semibold text-muted-foreground">Contact</th>
+                                <th className="px-6 py-4 font-semibold text-muted-foreground">Channel</th>
                                 <th className="px-6 py-4 font-semibold text-muted-foreground">Status</th>
                                 <th className="px-6 py-4 font-semibold text-muted-foreground">Auto Tags</th>
                                 <th className="px-6 py-4 font-semibold text-muted-foreground">Last Activity</th>
@@ -92,13 +95,13 @@ export default function CrmPage() {
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center">
+                                    <td colSpan={6} className="px-6 py-12 text-center">
                                         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto" />
                                     </td>
                                 </tr>
                             ) : filteredClients.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center">
+                                    <td colSpan={6} className="px-6 py-12 text-center">
                                         <div className="flex flex-col items-center justify-center text-muted-foreground">
                                             <Users className="w-12 h-12 mb-3 opacity-50" />
                                             <p className="font-medium">No clients found</p>
@@ -119,6 +122,25 @@ export default function CrmPage() {
                                                     <div className="text-sm text-muted-foreground font-mono">{client.phone.split('@')[0]}</div>
                                                 </div>
                                             </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {client.channel === 'instagram' ? (
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                                                        <Camera className="w-3 h-3" /> Instagram
+                                                    </span>
+                                                    {client.sourceLabel && <span className="text-xs text-muted-foreground">{client.sourceLabel}</span>}
+                                                </div>
+                                            ) : client.channel === 'whatsapp' ? (
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                        <MessageSquare className="w-3 h-3" /> WhatsApp
+                                                    </span>
+                                                    {client.sourceLabel && <span className="text-xs text-muted-foreground">{client.sourceLabel}</span>}
+                                                </div>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground italic">—</span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${getStatusColor(client.status)}`}>

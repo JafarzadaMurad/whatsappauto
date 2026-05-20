@@ -238,11 +238,14 @@ model Client {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  phone   String // RemoteJid
+  phone   String // RemoteJid digits (WhatsApp) or IGSID (Instagram)
   name    String?
   status  String   @default("NEW") // Custom CRM Status e.g., "Lead", "Purchased"
   tags    String[]
   summary String?  @db.Text // AI-generated summary of interactions
+
+  channel     String? // "whatsapp" | "instagram"
+  sourceLabel String? // WhatsApp instance name or @instagram_username
 
   customFields Json? // Additional CRM data AI extracts or user defines
 

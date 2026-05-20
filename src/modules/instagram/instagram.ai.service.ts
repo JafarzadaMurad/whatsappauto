@@ -7,6 +7,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
+import { AutomationEngine } from '../automation/automation.engine';
 
 // Reuse the same makeTool + skill builders from WhatsApp AI service
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -198,6 +199,43 @@ export class InstagramAiService {
         // Cache the sender's profile regardless of whether an agent replies
         await cacheIgContact(igUserId, senderId, account.accessToken);
 
+        // Run automations first — if one matches, skip the default agent reply
+        const priorCount = await prisma.aiConversationLog.count({ where: { remoteJid: `ig:${senderId}` } });
+        const contact = await prisma.instagramContact.findUnique({
+            where: { igUserId_senderId: { igUserId, senderId } }
+        }).catch(() => null);
+        const { matched } = await AutomationEngine.handleMessage({
+            userId: account.userId,
+            channel: 'instagram',
+            text: messageText,
+            contactId: senderId,
+            contactName: contact?.name || contact?.username || undefined,
+            isNewContact: priorCount === 0,
+            source: 'dm',
+            sendMessage: (t) => sendIgMessage(igUserId, senderId, t, account.accessToken),
+            runAgent: async (agentId) => {
+                const ag = await prisma.agent.findFirst({ where: { id: agentId }, include: { provider: true } });
+                if (!ag?.provider) return;
+                const r = await this.generateResponse(ag, account.userId, senderId, messageText, 'dm');
+                if (r.text) await sendIgMessage(igUserId, senderId, r.text, account.accessToken);
+            },
+            addTag: async (tag) => {
+                const existing = await prisma.client.findUnique({
+                    where: { userId_phone: { userId: account.userId, phone: senderId } }
+                }).catch(() => null);
+                const tags = Array.from(new Set([...(existing?.tags || []), tag]));
+                await prisma.client.upsert({
+                    where: { userId_phone: { userId: account.userId, phone: senderId } },
+                    update: { tags },
+                    create: { userId: account.userId, phone: senderId, tags, status: 'NEW' }
+                });
+            }
+        });
+        if (matched) {
+            logger.info(`[IG] DM from ${senderId} handled by automation`);
+            return;
+        }
+
         if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
 
         const agent = account.agent;
@@ -235,7 +273,24 @@ export class InstagramAiService {
             include: { agent: { include: { provider: true } } }
         });
 
-        if (!account?.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
+        if (!account) return;
+
+        // Run automations first — a matching comment trigger skips the default agent
+        const { matched } = await AutomationEngine.handleMessage({
+            userId: account.userId,
+            channel: 'instagram',
+            text: commentText,
+            contactId: from.id,
+            contactName: from.username || undefined,
+            source: 'comment',
+            sendMessage: (t) => replyToComment(commentId, t, account.accessToken),
+        });
+        if (matched) {
+            logger.info(`[IG] Comment ${commentId} handled by automation`);
+            return;
+        }
+
+        if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
 
         const agent = account.agent;
         const context = `[Comment on post by @${from.username}]: ${commentText}`;

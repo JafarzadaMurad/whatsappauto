@@ -7,6 +7,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
+import { AutomationEngine } from '../automation/automation.engine';
 
 // ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -636,6 +637,44 @@ export class AiService {
                 where: { id: instanceId },
                 include: { agent: { include: { provider: true } } }
             });
+            if (!instance) return;
+
+            // Run automations first — a matching trigger skips the default agent reply
+            const lastInbound = await prisma.message.findFirst({
+                where: { instanceId, remoteJid, isFromMe: false },
+                orderBy: { timestamp: 'desc' }
+            });
+            const triggerText = lastInbound?.content || '';
+            const inboundCount = await prisma.message.count({
+                where: { instanceId, remoteJid, isFromMe: false }
+            });
+            const waPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const waContact = await prisma.contact.findFirst({ where: { instanceId, remoteJid } });
+            const autoResult = await AutomationEngine.handleMessage({
+                userId: instance.userId,
+                channel: 'whatsapp',
+                text: triggerText,
+                contactId: remoteJid,
+                contactName: waContact?.pushName || waContact?.name || undefined,
+                isNewContact: inboundCount <= 1,
+                source: 'dm',
+                sendMessage: async (t) => { await sock.sendMessage(remoteJid, { text: t }); },
+                addTag: async (tag) => {
+                    const existing = await prisma.client.findUnique({
+                        where: { userId_phone: { userId: instance.userId, phone: waPhone } }
+                    }).catch(() => null);
+                    const tags = Array.from(new Set([...(existing?.tags || []), tag]));
+                    await prisma.client.upsert({
+                        where: { userId_phone: { userId: instance.userId, phone: waPhone } },
+                        update: { tags },
+                        create: { userId: instance.userId, phone: waPhone, tags, status: 'NEW' }
+                    });
+                }
+            });
+            if (autoResult.matched) {
+                logger.info(`[${instanceId}] message handled by automation`);
+                return;
+            }
 
             if (!instance?.agent?.provider) return;
             if (!(instance.agent as any).isActive) return;

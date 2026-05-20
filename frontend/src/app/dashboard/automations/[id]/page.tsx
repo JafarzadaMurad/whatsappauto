@@ -254,6 +254,7 @@ function Editor({ id }: { id: string }) {
                         onNodeClick={(_, n) => setSelectedId(n.id)}
                         onPaneClick={() => setSelectedId(null)}
                         nodeTypes={nodeTypes}
+                        colorMode="dark"
                         fitView
                         proOptions={{ hideAttribution: true }}
                     >

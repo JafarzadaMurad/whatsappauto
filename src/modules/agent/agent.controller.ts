@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate } from './ai.service';
+import { sendIgMessage } from '../instagram/instagram.ai.service';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -182,6 +183,27 @@ export class AgentController {
                 grouped[log.remoteJid].totalTokens += log.totalTokens;
             }
 
+            // Enrich Instagram conversations with cached contact profiles
+            const igSenderIds = Object.keys(grouped)
+                .filter(j => j.startsWith('ig:'))
+                .map(j => j.slice(3));
+            if (igSenderIds.length > 0) {
+                const contacts = await prisma.instagramContact.findMany({
+                    where: { senderId: { in: igSenderIds } }
+                });
+                const bySender: Record<string, any> = {};
+                for (const c of contacts) bySender[c.senderId] = c;
+                for (const jid of Object.keys(grouped)) {
+                    if (!jid.startsWith('ig:')) continue;
+                    const c = bySender[jid.slice(3)];
+                    grouped[jid].platform = 'instagram';
+                    grouped[jid].username = c?.username || null;
+                    grouped[jid].name = c?.name || null;
+                    grouped[jid].profilePic = c?.profilePic || null;
+                    grouped[jid].lastInboundAt = c?.lastMessageAt || null;
+                }
+            }
+
             return res.json({ success: true, conversations: Object.values(grouped) });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
@@ -297,6 +319,59 @@ export class AgentController {
             const executor = buildTemplateExecutor(template as HttpToolTemplate);
             const result = await executor(args);
             return res.json({ success: true, result });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Send a manual reply into a conversation (currently Instagram only)
+    async replyToConversation(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const schema = z.object({
+                remoteJid: z.string().min(1),
+                text: z.string().min(1).max(950)
+            });
+            const { remoteJid, text } = schema.parse(req.body);
+
+            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            if (!remoteJid.startsWith('ig:')) {
+                return res.status(400).json({ success: false, message: 'Manual reply is currently supported for Instagram conversations only' });
+            }
+
+            const senderId = remoteJid.slice(3);
+            const account = await prisma.instagramAccount.findFirst({
+                where: { agentId: id, userId }
+            });
+            if (!account) return res.status(400).json({ success: false, message: 'No Instagram account linked to this agent' });
+
+            try {
+                await sendIgMessage(account.igUserId, senderId, text, account.accessToken);
+            } catch (e: any) {
+                const ig = e.response?.data?.error;
+                return res.status(502).json({
+                    success: false,
+                    message: ig?.error_user_msg || ig?.message || e.message,
+                    igCode: ig?.code
+                });
+            }
+
+            // Record the manual reply so it appears in the conversation thread
+            const log = await prisma.aiConversationLog.create({
+                data: {
+                    agentId: id, instanceId: account.id, remoteJid,
+                    userMessage: '', agentReply: text,
+                    promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                    provider: 'MANUAL', model: 'manual',
+                    toolCalls: []
+                }
+            });
+
+            return res.json({ success: true, message: log });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });

@@ -85,6 +85,51 @@ function buildTableTools(allowedTableIds: string[]) {
 
 // HTTP tool building is shared with WhatsApp agent — see ../agent/ai.service.ts
 
+// Fetch and cache an Instagram contact's profile (username, name, picture).
+// Refetches only if missing or older than 24h to conserve API quota.
+export async function cacheIgContact(igUserId: string, senderId: string, accessToken: string) {
+    try {
+        const existing = await prisma.instagramContact.findUnique({
+            where: { igUserId_senderId: { igUserId, senderId } }
+        });
+        const stale = !existing || (Date.now() - new Date(existing.updatedAt).getTime() > 24 * 60 * 60 * 1000);
+        if (!stale) {
+            await prisma.instagramContact.update({
+                where: { igUserId_senderId: { igUserId, senderId } },
+                data: { lastMessageAt: new Date() }
+            });
+            return;
+        }
+        let profile: any = {};
+        try {
+            const res = await axios.get(`https://graph.instagram.com/v21.0/${senderId}`, {
+                params: { fields: 'name,username,profile_pic', access_token: accessToken }
+            });
+            profile = res.data || {};
+        } catch (e: any) {
+            logger.warn({ senderId, err: e.response?.data?.error?.message || e.message }, '[IG] profile fetch failed');
+        }
+        await prisma.instagramContact.upsert({
+            where: { igUserId_senderId: { igUserId, senderId } },
+            update: {
+                ...(profile.username ? { username: profile.username } : {}),
+                ...(profile.name ? { name: profile.name } : {}),
+                ...(profile.profile_pic ? { profilePic: profile.profile_pic } : {}),
+                lastMessageAt: new Date()
+            },
+            create: {
+                igUserId, senderId,
+                username: profile.username || null,
+                name: profile.name || null,
+                profilePic: profile.profile_pic || null,
+                lastMessageAt: new Date()
+            }
+        });
+    } catch (e: any) {
+        logger.warn({ err: e.message }, '[IG] cacheIgContact failed');
+    }
+}
+
 // Instagram DM hard limit is 1000 chars. Keep a small safety margin.
 const IG_MAX_MESSAGE = 950;
 
@@ -94,7 +139,7 @@ function truncateForIg(text: string): string {
 }
 
 // ─── Send Instagram DM ───
-async function sendIgMessage(igUserId: string, recipientId: string, text: string, accessToken: string) {
+export async function sendIgMessage(igUserId: string, recipientId: string, text: string, accessToken: string) {
     const safe = truncateForIg(text);
     try {
         await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
@@ -148,7 +193,12 @@ export class InstagramAiService {
             include: { agent: { include: { provider: true } } }
         });
 
-        if (!account?.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
+        if (!account) return;
+
+        // Cache the sender's profile regardless of whether an agent replies
+        await cacheIgContact(igUserId, senderId, account.accessToken);
+
+        if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
 
         const agent = account.agent;
         const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');

@@ -314,3 +314,19 @@ model InstagramAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// Cached profile of a person who messaged an Instagram business account
+model InstagramContact {
+  id         String   @id @default(uuid())
+  igUserId   String   // the connected business account this contact wrote to
+  senderId   String   // IGSID of the person messaging
+  username   String?
+  name       String?
+  profilePic String?  @db.Text
+  lastMessageAt DateTime? // last time this contact sent a message
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([igUserId, senderId])
+}

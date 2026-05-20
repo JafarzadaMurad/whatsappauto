@@ -16,5 +16,6 @@ router.get('/:id/conversations', controller.getConversations.bind(controller));
 router.get('/:id/messages', controller.getConversationMessages.bind(controller));
 router.get('/:id/stats', controller.getTokenStats.bind(controller));
 router.post('/test-http-tool', controller.testHttpTool.bind(controller));
+router.post('/:id/reply', controller.replyToConversation.bind(controller));
 
 export default router;

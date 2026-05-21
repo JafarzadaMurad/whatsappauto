@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Camera, Plus, Loader2, Trash2, Bot, Power, ExternalLink } from "lucide-react";
+import { Camera, Loader2, Trash2, Bot, Power } from "lucide-react";
 import api from "@/lib/api";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 
 export default function InstagramPage() {
+    const router = useRouter();
     const [accounts, setAccounts] = useState<any[]>([]);
     const [agents, setAgents] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -85,18 +87,21 @@ export default function InstagramPage() {
                     {accounts.map(acc => (
                         <motion.div key={acc.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                             className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex items-center gap-4">
+                            <button
+                                onClick={() => router.push(`/dashboard/instagram/${acc.id}`)}
+                                className="flex items-center gap-4 text-left group">
                                 <div className={`p-3 rounded-xl ${acc.isActive ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10 text-pink-500' : 'bg-secondary text-muted-foreground'}`}>
                                     <Camera className="w-6 h-6" />
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold">@{acc.igUsername}</h3>
+                                    <h3 className="font-semibold group-hover:text-primary transition-colors">@{acc.igUsername}</h3>
                                     <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                                         <span className={`w-2 h-2 rounded-full ${acc.isActive ? 'bg-emerald-500' : 'bg-destructive'}`} />
                                         {acc.isActive ? 'Active' : 'Inactive'}
+                                        <span className="text-xs">&bull; open</span>
                                     </div>
                                 </div>
-                            </div>
+                            </button>
 
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl">

@@ -298,6 +298,109 @@ export class InstagramController {
         }
     }
 
+    // ─── Account profile (live from Instagram) ───
+    async getAccountProfile(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            let profile: any = { username: account.igUsername, igUserId: account.igUserId };
+            try {
+                const r = await axios.get('https://graph.instagram.com/v21.0/me', {
+                    params: {
+                        fields: 'user_id,username,name,account_type,profile_picture_url,followers_count,follows_count,media_count,biography,website',
+                        access_token: account.accessToken
+                    }
+                });
+                profile = { ...profile, ...r.data };
+            } catch (e: any) {
+                logger.warn({ err: e.response?.data?.error?.message || e.message }, '[IG] profile fetch failed');
+            }
+            return res.json({ success: true, account: { id: account.id, agentId: account.agentId, isActive: account.isActive }, profile });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Recent media (posts) ───
+    async getAccountMedia(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            try {
+                const r = await axios.get('https://graph.instagram.com/v21.0/me/media', {
+                    params: {
+                        fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,comments_count,like_count',
+                        access_token: account.accessToken,
+                        limit: 30
+                    }
+                });
+                return res.json({ success: true, media: r.data.data || [] });
+            } catch (e: any) {
+                return res.status(502).json({ success: false, message: e.response?.data?.error?.message || e.message });
+            }
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Comments on a media post ───
+    async getMediaComments(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const mediaId = req.params.mediaId as string;
+            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            try {
+                const r = await axios.get(`https://graph.instagram.com/v21.0/${mediaId}/comments`, {
+                    params: {
+                        fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp}',
+                        access_token: account.accessToken
+                    }
+                });
+                return res.json({ success: true, comments: r.data.data || [] });
+            } catch (e: any) {
+                return res.status(502).json({ success: false, message: e.response?.data?.error?.message || e.message });
+            }
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Reply to a comment ───
+    async replyToMediaComment(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const commentId = req.params.commentId as string;
+            const text = String(req.body.text || '').trim();
+            if (!text) return res.status(400).json({ success: false, message: 'Reply text required' });
+
+            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            try {
+                await axios.post(`https://graph.instagram.com/v21.0/${commentId}/replies`,
+                    `message=${encodeURIComponent(text)}`,
+                    { headers: { 'Authorization': `Bearer ${account.accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+                return res.json({ success: true });
+            } catch (e: any) {
+                const ig = e.response?.data?.error;
+                return res.status(502).json({ success: false, message: ig?.error_user_msg || ig?.message || e.message });
+            }
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     // ─── Webhook verification (GET) ───
     async verifyWebhook(req: Request, res: Response) {
         const mode = req.query['hub.mode'];

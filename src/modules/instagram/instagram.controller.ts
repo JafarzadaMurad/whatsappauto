@@ -327,6 +327,8 @@ export class InstagramController {
 
                 // Handle DMs
                 for (const messaging of entry.messaging || []) {
+                    // Skip echoes — the business account's own outgoing messages
+                    if (messaging.message?.is_echo) continue;
                     if (messaging.message && messaging.sender?.id !== igUserId) {
                         const senderId = messaging.sender.id;
                         const text = messaging.message.text;

@@ -15,6 +15,7 @@ import agentRoutes from './modules/agent/agent.routes';
 import campaignRoutes from './modules/campaign/campaign.routes';
 import instagramRoutes from './modules/instagram/instagram.routes';
 import automationRoutes from './modules/automation/automation.routes';
+import inboxRoutes from './modules/inbox/inbox.routes';
 
 const app: Express = express();
 app.set('trust proxy', 1);
@@ -53,6 +54,7 @@ app.use('/api/agents', agentRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/instagram', instagramRoutes);
 app.use('/api/automations', automationRoutes);
+app.use('/api/inbox', inboxRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

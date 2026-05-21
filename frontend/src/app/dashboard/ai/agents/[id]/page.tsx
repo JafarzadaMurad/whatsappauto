@@ -133,7 +133,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [providers, setProviders] = useState<any[]>([]);
     const [tables, setTables] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState<Tab>("conversations");
+    const [tab, setTab] = useState<Tab>("usage");
 
     // Conversations state
     const [conversations, setConversations] = useState<any[]>([]);
@@ -344,7 +344,6 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     if (!agent) return <div>Agent not found</div>;
 
     const tabs: { key: Tab; label: string; icon: any }[] = [
-        { key: "conversations", label: "Conversations", icon: MessageSquare },
         { key: "usage", label: "Usage", icon: BarChart3 },
         { key: "settings", label: "Settings", icon: Settings },
     ];

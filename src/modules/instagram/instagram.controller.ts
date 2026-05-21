@@ -43,8 +43,10 @@ export class InstagramController {
             }
 
             const redirectUri = getRedirectUri();
+            // Documented Instagram Business Login params only — enable_fb_login /
+            // force_authentication are not honored by instagram.com/oauth/authorize.
             const scope = 'instagram_business_basic,instagram_business_manage_messages';
-            const url = `https://www.instagram.com/oauth/authorize?enable_fb_login=0&force_authentication=1&client_id=${cfg.META_IG_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}`;
+            const url = `https://www.instagram.com/oauth/authorize?client_id=${cfg.META_IG_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
 
             return res.json({ success: true, url });
         } catch (error: any) {

@@ -147,29 +147,40 @@ export class InstagramController {
                 require('fs').writeFileSync('/tmp/ig-longtoken-error.json', JSON.stringify({ data: e.response?.data, status: e.response?.status, msg: e.message }));
             }
 
-            // 3. Get profile (try GET, then POST as fallback)
-            let username = 'unknown';
-            let igUserId = tokenUserId;
+            // 3. Get profile — retry to absorb transient Meta API errors
+            let username = '';
+            let igUserId = '';
+            let lastError: any = null;
             const profileEndpoints = [
-                { url: 'https://graph.instagram.com/me', method: 'GET' as const },
-                { url: 'https://graph.instagram.com/v25.0/me', method: 'GET' as const },
-                { url: `https://graph.instagram.com/${tokenUserId}`, method: 'GET' as const },
+                'https://graph.instagram.com/me',
+                'https://graph.instagram.com/v25.0/me',
             ];
-            for (const ep of profileEndpoints) {
-                try {
-                    const r = await axios.request({
-                        url: ep.url, method: ep.method,
-                        params: { fields: 'user_id,username', access_token: longToken }
-                    });
-                    if (r.data.username || r.data.user_id) {
-                        username = r.data.username || 'unknown';
-                        igUserId = String(r.data.user_id || r.data.id || tokenUserId);
-                        require('fs').writeFileSync('/tmp/ig-profile-success.json', JSON.stringify({ endpoint: ep.url, data: r.data }));
-                        break;
+            for (let attempt = 0; attempt < 3 && !username; attempt++) {
+                if (attempt > 0) await new Promise(r => setTimeout(r, 1000));
+                for (const url of profileEndpoints) {
+                    try {
+                        const r = await axios.get(url, {
+                            params: { fields: 'user_id,username', access_token: longToken }
+                        });
+                        if (r.data.username || r.data.user_id) {
+                            username = r.data.username || '';
+                            igUserId = String(r.data.user_id || r.data.id || '');
+                            require('fs').writeFileSync('/tmp/ig-profile-success.json', JSON.stringify({ endpoint: url, data: r.data }));
+                            break;
+                        }
+                    } catch (e: any) {
+                        lastError = e.response?.data?.error || { message: e.message };
+                        require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ endpoint: url, data: e.response?.data, status: e.response?.status }));
                     }
-                } catch (e: any) {
-                    require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ endpoint: ep.url, data: e.response?.data, status: e.response?.status }));
                 }
+            }
+
+            // Never save a bogus "unknown" account — surface a clear error instead
+            if (!username || !igUserId) {
+                const msg = (lastError?.message || '').includes('Unsupported request')
+                    ? 'Could not read the Instagram profile. Make sure the account is an Instagram Professional account (Business or Creator), then try connecting again.'
+                    : `Could not read the Instagram profile: ${lastError?.message || 'unknown error'}. Please try connecting again.`;
+                return res.status(400).json({ success: false, message: msg });
             }
 
             return res.json({
@@ -194,6 +205,9 @@ export class InstagramController {
 
             if (!igUserId || !accessToken) {
                 return res.status(400).json({ success: false, message: 'Missing igUserId or accessToken' });
+            }
+            if (!username || username === 'unknown') {
+                return res.status(400).json({ success: false, message: 'Instagram profile could not be resolved. Please reconnect the account.' });
             }
 
             const account = await prisma.instagramAccount.upsert({

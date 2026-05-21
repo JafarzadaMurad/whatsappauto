@@ -151,16 +151,23 @@ export class InstagramController {
             let username = '';
             let igUserId = '';
             let lastError: any = null;
+            // v21.0 is the version proven to work for Instagram Business Login
+            // (graph.instagram.com); the unversioned path is a safety-net fallback.
             const profileEndpoints = [
+                'https://graph.instagram.com/v21.0/me',
                 'https://graph.instagram.com/me',
-                'https://graph.instagram.com/v25.0/me',
             ];
+            // Try the long-lived token first, then the short-lived token —
+            // whichever the API accepts.
+            const tokensToTry = longToken === shortToken ? [shortToken] : [longToken, shortToken];
             for (let attempt = 0; attempt < 3 && !username; attempt++) {
                 if (attempt > 0) await new Promise(r => setTimeout(r, 1000));
                 for (const url of profileEndpoints) {
+                    if (username) break;
+                    for (const tok of tokensToTry) {
                     try {
                         const r = await axios.get(url, {
-                            params: { fields: 'user_id,username', access_token: longToken }
+                            params: { fields: 'user_id,username,account_type', access_token: tok }
                         });
                         if (r.data.username || r.data.user_id) {
                             username = r.data.username || '';
@@ -172,8 +179,9 @@ export class InstagramController {
                         lastError = e.response?.data?.error || { message: e.message };
                         require('fs').writeFileSync('/tmp/ig-profile-error.json', JSON.stringify({ endpoint: url, data: e.response?.data, status: e.response?.status }));
                     }
-                }
-            }
+                    } // tokensToTry
+                } // profileEndpoints
+            } // attempt
 
             // Never save a bogus "unknown" account — surface a clear error instead
             if (!username || !igUserId) {

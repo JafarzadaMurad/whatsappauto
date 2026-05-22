@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -65,6 +65,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key },
         { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon },
+        ...(user?.role === 'ADMIN' ? [{
+            name: 'Admin',
+            icon: Shield,
+            isGroup: true,
+            children: [
+                { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
+            ]
+        }] : []),
     ];
 
     return (

@@ -14,13 +14,48 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 }
 
+// Subscription plans (managed by admins)
+model Plan {
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+
+  price    Float  @default(0)      // amount per billing interval
+  currency String @default("USD")
+  interval String @default("month") // month | year
+
+  // Resource limits (-1 = unlimited)
+  maxAgents            Int @default(1)
+  maxWhatsappAccounts  Int @default(1)
+  maxInstagramAccounts Int @default(1)
+  maxAutomations       Int @default(1)
+  monthlyMessageLimit  Int @default(1000)
+
+  isActive      Boolean @default(true)
+  stripePriceId String? // Stripe Price ID (set when billing is wired up)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+}
+
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
   password  String
   name      String?
+  role      String   @default("USER") // USER | ADMIN
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Subscription
+  planId               String?
+  plan                 Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  subscriptionStatus   String    @default("none") // none | trialing | active | past_due | canceled
+  subscriptionEndsAt   DateTime?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
 
   instances Instance[]
   webhooks  WebhookConfig[]

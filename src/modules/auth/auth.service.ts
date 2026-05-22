@@ -21,7 +21,7 @@ export class AuthService {
         });
 
         const token = this.generateToken(user.id);
-        return { user: { id: user.id, email: user.email, name: user.name }, token };
+        return { user: { id: user.id, email: user.email, name: user.name, role: user.role }, token };
     }
 
     async login(email: string, password: string) {
@@ -36,7 +36,7 @@ export class AuthService {
         }
 
         const token = this.generateToken(user.id);
-        return { user: { id: user.id, email: user.email, name: user.name }, token };
+        return { user: { id: user.id, email: user.email, name: user.name, role: user.role }, token };
     }
 
     private generateToken(userId: string) {

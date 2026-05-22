@@ -107,9 +107,9 @@ export default function InstagramPage() {
                                 <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl">
                                     <Bot className="w-4 h-4 text-primary" />
                                     <select value={acc.agentId || ""} onChange={e => handleLinkAgent(acc.id, e.target.value)}
-                                        className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
-                                        <option value="">No AI Agent</option>
-                                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                        className="bg-card text-foreground text-sm font-medium focus:outline-none w-32 truncate rounded-lg">
+                                        <option value="" className="bg-card text-foreground">No AI Agent</option>
+                                        {agents.map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
                                     </select>
                                 </div>
 

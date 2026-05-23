@@ -79,7 +79,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ];
 
     return (
-        <div className="min-h-screen bg-background flex">
+        <div className="h-screen overflow-hidden bg-background flex">
             {/* Mobile Sidebar overlay */}
             <AnimatePresence>
                 {sidebarOpen && (

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CreditCard, Loader2, Check } from "lucide-react";
+import { CreditCard, Loader2, Check, ExternalLink } from "lucide-react";
 import api from "@/lib/api";
+import { useSearchParams } from "next/navigation";
 
 type Plan = {
     id: string; name: string; description?: string;
@@ -18,9 +19,37 @@ type Current = {
 };
 
 export default function BillingPage() {
+    const searchParams = useSearchParams();
     const [current, setCurrent] = useState<Current | null>(null);
     const [plans, setPlans] = useState<Plan[]>([]);
     const [loading, setLoading] = useState(true);
+    const [subscribing, setSubscribing] = useState<string | null>(null);
+    const [managing, setManaging] = useState(false);
+    const [actionError, setActionError] = useState<string | null>(null);
+
+    const subscribe = async (planId: string) => {
+        setSubscribing(planId);
+        setActionError(null);
+        try {
+            const res = await api.post('/billing/checkout', { planId });
+            if (res.data.success && res.data.url) window.location.href = res.data.url;
+            else setActionError(res.data.message || 'Failed to start checkout');
+        } catch (err: any) {
+            setActionError(err.response?.data?.message || err.message);
+        } finally { setSubscribing(null); }
+    };
+
+    const manageSubscription = async () => {
+        setManaging(true);
+        setActionError(null);
+        try {
+            const res = await api.post('/billing/portal', {});
+            if (res.data.success && res.data.url) window.location.href = res.data.url;
+            else setActionError(res.data.message || 'Failed to open billing portal');
+        } catch (err: any) {
+            setActionError(err.response?.data?.message || err.message);
+        } finally { setManaging(false); }
+    };
 
     const load = async () => {
         try {
@@ -50,6 +79,20 @@ export default function BillingPage() {
                 <p className="text-sm text-muted-foreground mt-1">Your subscription and available plans.</p>
             </div>
 
+            {searchParams.get('status') === 'success' && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl px-4 py-3 text-sm">
+                    Subscription started — it can take a few seconds for the new plan to appear here.
+                </div>
+            )}
+            {searchParams.get('status') === 'cancel' && (
+                <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl px-4 py-3 text-sm">
+                    Checkout cancelled. You can try again any time.
+                </div>
+            )}
+            {actionError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl px-4 py-3 text-sm">{actionError}</div>
+            )}
+
             {/* Current plan */}
             <div className="bg-card border border-border rounded-2xl p-5">
                 <h2 className="font-semibold mb-3">Current plan</h2>
@@ -70,6 +113,13 @@ export default function BillingPage() {
                                 <div className="bg-secondary/30 rounded-xl p-3"><div className="text-xs text-muted-foreground">Automations</div><div className="font-semibold">{used(usage.automations, current.plan.maxAutomations)}</div></div>
                             </div>
                         )}
+                        <div className="pt-2">
+                            <button onClick={manageSubscription} disabled={managing}
+                                className="bg-secondary/50 border border-border hover:bg-secondary text-foreground rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-60">
+                                {managing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                                Manage subscription
+                            </button>
+                        </div>
                     </div>
                 ) : (
                     <p className="text-sm text-muted-foreground">You don't have a plan yet — all features are available without limits.</p>
@@ -101,10 +151,11 @@ export default function BillingPage() {
                                         <li className="flex items-center gap-2"><Check className="w-3 h-3 text-emerald-400" /> {fmt(p.monthlyMessageLimit)} messages/month</li>
                                     </ul>
                                     <button
-                                        disabled
-                                        title="Stripe checkout — coming in next phase"
-                                        className="w-full bg-secondary/50 border border-border text-muted-foreground rounded-xl px-4 py-2 text-sm font-medium cursor-not-allowed">
-                                        {isCurrent ? 'Active' : 'Subscribe (soon)'}
+                                        onClick={() => !isCurrent && subscribe(p.id)}
+                                        disabled={isCurrent || subscribing === p.id}
+                                        className={`w-full rounded-xl px-4 py-2 text-sm font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-60 ${isCurrent ? 'bg-secondary/50 border border-border text-muted-foreground cursor-not-allowed' : 'bg-primary hover:bg-primary/90 text-primary-foreground'}`}>
+                                        {subscribing === p.id && <Loader2 className="w-4 h-4 animate-spin" />}
+                                        {isCurrent ? 'Active' : (subscribing === p.id ? 'Redirecting…' : 'Subscribe')}
                                     </button>
                                 </div>
                             );

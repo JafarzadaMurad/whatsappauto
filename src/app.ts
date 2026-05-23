@@ -18,6 +18,8 @@ import automationRoutes from './modules/automation/automation.routes';
 import inboxRoutes from './modules/inbox/inbox.routes';
 import planRoutes from './modules/plan/plan.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import billingRoutes from './modules/billing/billing.routes';
+import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
 app.set('trust proxy', 1);
@@ -39,6 +41,11 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// Stripe webhook — MUST receive the raw body for signature verification,
+// so register it BEFORE the global JSON parser.
+const billingController = new BillingController();
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), billingController.webhook.bind(billingController));
+
 // Body Parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -59,6 +66,7 @@ app.use('/api/automations', automationRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/billing', billingRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

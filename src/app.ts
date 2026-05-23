@@ -17,6 +17,7 @@ import instagramRoutes from './modules/instagram/instagram.routes';
 import automationRoutes from './modules/automation/automation.routes';
 import inboxRoutes from './modules/inbox/inbox.routes';
 import planRoutes from './modules/plan/plan.routes';
+import adminRoutes from './modules/admin/admin.routes';
 
 const app: Express = express();
 app.set('trust proxy', 1);
@@ -57,6 +58,7 @@ app.use('/api/instagram', instagramRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/plans', planRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

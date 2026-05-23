@@ -6,7 +6,8 @@ import { requireAdmin } from '../../middleware/admin.middleware';
 const router = Router();
 const controller = new PlanController();
 
-// Public — active plans for the pricing page
+// Authenticated user-facing endpoints
+router.get('/me', authMiddleware, controller.getCurrent.bind(controller));
 router.get('/public', authMiddleware, controller.listPublic.bind(controller));
 
 // Admin-only — full CRUD

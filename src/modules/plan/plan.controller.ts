@@ -18,6 +18,38 @@ const planSchema = z.object({
 });
 
 export class PlanController {
+    // Authenticated — current user's plan + usage counts
+    async getCurrent(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const user = await prisma.user.findUnique({
+                where: { id: userId },
+                select: {
+                    planId: true, subscriptionStatus: true, subscriptionEndsAt: true,
+                    plan: true
+                }
+            });
+            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            const [agents, whatsapp, instagram, automations] = await Promise.all([
+                prisma.agent.count({ where: { userId } }),
+                prisma.instance.count({ where: { userId } }),
+                prisma.instagramAccount.count({ where: { userId } }),
+                prisma.automation.count({ where: { userId } })
+            ]);
+            return res.json({
+                success: true,
+                plan: user.plan,
+                subscription: {
+                    status: user.subscriptionStatus,
+                    endsAt: user.subscriptionEndsAt
+                },
+                usage: { agents, whatsapp, instagram, automations }
+            });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     // Public — list active plans (for the pricing/billing page)
     async listPublic(_req: Request, res: Response) {
         try {

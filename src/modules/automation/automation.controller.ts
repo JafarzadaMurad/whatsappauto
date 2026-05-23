@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 
 const nodeSchema = z.object({
     id: z.string(),
@@ -54,6 +55,7 @@ export class AutomationController {
         try {
             const userId = (req as any).user.id;
             const data = upsertSchema.parse(req.body);
+            await checkPlanLimit(userId, 'automation');
             const automation = await prisma.automation.create({
                 data: {
                     userId,
@@ -65,6 +67,7 @@ export class AutomationController {
             });
             return res.status(201).json({ success: true, automation });
         } catch (error: any) {
+            if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }

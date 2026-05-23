@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { config } from '../../config';
 import axios from 'axios';
 import { InstagramAiService } from './instagram.ai.service';
+import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 
 const VERIFY_TOKEN = 'alchatbot_verify_2024';
 
@@ -220,6 +221,10 @@ export class InstagramController {
                 return res.status(400).json({ success: false, message: 'Instagram profile could not be resolved. Please reconnect the account.' });
             }
 
+            // Enforce plan limit only for NEW connections (re-saving an existing account is fine)
+            const exists = await prisma.instagramAccount.findUnique({ where: { igUserId } });
+            if (!exists) await checkPlanLimit(userId, 'instagram');
+
             const account = await prisma.instagramAccount.upsert({
                 where: { igUserId },
                 update: { accessToken, igUsername: username, agentId: agentId || null, userId },
@@ -239,6 +244,7 @@ export class InstagramController {
 
             return res.json({ success: true, account });
         } catch (error: any) {
+            if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
             return res.status(500).json({ success: false, message: error.message });
         }
     }

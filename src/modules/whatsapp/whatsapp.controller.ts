@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { InstanceManager } from './instance.manager';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 
 const createInstanceSchema = z.object({
     name: z.string().min(1),
@@ -24,6 +25,8 @@ export class WhatsappController {
             const userId = (req as any).user.id;
             const data = createInstanceSchema.parse(req.body);
 
+            await checkPlanLimit(userId, 'whatsapp');
+
             const instance = await prisma.instance.create({
                 data: {
                     userId,
@@ -37,6 +40,7 @@ export class WhatsappController {
 
             return res.status(201).json({ success: true, instance });
         } catch (error: any) {
+            if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
             if (error instanceof z.ZodError) {
                 return res.status(400).json({ success: false, errors: error.issues });
             }

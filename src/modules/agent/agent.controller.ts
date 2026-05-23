@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate } from './ai.service';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
+import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -82,6 +83,8 @@ export class AgentController {
             const userId = (req as any).user.id;
             const data = createAgentSchema.parse(req.body);
 
+            await checkPlanLimit(userId, 'agent');
+
             // Verify provider belongs to user
             const provider = await prisma.aiProvider.findFirst({ where: { id: data.providerId, userId } });
             if (!provider) return res.status(404).json({ success: false, message: 'Invalid AI Provider' });
@@ -103,6 +106,7 @@ export class AgentController {
 
             return res.status(201).json({ success: true, agent });
         } catch (error: any) {
+            if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }

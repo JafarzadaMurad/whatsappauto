@@ -65,12 +65,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key },
         { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon },
+        { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },
         ...(user?.role === 'ADMIN' ? [{
             name: 'Admin',
             icon: Shield,
             isGroup: true,
             children: [
+                { name: 'Users', href: '/dashboard/admin/users', icon: Users },
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
+                { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },
             ]
         }] : []),
     ];

@@ -50,6 +50,14 @@ model User {
   name      String?
   role      String   @default("USER") // USER | ADMIN
   googleId  String?  @unique // Google "sub" claim for OAuth sign-in
+
+  // Email verification + password reset
+  emailVerified        Boolean   @default(false)
+  emailVerifyToken     String?   @unique
+  emailVerifyExpires   DateTime?
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

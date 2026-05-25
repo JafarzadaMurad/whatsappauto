@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import VerifyEmailBanner from "@/components/VerifyEmailBanner";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -75,6 +76,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
                 { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },
                 { name: 'Sign-in', href: '/dashboard/admin/auth', icon: LogIn },
+                { name: 'Email', href: '/dashboard/admin/email', icon: Mail },
             ]
         }] : []),
     ];
@@ -257,6 +259,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="ml-4 font-bold text-lg">alChatBot</div>
                 </header>
 
+                <VerifyEmailBanner />
                 <main className="flex-1 overflow-y-auto p-4 md:p-8">
                     {children}
                 </main>

@@ -4,6 +4,9 @@ import jwt from 'jsonwebtoken';
 import { config } from '../../config';
 import { OAuth2Client } from 'google-auth-library';
 import axios from 'axios';
+import crypto from 'crypto';
+import { sendMail, verificationEmail, resetPasswordEmail, appUrl } from '../../lib/mailer';
+import { logger } from '../../utils/logger';
 
 export class AuthService {
     async register(email: string, password: string, name?: string) {
@@ -20,11 +23,14 @@ export class AuthService {
             ? new Date(Date.now() + defaultPlan.trialDays * 24 * 60 * 60 * 1000)
             : null;
 
+        const verifyToken = crypto.randomBytes(32).toString('hex');
         const user = await prisma.user.create({
             data: {
                 email,
                 password: hashedPassword,
                 name,
+                emailVerifyToken: verifyToken,
+                emailVerifyExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
                 ...(defaultPlan ? {
                     planId: defaultPlan.id,
                     subscriptionStatus: defaultPlan.trialDays ? 'trialing' : 'active',
@@ -33,8 +39,13 @@ export class AuthService {
             },
         });
 
+        // Fire-and-forget — registration succeeds even if SMTP isn't configured yet
+        this.sendVerificationEmail(user.email, user.name, verifyToken).catch((err: any) =>
+            logger.warn({ err: err.message, email: user.email }, '[Auth] verification email failed')
+        );
+
         const token = this.generateToken(user.id);
-        return { user: { id: user.id, email: user.email, name: user.name, role: user.role }, token };
+        return { user: { id: user.id, email: user.email, name: user.name, role: user.role, emailVerified: user.emailVerified }, token };
     }
 
     async login(email: string, password: string) {
@@ -113,6 +124,80 @@ export class AuthService {
 
         const token = this.generateToken(user.id);
         return { user: { id: user.id, email: user.email, name: user.name, role: user.role }, token };
+    }
+
+    // ─── Email verification ───
+    async sendVerificationEmail(email: string, name: string | null, token: string) {
+        const url = appUrl(`/verify-email?token=${token}`);
+        const { subject, html } = verificationEmail(name, url);
+        await sendMail({ to: email, subject, html });
+    }
+
+    async resendVerification(userId: string) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error('User not found');
+        if (user.emailVerified) throw new Error('Email is already verified');
+        const verifyToken = crypto.randomBytes(32).toString('hex');
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                emailVerifyToken: verifyToken,
+                emailVerifyExpires: new Date(Date.now() + 24 * 60 * 60 * 1000)
+            }
+        });
+        await this.sendVerificationEmail(user.email, user.name, verifyToken);
+    }
+
+    async verifyEmail(token: string) {
+        const user = await prisma.user.findUnique({ where: { emailVerifyToken: token } });
+        if (!user) throw new Error('Invalid or already-used verification link');
+        if (user.emailVerifyExpires && user.emailVerifyExpires < new Date()) {
+            throw new Error('Verification link expired — request a new one');
+        }
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { emailVerified: true, emailVerifyToken: null, emailVerifyExpires: null }
+        });
+    }
+
+    // ─── Password reset ───
+    async requestPasswordReset(email: string) {
+        const user = await prisma.user.findUnique({ where: { email } });
+        // Always succeed silently to avoid leaking which emails exist
+        if (!user || !user.password) return;
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordResetToken: resetToken,
+                passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+            }
+        });
+        const url = appUrl(`/reset-password?token=${resetToken}`);
+        const { subject, html } = resetPasswordEmail(user.name, url);
+        try {
+            await sendMail({ to: user.email, subject, html });
+        } catch (err: any) {
+            logger.warn({ err: err.message, email }, '[Auth] reset email failed');
+        }
+    }
+
+    async resetPassword(token: string, newPassword: string) {
+        const user = await prisma.user.findUnique({ where: { passwordResetToken: token } });
+        if (!user) throw new Error('Invalid or already-used reset link');
+        if (user.passwordResetExpires && user.passwordResetExpires < new Date()) {
+            throw new Error('Reset link expired — request a new one');
+        }
+        const hashed = await bcrypt.hash(newPassword, 10);
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                password: hashed,
+                passwordResetToken: null,
+                passwordResetExpires: null,
+                emailVerified: true // proves access to inbox
+            }
+        });
     }
 
     private generateToken(userId: string) {

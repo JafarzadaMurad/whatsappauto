@@ -59,6 +59,53 @@ export class AuthController {
     }
 
     // Sign in with a Google ID token returned by GIS / @react-oauth/google
+    async verifyEmail(req: Request, res: Response) {
+        try {
+            const { token } = z.object({ token: z.string().min(10) }).parse(req.body);
+            await authService.verifyEmail(token);
+            return res.json({ success: true });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(400).json({ success: false, message: error.message });
+        }
+    }
+
+    async resendVerification(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            await authService.resendVerification(userId);
+            return res.json({ success: true });
+        } catch (error: any) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
+    }
+
+    async forgotPassword(req: Request, res: Response) {
+        try {
+            const { email } = z.object({ email: z.string().email() }).parse(req.body);
+            await authService.requestPasswordReset(email);
+            // Always return success — don't leak which emails exist
+            return res.json({ success: true });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async resetPassword(req: Request, res: Response) {
+        try {
+            const { token, password } = z.object({
+                token: z.string().min(10),
+                password: z.string().min(6)
+            }).parse(req.body);
+            await authService.resetPassword(token, password);
+            return res.json({ success: true });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(400).json({ success: false, message: error.message });
+        }
+    }
+
     async googleLogin(req: Request, res: Response) {
         try {
             const schema = z.object({

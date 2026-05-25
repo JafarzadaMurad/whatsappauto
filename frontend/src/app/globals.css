@@ -114,4 +114,27 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Thin, dark-themed scrollbars everywhere inside the app */
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(240 3.7% 22%);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(240 3.7% 32%);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(240 3.7% 22%) transparent;
+  }
 }

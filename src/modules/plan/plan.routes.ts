@@ -14,6 +14,8 @@ router.get('/public', authMiddleware, controller.listPublic.bind(controller));
 router.get('/', authMiddleware, requireAdmin, controller.list.bind(controller));
 router.post('/', authMiddleware, requireAdmin, controller.create.bind(controller));
 router.put('/:id', authMiddleware, requireAdmin, controller.update.bind(controller));
+router.post('/:id/default', authMiddleware, requireAdmin, controller.setDefault.bind(controller));
+router.delete('/:id/default', authMiddleware, requireAdmin, controller.clearDefault.bind(controller));
 router.delete('/:id', authMiddleware, requireAdmin, controller.remove.bind(controller));
 
 export default router;

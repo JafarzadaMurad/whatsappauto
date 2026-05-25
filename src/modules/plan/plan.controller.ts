@@ -14,6 +14,8 @@ const planSchema = z.object({
     maxAutomations: z.number().int().default(1),
     monthlyMessageLimit: z.number().int().default(1000),
     isActive: z.boolean().optional(),
+    isDefault: z.boolean().optional(),
+    trialDays: z.number().int().min(0).nullable().optional(),
     stripePriceId: z.string().optional()
 });
 
@@ -79,6 +81,12 @@ export class PlanController {
     async create(req: Request, res: Response) {
         try {
             const data = planSchema.parse(req.body);
+            if (data.isDefault && data.price > 0) {
+                return res.status(400).json({ success: false, message: 'Default plan must have price 0 (it is given to new sign-ups).' });
+            }
+            if (data.isDefault) {
+                await prisma.plan.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+            }
             const plan = await prisma.plan.create({ data });
             return res.status(201).json({ success: true, plan });
         } catch (error: any) {
@@ -93,10 +101,45 @@ export class PlanController {
             const data = planSchema.parse(req.body);
             const existing = await prisma.plan.findUnique({ where: { id } });
             if (!existing) return res.status(404).json({ success: false, message: 'Plan not found' });
+            if (data.isDefault && data.price > 0) {
+                return res.status(400).json({ success: false, message: 'Default plan must have price 0 (it is given to new sign-ups).' });
+            }
+            if (data.isDefault) {
+                await prisma.plan.updateMany({ where: { isDefault: true, NOT: { id } }, data: { isDefault: false } });
+            }
             const plan = await prisma.plan.update({ where: { id }, data });
             return res.json({ success: true, plan });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Toggle isDefault on a plan directly (used by the star icon on plan cards)
+    async setDefault(req: Request, res: Response) {
+        try {
+            const id = req.params.id as string;
+            const plan = await prisma.plan.findUnique({ where: { id } });
+            if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
+            if (plan.price > 0) {
+                return res.status(400).json({ success: false, message: `"${plan.name}" costs ${plan.price} ${plan.currency} — only free plans (price 0) can be set as default.` });
+            }
+            await prisma.plan.updateMany({ where: { isDefault: true, NOT: { id } }, data: { isDefault: false } });
+            const updated = await prisma.plan.update({ where: { id }, data: { isDefault: true } });
+            return res.json({ success: true, plan: updated });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async clearDefault(req: Request, res: Response) {
+        try {
+            const id = req.params.id as string;
+            const plan = await prisma.plan.findUnique({ where: { id } });
+            if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
+            const updated = await prisma.plan.update({ where: { id }, data: { isDefault: false } });
+            return res.json({ success: true, plan: updated });
+        } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }
     }

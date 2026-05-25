@@ -32,6 +32,9 @@ model Plan {
   monthlyMessageLimit  Int @default(1000)
 
   isActive      Boolean @default(true)
+  isDefault     Boolean @default(false) // assigned to new sign-ups (only one plan can be default; must have price = 0)
+  trialDays     Int?    // duration of the free plan in days; null = no expiry
+
   stripePriceId String? // Stripe Price ID (set when billing is wired up)
 
   createdAt DateTime @default(now())

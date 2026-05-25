@@ -12,11 +12,22 @@ export class AuthService {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // Assign the default free plan, if one exists, with a trial end date
+        const defaultPlan = await prisma.plan.findFirst({ where: { isDefault: true, isActive: true } });
+        const subscriptionEndsAt = defaultPlan?.trialDays
+            ? new Date(Date.now() + defaultPlan.trialDays * 24 * 60 * 60 * 1000)
+            : null;
+
         const user = await prisma.user.create({
             data: {
                 email,
                 password: hashedPassword,
                 name,
+                ...(defaultPlan ? {
+                    planId: defaultPlan.id,
+                    subscriptionStatus: defaultPlan.trialDays ? 'trialing' : 'active',
+                    subscriptionEndsAt
+                } : {})
             },
         });
 

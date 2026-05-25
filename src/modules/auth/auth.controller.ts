@@ -61,8 +61,15 @@ export class AuthController {
     // Sign in with a Google ID token returned by GIS / @react-oauth/google
     async googleLogin(req: Request, res: Response) {
         try {
-            const { credential } = z.object({ credential: z.string().min(10) }).parse(req.body);
-            const result = await authService.loginWithGoogle(credential);
+            const schema = z.object({
+                credential: z.string().optional(),
+                access_token: z.string().optional()
+            }).refine(v => v.credential || v.access_token, 'credential or access_token required');
+            const parsed = schema.parse(req.body);
+            const result = await authService.loginWithGoogle({
+                credential: parsed.credential,
+                accessToken: parsed.access_token
+            });
             return res.json({ success: true, ...result });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });

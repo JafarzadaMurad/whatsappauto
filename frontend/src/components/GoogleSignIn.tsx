@@ -39,20 +39,24 @@ export default function GoogleSignIn({ onError }: { onError?: (msg: string) => v
 
     return (
         <GoogleOAuthProvider clientId={clientId}>
-            <div className="flex flex-col items-center gap-3">
+            <div className="flex flex-col items-center gap-4 w-full">
                 <div className="flex items-center w-full gap-3">
                     <div className="flex-1 h-px bg-border" />
-                    <span className="text-xs text-muted-foreground">OR</span>
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground">or continue with</span>
                     <div className="flex-1 h-px bg-border" />
                 </div>
-                <GoogleLogin
-                    onSuccess={(resp) => handleCredential(resp.credential)}
-                    onError={() => onError?.('Google sign-in failed')}
-                    theme="filled_black"
-                    shape="rectangular"
-                    size="large"
-                    width="320"
-                />
+                <div className="w-full rounded-xl overflow-hidden ring-1 ring-border hover:ring-primary/40 transition-all">
+                    <GoogleLogin
+                        onSuccess={(resp) => handleCredential(resp.credential)}
+                        onError={() => onError?.('Google sign-in failed')}
+                        theme="filled_black"
+                        shape="pill"
+                        size="large"
+                        text="continue_with"
+                        logo_alignment="center"
+                        width="320"
+                    />
+                </div>
             </div>
         </GoogleOAuthProvider>
     );

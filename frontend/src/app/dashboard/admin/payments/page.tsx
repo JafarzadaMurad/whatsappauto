@@ -13,12 +13,7 @@ const STRIPE_KEYS = [
         hint: 'Create a webhook endpoint in Stripe → Developers → Webhooks → Add endpoint. Use https://<your-domain>/api/billing/webhook. Subscribe to subscription + invoice events. Copy the signing secret here.' },
 ];
 
-const GOOGLE_KEYS = [
-    { key: 'GOOGLE_CLIENT_ID', label: 'Google Client ID', placeholder: '....apps.googleusercontent.com', isSecret: false,
-        hint: 'From Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs. Public — exposed to the frontend so the Sign in with Google button can render.' },
-];
-
-const ALL_KEYS = [...STRIPE_KEYS, ...GOOGLE_KEYS];
+const ALL_KEYS = STRIPE_KEYS;
 
 export default function AdminPaymentsPage() {
     const [values, setValues] = useState<Record<string, string>>({});
@@ -74,31 +69,11 @@ export default function AdminPaymentsPage() {
                     <div className="p-2 bg-primary/10 text-primary rounded-xl"><CreditCard className="w-6 h-6" /></div>
                     Payment Integration
                 </h1>
-                <p className="text-sm text-muted-foreground mt-1">Configure Stripe billing and Google sign-in.</p>
+                <p className="text-sm text-muted-foreground mt-1">Configure Stripe so users can subscribe to plans.</p>
             </div>
 
             <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-                <h2 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">Stripe</h2>
                 {STRIPE_KEYS.map(k => (
-                    <div key={k.key}>
-                        <label className="text-sm font-medium">{k.label}</label>
-                        <input
-                            type={k.isSecret ? 'password' : 'text'}
-                            value={values[k.key] || ''}
-                            onChange={e => setValues({ ...values, [k.key]: e.target.value })}
-                            placeholder={k.placeholder}
-                            className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                        <p className="text-xs text-muted-foreground mt-1">{k.hint}</p>
-                        {updatedAt[k.key] && (
-                            <p className="text-[10px] text-muted-foreground mt-0.5">last updated: {new Date(updatedAt[k.key]).toLocaleString()}</p>
-                        )}
-                    </div>
-                ))}
-            </div>
-
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-                <h2 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">Google Sign-In</h2>
-                {GOOGLE_KEYS.map(k => (
                     <div key={k.key}>
                         <label className="text-sm font-medium">{k.label}</label>
                         <input

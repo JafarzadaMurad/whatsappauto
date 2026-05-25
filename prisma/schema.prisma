@@ -46,9 +46,10 @@ model Plan {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
-  password  String
+  password  String?  // null for users who signed in via Google
   name      String?
   role      String   @default("USER") // USER | ADMIN
+  googleId  String?  @unique // Google "sub" claim for OAuth sign-in
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

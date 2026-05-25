@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
 import api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
+import GoogleSignIn from "@/components/GoogleSignIn";
 
 export default function RegisterPage() {
     const router = useRouter();
@@ -108,6 +109,10 @@ export default function RegisterPage() {
                             )}
                         </button>
                     </form>
+
+                    <div className="mt-6">
+                        <GoogleSignIn onError={setError} />
+                    </div>
 
                     <div className="mt-8 text-center">
                         <p className="text-sm text-muted-foreground">

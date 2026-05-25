@@ -115,6 +115,20 @@
     @apply bg-background text-foreground;
   }
 
+  /* Pointer cursor on every interactive element (Tailwind v4 dropped the default) */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  label:has(input[type="checkbox"]:not(:disabled)),
+  label:has(input[type="radio"]:not(:disabled)),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   /* Thin, dark-themed scrollbars everywhere inside the app */
   *::-webkit-scrollbar {
     width: 6px;

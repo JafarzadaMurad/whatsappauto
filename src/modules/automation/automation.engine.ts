@@ -3,6 +3,24 @@ import { logger } from '../../utils/logger';
 
 type Channel = 'whatsapp' | 'instagram';
 
+export type IgAttachmentType = 'image' | 'video' | 'audio';
+export type IgQuickReply = { title: string; payload?: string };
+export type IgTemplateButton =
+    | { type: 'web_url'; title: string; url: string }
+    | { type: 'postback'; title: string; payload: string };
+export type IgTemplateElement = {
+    title: string;
+    subtitle?: string;
+    image_url?: string;
+    default_action?: { type: 'web_url'; url: string };
+    buttons?: IgTemplateButton[];
+};
+
+export type RichDmPayload =
+    | { kind: 'text'; text: string; quickReplies?: IgQuickReply[] }
+    | { kind: 'attachment'; attachmentType: IgAttachmentType; url: string; quickReplies?: IgQuickReply[] }
+    | { kind: 'template'; elements: IgTemplateElement[] };
+
 export type AutomationContext = {
     userId: string;
     channel: Channel;
@@ -11,8 +29,16 @@ export type AutomationContext = {
     contactName?: string;
     isNewContact?: boolean;
     source?: 'dm' | 'comment';
+    // Instagram-only context
+    accountId?: string;       // alChatBot InstagramAccount.id (the connected biz account)
+    igUserId?: string;        // raw IG user id of the business account
+    mediaId?: string;         // the post id (only set for comment events)
+    permalink?: string;       // post URL (only set for comment events)
+    commentId?: string;       // the comment id (only set for comment events)
     // callbacks supplied by the channel handler
     sendMessage: (text: string) => Promise<void>;
+    sendDm?: (payload: RichDmPayload) => Promise<void>;
+    replyComment?: (text: string) => Promise<void>;
     runAgent?: (agentId: string) => Promise<void>;
     addTag?: (tag: string) => Promise<void>;
 };
@@ -53,9 +79,15 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
             return ctx.source !== 'comment' && channelOk(d, ctx.channel);
         case 'trigger_new_contact':
             return ctx.source !== 'comment' && channelOk(d, ctx.channel) && !!ctx.isNewContact;
-        case 'trigger_comment':
-            return ctx.channel === 'instagram' && ctx.source === 'comment' &&
-                (String(d.keywords || '').trim() === '' || keywordMatches(d, ctx.text));
+        case 'trigger_comment': {
+            if (ctx.channel !== 'instagram' || ctx.source !== 'comment') return false;
+            // Optional Instagram account filter
+            if (d.accountId && d.accountId !== ctx.accountId) return false;
+            // Optional post filter — empty / 'any' means "any post"
+            const postId = String(d.mediaId || d.postId || '').trim();
+            if (postId && postId !== 'any' && postId !== ctx.mediaId) return false;
+            return String(d.keywords || '').trim() === '' || keywordMatches(d, ctx.text);
+        }
         default:
             return false;
     }
@@ -64,7 +96,41 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
 function interpolate(text: string, ctx: AutomationContext): string {
     return (text || '')
         .replace(/\{\{\s*name\s*\}\}/gi, ctx.contactName || '')
-        .replace(/\{\{\s*message\s*\}\}/gi, ctx.text || '');
+        .replace(/\{\{\s*username\s*\}\}/gi, ctx.contactName || '')
+        .replace(/\{\{\s*message\s*\}\}/gi, ctx.text || '')
+        .replace(/\{\{\s*comment\s*\}\}/gi, ctx.text || '')
+        .replace(/\{\{\s*post_url\s*\}\}/gi, ctx.permalink || '');
+}
+
+function interpolateRich(payload: any, ctx: AutomationContext): RichDmPayload {
+    const kind = String(payload?.kind || 'text');
+    const qr = Array.isArray(payload?.quickReplies)
+        ? payload.quickReplies
+            .map((r: any) => ({ title: interpolate(String(r?.title || ''), ctx), payload: r?.payload ? String(r.payload) : undefined }))
+            .filter((r: any) => r.title)
+        : undefined;
+    if (kind === 'attachment') {
+        return {
+            kind: 'attachment',
+            attachmentType: (payload.attachmentType || 'image') as IgAttachmentType,
+            url: interpolate(String(payload.url || ''), ctx),
+            quickReplies: qr,
+        };
+    }
+    if (kind === 'template') {
+        const elements: IgTemplateElement[] = Array.isArray(payload.elements) ? payload.elements.map((el: any) => ({
+            title: interpolate(String(el?.title || ''), ctx),
+            subtitle: el?.subtitle ? interpolate(String(el.subtitle), ctx) : undefined,
+            image_url: el?.image_url ? interpolate(String(el.image_url), ctx) : undefined,
+            default_action: el?.default_action?.url ? { type: 'web_url', url: interpolate(String(el.default_action.url), ctx) } : undefined,
+            buttons: Array.isArray(el?.buttons) ? el.buttons.map((b: any) => {
+                if (b?.type === 'postback') return { type: 'postback', title: interpolate(String(b.title || ''), ctx), payload: String(b.payload || '') };
+                return { type: 'web_url', title: interpolate(String(b?.title || ''), ctx), url: interpolate(String(b?.url || ''), ctx) };
+            }).filter((b: any) => b.title && (b.url || b.payload)) : undefined,
+        })) : [];
+        return { kind: 'template', elements };
+    }
+    return { kind: 'text', text: interpolate(String(payload?.text || ''), ctx), quickReplies: qr };
 }
 
 async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> {
@@ -73,6 +139,22 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         case 'action_send_message':
             if (d.text) await ctx.sendMessage(interpolate(String(d.text), ctx));
             return true;
+        case 'action_send_dm': {
+            // Rich Instagram DM (text + quick replies, attachment, or template).
+            // Falls back to sendMessage if the channel didn't supply a rich handler.
+            const payload = interpolateRich(d, ctx);
+            if (ctx.sendDm) {
+                await ctx.sendDm(payload);
+            } else if (payload.kind === 'text' && payload.text) {
+                await ctx.sendMessage(payload.text);
+            }
+            return true;
+        }
+        case 'action_reply_comment': {
+            if (!ctx.replyComment || !d.text) return true;
+            await ctx.replyComment(interpolate(String(d.text), ctx));
+            return true;
+        }
         case 'action_ai_reply':
             if (d.agentId && ctx.runAgent) await ctx.runAgent(String(d.agentId));
             return true;

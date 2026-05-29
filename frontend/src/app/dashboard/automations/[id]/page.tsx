@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -30,7 +30,7 @@ const NODE_META: Record<string, NodeMeta> = {
     },
     trigger_comment: {
         label: "Instagram Comment", category: "trigger", icon: Camera,
-        defaultData: { keywords: "", caseSensitive: false, matchMode: "contains" }
+        defaultData: { accountId: "", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
     trigger_new_contact: {
         label: "New Contact", category: "trigger", icon: UserPlus,
@@ -38,6 +38,14 @@ const NODE_META: Record<string, NodeMeta> = {
     },
     action_send_message: {
         label: "Send Message", category: "action", icon: MessageSquare,
+        defaultData: { text: "" }
+    },
+    action_send_dm: {
+        label: "Send Instagram DM", category: "action", icon: Send,
+        defaultData: { kind: "text", text: "", attachmentType: "image", url: "", elements: [], quickReplies: [] }
+    },
+    action_reply_comment: {
+        label: "Reply to Comment", category: "action", icon: Reply,
         defaultData: { text: "" }
     },
     action_ai_reply: {
@@ -66,7 +74,7 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
 
 const PALETTE = [
     { category: "trigger", label: "Triggers", types: ["trigger_keyword", "trigger_any_message", "trigger_comment", "trigger_new_contact"] },
-    { category: "action", label: "Actions", types: ["action_send_message", "action_ai_reply", "action_add_tag", "action_wait"] },
+    { category: "action", label: "Actions", types: ["action_send_message", "action_send_dm", "action_reply_comment", "action_ai_reply", "action_add_tag", "action_wait"] },
     { category: "logic", label: "Logic", types: ["condition"] },
 ];
 
@@ -81,9 +89,21 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
 
     const d = data as Record<string, any>;
     let summary = "";
-    if (type === "trigger_keyword" || type === "trigger_comment") summary = d.keywords || "(no keywords)";
+    if (type === "trigger_keyword") summary = d.keywords || "(no keywords)";
+    else if (type === "trigger_comment") {
+        const post = d.mediaId && d.mediaId !== 'any' ? '1 post' : 'any post';
+        const kw = d.keywords ? ` · "${d.keywords}"` : '';
+        summary = `${post}${kw}`;
+    }
     else if (type === "trigger_any_message" || type === "trigger_new_contact") summary = `channel: ${d.channel}`;
     else if (type === "action_send_message") summary = d.text || "(empty)";
+    else if (type === "action_send_dm") {
+        const kind = d.kind || 'text';
+        if (kind === 'text') summary = d.text ? `DM: ${d.text}` : "(empty)";
+        else if (kind === 'attachment') summary = `DM ${d.attachmentType || 'image'}: ${d.url || '(no url)'}`;
+        else summary = `DM template (${(d.elements || []).length} card${(d.elements || []).length === 1 ? '' : 's'})`;
+    }
+    else if (type === "action_reply_comment") summary = d.text || "(empty)";
     else if (type === "action_ai_reply") summary = d.agentName || (d.agentId ? "agent set" : "(no agent)");
     else if (type === "action_add_tag") summary = d.tag || "(no tag)";
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
@@ -120,6 +140,7 @@ function Editor({ id }: { id: string }) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [agents, setAgents] = useState<any[]>([]);
+    const [igAccounts, setIgAccounts] = useState<any[]>([]);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -128,9 +149,10 @@ function Editor({ id }: { id: string }) {
     useEffect(() => {
         const load = async () => {
             try {
-                const [aRes, agRes] = await Promise.all([
+                const [aRes, agRes, igRes] = await Promise.all([
                     api.get(`/automations/${id}`),
-                    api.get('/agents')
+                    api.get('/agents'),
+                    api.get('/instagram/accounts').catch(() => ({ data: { success: false } }))
                 ]);
                 if (aRes.data.success) {
                     const a = aRes.data.automation;
@@ -140,6 +162,7 @@ function Editor({ id }: { id: string }) {
                     setEdges((a.edges || []) as Edge[]);
                 }
                 if (agRes.data.success) setAgents(agRes.data.agents);
+                if (igRes.data.success) setIgAccounts(igRes.data.accounts || []);
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
         };
@@ -274,7 +297,7 @@ function Editor({ id }: { id: string }) {
                                 <Trash2 className="w-4 h-4" />
                             </button>
                         </div>
-                        <NodeConfig node={selectedNode} agents={agents} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                        <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                     </div>
                 )}
             </div>
@@ -294,7 +317,254 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const inputCls = "w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
 
-function NodeConfig({ node, agents, onChange }: { node: Node; agents: any[]; onChange: (p: Record<string, any>) => void }) {
+// ─── Instagram comment trigger: account + post picker ───
+function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, any>; igAccounts: any[]; onChange: (p: Record<string, any>) => void }) {
+    const [media, setMedia] = useState<any[]>([]);
+    const [loadingMedia, setLoadingMedia] = useState(false);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const accountId = d.accountId || (igAccounts[0]?.id || '');
+    const selectedPost = media.find(m => m.id === d.mediaId);
+
+    useEffect(() => {
+        if (!d.accountId && igAccounts[0]?.id) onChange({ accountId: igAccounts[0].id });
+    }, [igAccounts.length]);
+
+    useEffect(() => {
+        if (!accountId || !pickerOpen) return;
+        setLoadingMedia(true);
+        api.get(`/instagram/accounts/${accountId}/media`).then(r => {
+            if (r.data?.success) setMedia(r.data.media || []);
+        }).catch(() => {}).finally(() => setLoadingMedia(false));
+    }, [accountId, pickerOpen]);
+
+    if (igAccounts.length === 0) {
+        return (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-300">
+                Connect an Instagram account first under <Link href="/dashboard/instagram" className="underline">Networks → Instagram</Link>.
+            </div>
+        );
+    }
+
+    return (
+        <>
+            <Field label="Instagram account">
+                <select value={accountId}
+                    onChange={e => onChange({ accountId: e.target.value, mediaId: 'any' })}
+                    className={inputCls}>
+                    {igAccounts.map(a => <option key={a.id} value={a.id}>@{a.igUsername}</option>)}
+                </select>
+            </Field>
+            <Field label="Trigger on comments to">
+                <div className="flex items-center gap-2">
+                    <select value={d.mediaId === 'any' || !d.mediaId ? 'any' : 'specific'}
+                        onChange={e => {
+                            if (e.target.value === 'any') onChange({ mediaId: 'any' });
+                            else setPickerOpen(true);
+                        }}
+                        className={inputCls}>
+                        <option value="any">Any post</option>
+                        <option value="specific">A specific post…</option>
+                    </select>
+                </div>
+                {d.mediaId && d.mediaId !== 'any' && (
+                    <div className="mt-2 flex items-center gap-2 p-2 rounded-lg border border-border bg-secondary/30">
+                        {selectedPost?.thumbnail_url || selectedPost?.media_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={selectedPost.thumbnail_url || selectedPost.media_url} alt="" className="w-10 h-10 object-cover rounded" />
+                        ) : (
+                            <div className="w-10 h-10 rounded bg-secondary flex items-center justify-center">
+                                <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                            </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs truncate">{selectedPost?.caption || `Post ${d.mediaId.slice(-6)}`}</p>
+                            <button onClick={() => setPickerOpen(true)} className="text-[10px] text-primary hover:underline">Change</button>
+                        </div>
+                    </div>
+                )}
+            </Field>
+
+            {pickerOpen && (
+                <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPickerOpen(false)}>
+                    <div className="bg-card border border-border rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between p-4 border-b border-border">
+                            <h3 className="font-semibold">Pick a post</h3>
+                            <button onClick={() => setPickerOpen(false)} className="text-muted-foreground hover:text-foreground">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4">
+                            {loadingMedia ? (
+                                <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+                            ) : media.length === 0 ? (
+                                <p className="text-sm text-muted-foreground text-center py-8">No posts found.</p>
+                            ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                    {media.map(m => (
+                                        <button key={m.id}
+                                            onClick={() => { onChange({ mediaId: m.id, permalink: m.permalink || '' }); setPickerOpen(false); }}
+                                            className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${d.mediaId === m.id ? 'border-primary' : 'border-border hover:border-primary/50'}`}>
+                                            {m.thumbnail_url || m.media_url ? (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={m.thumbnail_url || m.media_url} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full bg-secondary flex items-center justify-center">
+                                                    <ImageIcon className="w-6 h-6 text-muted-foreground" />
+                                                </div>
+                                            )}
+                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                                                <p className="text-[10px] text-white truncate">{m.caption || '(no caption)'}</p>
+                                                <p className="text-[9px] text-white/60">{m.comments_count ?? 0} comments · {m.like_count ?? 0} likes</p>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+// ─── Rich Instagram DM action config ───
+function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: Record<string, any>) => void }) {
+    const kind = d.kind || 'text';
+    const quickReplies: { title: string; payload?: string }[] = d.quickReplies || [];
+    const elements: any[] = d.elements || [];
+
+    const setQr = (next: any[]) => onChange({ quickReplies: next });
+    const setEls = (next: any[]) => onChange({ elements: next });
+
+    return (
+        <div className="space-y-3">
+            <Field label="Content type">
+                <select value={kind} onChange={e => onChange({ kind: e.target.value })} className={inputCls}>
+                    <option value="text">Text</option>
+                    <option value="attachment">Image / Video / Audio</option>
+                    <option value="template">Card (template with buttons)</option>
+                </select>
+            </Field>
+
+            {kind === 'text' && (
+                <Field label="Message text">
+                    <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={5}
+                        placeholder="Hi {{username}}, thanks for your comment!" className={inputCls + ' resize-none'} />
+                </Field>
+            )}
+
+            {kind === 'attachment' && (
+                <>
+                    <Field label="Attachment type">
+                        <select value={d.attachmentType || 'image'} onChange={e => onChange({ attachmentType: e.target.value })} className={inputCls}>
+                            <option value="image">Image (JPG / PNG)</option>
+                            <option value="video">Video (MP4)</option>
+                            <option value="audio">Audio (MP3)</option>
+                        </select>
+                    </Field>
+                    <Field label="Public URL">
+                        <input type="url" value={d.url || ''} onChange={e => onChange({ url: e.target.value })}
+                            placeholder="https://yourdomain.com/file.jpg" className={inputCls} />
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground">The file must be publicly accessible by Instagram's servers.</p>
+                </>
+            )}
+
+            {kind === 'template' && (
+                <div className="space-y-3">
+                    <p className="text-[10px] text-muted-foreground">Up to 10 cards. Each card needs a title; image, subtitle and buttons are optional.</p>
+                    {elements.map((el, i) => (
+                        <div key={i} className="border border-border rounded-lg p-3 space-y-2 bg-secondary/20">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold">Card {i + 1}</span>
+                                <button onClick={() => setEls(elements.filter((_, j) => j !== i))}
+                                    className="text-muted-foreground hover:text-red-400">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                            <input type="text" value={el.title || ''} placeholder="Title (required)"
+                                onChange={e => setEls(elements.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                                className={inputCls} />
+                            <input type="text" value={el.subtitle || ''} placeholder="Subtitle"
+                                onChange={e => setEls(elements.map((x, j) => j === i ? { ...x, subtitle: e.target.value } : x))}
+                                className={inputCls} />
+                            <input type="url" value={el.image_url || ''} placeholder="Image URL"
+                                onChange={e => setEls(elements.map((x, j) => j === i ? { ...x, image_url: e.target.value } : x))}
+                                className={inputCls} />
+                            <div className="space-y-1.5">
+                                {(el.buttons || []).map((b: any, bi: number) => (
+                                    <div key={bi} className="flex gap-1.5">
+                                        <input type="text" value={b.title || ''} placeholder="Button label"
+                                            onChange={e => {
+                                                const buttons = [...(el.buttons || [])];
+                                                buttons[bi] = { ...buttons[bi], title: e.target.value };
+                                                setEls(elements.map((x, j) => j === i ? { ...x, buttons } : x));
+                                            }}
+                                            className={inputCls + ' flex-1'} />
+                                        <input type="url" value={b.url || ''} placeholder="URL"
+                                            onChange={e => {
+                                                const buttons = [...(el.buttons || [])];
+                                                buttons[bi] = { ...buttons[bi], type: 'web_url', url: e.target.value };
+                                                setEls(elements.map((x, j) => j === i ? { ...x, buttons } : x));
+                                            }}
+                                            className={inputCls + ' flex-1'} />
+                                        <button onClick={() => {
+                                            const buttons = (el.buttons || []).filter((_: any, j: number) => j !== bi);
+                                            setEls(elements.map((x, j) => j === i ? { ...x, buttons } : x));
+                                        }} className="text-muted-foreground hover:text-red-400 px-1.5">
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                {(el.buttons || []).length < 3 && (
+                                    <button onClick={() => {
+                                        const buttons = [...(el.buttons || []), { type: 'web_url', title: '', url: '' }];
+                                        setEls(elements.map((x, j) => j === i ? { ...x, buttons } : x));
+                                    }} className="text-[11px] text-primary hover:underline">+ Add button</button>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                    {elements.length < 10 && (
+                        <button onClick={() => setEls([...elements, { title: '', buttons: [] }])}
+                            className="w-full px-3 py-2 rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:bg-secondary/40">
+                            + Add card
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {(kind === 'text' || kind === 'attachment') && (
+                <div className="border-t border-border pt-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Quick replies</span>
+                        {quickReplies.length < 13 && (
+                            <button onClick={() => setQr([...quickReplies, { title: '' }])} className="text-[11px] text-primary hover:underline">+ Add</button>
+                        )}
+                    </div>
+                    {quickReplies.map((r, i) => (
+                        <div key={i} className="flex gap-1.5">
+                            <input type="text" value={r.title} placeholder="Button label (max 20 chars)"
+                                onChange={e => setQr(quickReplies.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                                className={inputCls} />
+                            <button onClick={() => setQr(quickReplies.filter((_, j) => j !== i))}
+                                className="text-muted-foreground hover:text-red-400 px-1.5">
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Variables: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
+            </p>
+        </div>
+    );
+}
+
+function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents: any[]; igAccounts: any[]; onChange: (p: Record<string, any>) => void }) {
     const d = node.data as Record<string, any>;
     const type = node.type as string;
 
@@ -334,7 +604,15 @@ function NodeConfig({ node, agents, onChange }: { node: Node; agents: any[]; onC
         case 'trigger_keyword':
             return <div className="space-y-3">{ChannelField}{KeywordFields}</div>;
         case 'trigger_comment':
-            return <div className="space-y-3">{KeywordFields}</div>;
+            return (
+                <div className="space-y-3">
+                    <CommentTriggerConfig d={d} igAccounts={igAccounts} onChange={onChange} />
+                    {KeywordFields}
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Variables available in actions: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
+                    </p>
+                </div>
+            );
         case 'trigger_any_message':
         case 'trigger_new_contact':
             return <div className="space-y-3">{ChannelField}</div>;
@@ -345,6 +623,20 @@ function NodeConfig({ node, agents, onChange }: { node: Node; agents: any[]; onC
                         <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={5}
                             placeholder="Use {{name}} for the contact's name" className={inputCls + ' resize-none'} />
                     </Field>
+                </div>
+            );
+        case 'action_send_dm':
+            return <SendDmConfig d={d} onChange={onChange} />;
+        case 'action_reply_comment':
+            return (
+                <div className="space-y-3">
+                    <Field label="Reply text">
+                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
+                            placeholder="Thanks for commenting, {{username}}!" className={inputCls + ' resize-none'} />
+                    </Field>
+                    <p className="text-[10px] text-amber-400/80 leading-relaxed">
+                        Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
+                    </p>
                 </div>
             );
         case 'action_ai_reply':

@@ -7,7 +7,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
-import { AutomationEngine } from '../automation/automation.engine';
+import { AutomationEngine, type RichDmPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
 
 // Reuse the same makeTool + skill builders from WhatsApp AI service
@@ -164,6 +164,59 @@ export async function sendIgMessage(igUserId: string, recipientId: string, text:
     }
 }
 
+// ─── Send rich Instagram DM (attachment / template / text+quick replies) ───
+// Instagram Graph API DM message shapes:
+//   text + quick replies:   { message: { text, quick_replies: [{ content_type:'text', title, payload }] } }
+//   media attachment:       { message: { attachment: { type:'image|video|audio', payload:{ url, is_reusable:true } } } }
+//   generic template:       { message: { attachment: { type:'template', payload:{ template_type:'generic', elements:[...] } } } }
+export async function sendIgRichMessage(
+    igUserId: string,
+    recipientId: string,
+    payload: RichDmPayload,
+    accessToken: string
+) {
+    const quickReplies = (payload as any).quickReplies as { title: string; payload?: string }[] | undefined;
+    let message: any;
+    if (payload.kind === 'attachment') {
+        message = { attachment: { type: payload.attachmentType, payload: { url: payload.url, is_reusable: true } } };
+        if (quickReplies && quickReplies.length) {
+            message.quick_replies = quickReplies.slice(0, 13).map(r => ({
+                content_type: 'text', title: r.title.slice(0, 20), payload: r.payload || r.title
+            }));
+        }
+    } else if (payload.kind === 'template') {
+        message = { attachment: { type: 'template', payload: { template_type: 'generic', elements: payload.elements.slice(0, 10) } } };
+    } else {
+        const safe = truncateForIg(payload.text || '');
+        if (!safe) return;
+        message = { text: safe };
+        if (quickReplies && quickReplies.length) {
+            message.quick_replies = quickReplies.slice(0, 13).map(r => ({
+                content_type: 'text', title: r.title.slice(0, 20), payload: r.payload || r.title
+            }));
+        }
+    }
+    try {
+        await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
+            recipient: { id: recipientId },
+            message,
+        }, {
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+        });
+    } catch (err: any) {
+        const ig = err.response?.data?.error;
+        logger.error({
+            status: err.response?.status,
+            ig_message: ig?.message,
+            ig_code: ig?.code,
+            ig_subcode: ig?.error_subcode,
+            ig_user_msg: ig?.error_user_msg,
+            payload_kind: payload.kind,
+        }, '[IG] sendIgRichMessage failed');
+        throw err;
+    }
+}
+
 // ─── Reply to Instagram Comment ───
 async function replyToComment(commentId: string, text: string, accessToken: string) {
     const safe = truncateForIg(text);
@@ -222,7 +275,10 @@ export class InstagramAiService {
             contactName: contact?.name || contact?.username || undefined,
             isNewContact: priorCount === 0,
             source: 'dm',
+            accountId: account.id,
+            igUserId,
             sendMessage: (t) => sendIgMessage(igUserId, senderId, t, account.accessToken),
+            sendDm: (p) => sendIgRichMessage(igUserId, senderId, p, account.accessToken),
             runAgent: async (agentId) => {
                 const ag = await prisma.agent.findFirst({ where: { id: agentId }, include: { provider: true } });
                 if (!ag?.provider) return;
@@ -285,6 +341,61 @@ export class InstagramAiService {
 
         if (!account) return;
 
+        // Best-effort: fetch the post's permalink so {{post_url}} works in actions.
+        let permalink: string | undefined;
+        if (mediaId) {
+            try {
+                const r = await axios.get(`https://graph.instagram.com/v21.0/${mediaId}`, {
+                    params: { fields: 'permalink', access_token: account.accessToken }
+                });
+                permalink = r.data?.permalink;
+            } catch (e: any) {
+                logger.warn({ err: e.response?.data?.error?.message || e.message }, '[IG] permalink fetch failed');
+            }
+        }
+
+        // Comment-to-DM uses recipient.comment_id to bypass the 24-hour messaging window.
+        // The commenter receives a DM tied to that comment.
+        const sendDmFromComment = async (p: RichDmPayload) => {
+            const quickReplies = (p as any).quickReplies as { title: string; payload?: string }[] | undefined;
+            let message: any;
+            if (p.kind === 'attachment') {
+                message = { attachment: { type: p.attachmentType, payload: { url: p.url, is_reusable: true } } };
+                if (quickReplies?.length) {
+                    message.quick_replies = quickReplies.slice(0, 13).map(r => ({ content_type: 'text', title: r.title.slice(0, 20), payload: r.payload || r.title }));
+                }
+            } else if (p.kind === 'template') {
+                message = { attachment: { type: 'template', payload: { template_type: 'generic', elements: p.elements.slice(0, 10) } } };
+            } else {
+                const safe = truncateForIg(p.text || '');
+                if (!safe) return;
+                message = { text: safe };
+                if (quickReplies?.length) {
+                    message.quick_replies = quickReplies.slice(0, 13).map(r => ({ content_type: 'text', title: r.title.slice(0, 20), payload: r.payload || r.title }));
+                }
+            }
+            try {
+                await axios.post(`https://graph.instagram.com/v21.0/${igUserId}/messages`, {
+                    recipient: { comment_id: commentId },
+                    message,
+                }, { headers: { Authorization: `Bearer ${account.accessToken}`, 'Content-Type': 'application/json' } });
+            } catch (err: any) {
+                const ig = err.response?.data?.error;
+                logger.error({
+                    status: err.response?.status,
+                    ig_message: ig?.message,
+                    ig_code: ig?.code,
+                    ig_subcode: ig?.error_subcode,
+                    ig_user_msg: ig?.error_user_msg,
+                    payload_kind: p.kind,
+                }, '[IG] sendDmFromComment failed');
+                // Fall back to regular IGSID DM in case the comment_id flow is unavailable for this account
+                try {
+                    await sendIgRichMessage(igUserId, from.id, p, account.accessToken);
+                } catch { /* already logged */ }
+            }
+        };
+
         // Run automations first — a matching comment trigger skips the default agent
         const { matched } = await AutomationEngine.handleMessage({
             userId: account.userId,
@@ -293,7 +404,14 @@ export class InstagramAiService {
             contactId: from.id,
             contactName: from.username || undefined,
             source: 'comment',
+            accountId: account.id,
+            igUserId,
+            mediaId,
+            permalink,
+            commentId,
             sendMessage: (t) => replyToComment(commentId, t, account.accessToken),
+            sendDm: sendDmFromComment,
+            replyComment: (t) => replyToComment(commentId, t, account.accessToken),
         });
         if (matched) {
             logger.info(`[IG] Comment ${commentId} handled by automation`);

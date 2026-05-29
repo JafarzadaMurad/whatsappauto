@@ -659,6 +659,20 @@ export class AiService {
                 isNewContact: inboundCount <= 1,
                 source: 'dm',
                 sendMessage: async (t) => { await sock.sendMessage(remoteJid, { text: t }); },
+                sendMedia: async (p) => {
+                    // Map MediaPayload → Baileys message shape
+                    let msg: any;
+                    if (p.kind === 'image') msg = { image: { url: p.url }, caption: p.caption || undefined };
+                    else if (p.kind === 'video') msg = { video: { url: p.url }, caption: p.caption || undefined };
+                    else if (p.kind === 'audio') msg = { audio: { url: p.url }, mimetype: p.mimetype || 'audio/mp4', ptt: false };
+                    else msg = {
+                        document: { url: p.url },
+                        mimetype: p.mimetype || 'application/octet-stream',
+                        fileName: p.filename || (p.url.split('/').pop() || 'file'),
+                        caption: p.caption || undefined,
+                    };
+                    await sock.sendMessage(remoteJid, msg);
+                },
                 addTag: async (tag) => {
                     const existing = await prisma.client.findUnique({
                         where: { userId_phone: { userId: instance.userId, phone: waPhone } }

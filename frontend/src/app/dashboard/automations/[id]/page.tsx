@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -39,6 +39,10 @@ const NODE_META: Record<string, NodeMeta> = {
     action_send_message: {
         label: "Send Message", category: "action", icon: MessageSquare,
         defaultData: { text: "" }
+    },
+    action_send_media: {
+        label: "Send Media", category: "action", icon: Paperclip,
+        defaultData: { mediaKind: "image", url: "", caption: "", filename: "", mimetype: "" }
     },
     action_send_dm: {
         label: "Send Instagram DM", category: "action", icon: Send,
@@ -74,7 +78,7 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
 
 const PALETTE = [
     { category: "trigger", label: "Triggers", types: ["trigger_keyword", "trigger_any_message", "trigger_comment", "trigger_new_contact"] },
-    { category: "action", label: "Actions", types: ["action_send_message", "action_send_dm", "action_reply_comment", "action_ai_reply", "action_add_tag", "action_wait"] },
+    { category: "action", label: "Actions", types: ["action_send_message", "action_send_media", "action_send_dm", "action_reply_comment", "action_ai_reply", "action_add_tag", "action_wait"] },
     { category: "logic", label: "Logic", types: ["condition"] },
 ];
 
@@ -97,6 +101,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     }
     else if (type === "trigger_any_message" || type === "trigger_new_contact") summary = `channel: ${d.channel}`;
     else if (type === "action_send_message") summary = d.text || "(empty)";
+    else if (type === "action_send_media") summary = `${d.mediaKind || 'image'}: ${d.url || '(no url)'}`;
     else if (type === "action_send_dm") {
         const kind = d.kind || 'text';
         if (kind === 'text') summary = d.text ? `DM: ${d.text}` : "(empty)";
@@ -623,6 +628,38 @@ function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents
                         <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={5}
                             placeholder="Use {{name}} for the contact's name" className={inputCls + ' resize-none'} />
                     </Field>
+                </div>
+            );
+        case 'action_send_media':
+            return (
+                <div className="space-y-3">
+                    <Field label="Media type">
+                        <select value={d.mediaKind || 'image'} onChange={e => onChange({ mediaKind: e.target.value })} className={inputCls}>
+                            <option value="image">Image (JPG / PNG)</option>
+                            <option value="video">Video (MP4)</option>
+                            <option value="audio">Audio (MP3 / OGG)</option>
+                            <option value="document">Document (PDF / DOCX) — WhatsApp only</option>
+                        </select>
+                    </Field>
+                    <Field label="Public URL">
+                        <input type="url" value={d.url || ''} onChange={e => onChange({ url: e.target.value })}
+                            placeholder="https://yourdomain.com/file.jpg" className={inputCls} />
+                    </Field>
+                    {(d.mediaKind === 'image' || d.mediaKind === 'video' || d.mediaKind === 'document') && (
+                        <Field label="Caption (optional)">
+                            <textarea value={d.caption || ''} onChange={e => onChange({ caption: e.target.value })} rows={3}
+                                placeholder="Optional text shown with the file. Variables: {{name}}, {{message}}." className={inputCls + ' resize-none'} />
+                        </Field>
+                    )}
+                    {d.mediaKind === 'document' && (
+                        <Field label="File name (optional)">
+                            <input type="text" value={d.filename || ''} onChange={e => onChange({ filename: e.target.value })}
+                                placeholder="invoice.pdf" className={inputCls} />
+                        </Field>
+                    )}
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        The URL must be publicly reachable. Works for both WhatsApp and Instagram (Instagram doesn&apos;t accept documents — falls back to a text link).
+                    </p>
                 </div>
             );
         case 'action_send_dm':

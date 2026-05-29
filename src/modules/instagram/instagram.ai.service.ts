@@ -7,7 +7,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
-import { AutomationEngine, type RichDmPayload } from '../automation/automation.engine';
+import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
 
 // Reuse the same makeTool + skill builders from WhatsApp AI service
@@ -278,6 +278,19 @@ export class InstagramAiService {
             accountId: account.id,
             igUserId,
             sendMessage: (t) => sendIgMessage(igUserId, senderId, t, account.accessToken),
+            sendMedia: async (p: MediaPayload) => {
+                if (p.kind === 'document') {
+                    // Instagram doesn't support documents — fall back to a text link
+                    if (p.url) await sendIgMessage(igUserId, senderId, p.caption ? `${p.caption}\n${p.url}` : p.url, account.accessToken);
+                    return;
+                }
+                await sendIgRichMessage(igUserId, senderId, {
+                    kind: 'attachment',
+                    attachmentType: p.kind,
+                    url: p.url,
+                }, account.accessToken);
+                if (p.caption) await sendIgMessage(igUserId, senderId, p.caption, account.accessToken);
+            },
             sendDm: (p) => sendIgRichMessage(igUserId, senderId, p, account.accessToken),
             runAgent: async (agentId) => {
                 const ag = await prisma.agent.findFirst({ where: { id: agentId }, include: { provider: true } });
@@ -410,6 +423,14 @@ export class InstagramAiService {
             permalink,
             commentId,
             sendMessage: (t) => replyToComment(commentId, t, account.accessToken),
+            sendMedia: async (p: MediaPayload) => {
+                if (p.kind === 'document') {
+                    if (p.url) await sendDmFromComment({ kind: 'text', text: p.caption ? `${p.caption}\n${p.url}` : p.url });
+                    return;
+                }
+                await sendDmFromComment({ kind: 'attachment', attachmentType: p.kind, url: p.url });
+                if (p.caption) await sendDmFromComment({ kind: 'text', text: p.caption });
+            },
             sendDm: sendDmFromComment,
             replyComment: (t) => replyToComment(commentId, t, account.accessToken),
         });

@@ -21,6 +21,15 @@ export type RichDmPayload =
     | { kind: 'attachment'; attachmentType: IgAttachmentType; url: string; quickReplies?: IgQuickReply[] }
     | { kind: 'template'; elements: IgTemplateElement[] };
 
+export type MediaKind = 'image' | 'video' | 'audio' | 'document';
+export type MediaPayload = {
+    kind: MediaKind;
+    url: string;
+    caption?: string;
+    filename?: string;   // document only
+    mimetype?: string;   // optional override
+};
+
 export type AutomationContext = {
     userId: string;
     channel: Channel;
@@ -37,6 +46,7 @@ export type AutomationContext = {
     commentId?: string;       // the comment id (only set for comment events)
     // callbacks supplied by the channel handler
     sendMessage: (text: string) => Promise<void>;
+    sendMedia?: (payload: MediaPayload) => Promise<void>;
     sendDm?: (payload: RichDmPayload) => Promise<void>;
     replyComment?: (text: string) => Promise<void>;
     runAgent?: (agentId: string) => Promise<void>;
@@ -139,6 +149,19 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         case 'action_send_message':
             if (d.text) await ctx.sendMessage(interpolate(String(d.text), ctx));
             return true;
+        case 'action_send_media': {
+            if (!ctx.sendMedia) return true;
+            const url = interpolate(String(d.url || ''), ctx);
+            if (!url) return true;
+            await ctx.sendMedia({
+                kind: (d.mediaKind || 'image') as MediaKind,
+                url,
+                caption: d.caption ? interpolate(String(d.caption), ctx) : undefined,
+                filename: d.filename ? interpolate(String(d.filename), ctx) : undefined,
+                mimetype: d.mimetype || undefined,
+            });
+            return true;
+        }
         case 'action_send_dm': {
             // Rich Instagram DM (text + quick replies, attachment, or template).
             // Falls back to sendMessage if the channel didn't supply a rich handler.

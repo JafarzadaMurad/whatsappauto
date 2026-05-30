@@ -405,6 +405,14 @@ function MediaPicker({
         return "document";
     };
 
+    const detectKindFromUrl = (url: string): string => {
+        const ext = (url.split("?")[0].split(".").pop() || "").toLowerCase();
+        if (["jpg", "jpeg", "png", "gif", "webp", "bmp"].includes(ext)) return "image";
+        if (["mp4", "mov", "webm", "avi", "mkv"].includes(ext)) return "video";
+        if (["mp3", "ogg", "wav", "aac", "m4a", "flac"].includes(ext)) return "audio";
+        return "document";
+    };
+
     const upload = async (file: File) => {
         setError(null);
         setUploading(true);
@@ -447,7 +455,7 @@ function MediaPicker({
                     <input type="url" placeholder="https://yourdomain.com/file.jpg"
                         onChange={e => {
                             const url = e.target.value.trim();
-                            if (url) onChange({ kind: m.kind || "image", url });
+                            if (url) onChange({ kind: detectKindFromUrl(url), url });
                         }}
                         className={inputCls} />
                 </div>
@@ -456,6 +464,7 @@ function MediaPicker({
         );
     }
 
+    const notAllowed = m.kind && !allowedKinds.includes(m.kind);
     return (
         <div className="space-y-2">
             <div className="flex items-center gap-2 p-2 rounded-lg border border-border bg-secondary/30">
@@ -471,23 +480,18 @@ function MediaPicker({
                 )}
                 <div className="flex-1 min-w-0">
                     <p className="text-xs truncate">{m.filename || m.url}</p>
-                    <p className="text-[10px] text-muted-foreground">{m.kind}{m.mimetype ? ` · ${m.mimetype}` : ''}</p>
+                    <p className="text-[10px] text-muted-foreground capitalize">{m.kind}{m.mimetype ? ` · ${m.mimetype}` : ''}</p>
                 </div>
                 <button onClick={() => onChange(null)}
                     className="text-muted-foreground hover:text-red-400 p-1">
                     <X className="w-4 h-4" />
                 </button>
             </div>
-            <div className="flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground">Type:</span>
-                <select value={m.kind || "image"} onChange={e => onChange({ ...m, kind: e.target.value })}
-                    className="bg-secondary/50 border border-border rounded px-2 py-0.5 text-xs">
-                    {allowedKinds.includes("image") && <option value="image">Image</option>}
-                    {allowedKinds.includes("video") && <option value="video">Video</option>}
-                    {allowedKinds.includes("audio") && <option value="audio">Audio</option>}
-                    {allowedKinds.includes("document") && <option value="document">Document</option>}
-                </select>
-            </div>
+            {notAllowed && (
+                <p className="text-[10px] text-amber-400/90">
+                    Instagram doesn&apos;t accept {m.kind}s — the URL will be sent as a text link instead.
+                </p>
+            )}
         </div>
     );
 }

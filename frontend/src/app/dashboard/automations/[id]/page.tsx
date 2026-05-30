@@ -19,54 +19,102 @@ type NodeMeta = {
     defaultData: Record<string, any>;
 };
 
-const NODE_META: Record<string, NodeMeta> = {
-    trigger_keyword: {
-        label: "Keyword Trigger", category: "trigger", icon: Zap,
-        defaultData: { channel: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+type NodeChannel = "wa" | "ig" | "generic";
+
+const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
+    // ─── WhatsApp triggers ───
+    trigger_wa_keyword: {
+        label: "WhatsApp · Keyword", category: "trigger", icon: Zap, channel: "wa",
+        defaultData: { keywords: "", caseSensitive: false, matchMode: "contains" }
     },
-    trigger_any_message: {
-        label: "Any Message", category: "trigger", icon: MessageSquare,
-        defaultData: { channel: "any" }
+    trigger_wa_any: {
+        label: "WhatsApp · Any Message", category: "trigger", icon: MessageSquare, channel: "wa",
+        defaultData: {}
     },
-    trigger_comment: {
-        label: "Instagram Comment", category: "trigger", icon: Camera,
+    trigger_wa_new_contact: {
+        label: "WhatsApp · New Contact", category: "trigger", icon: UserPlus, channel: "wa",
+        defaultData: {}
+    },
+    // ─── Instagram triggers ───
+    trigger_ig_keyword: {
+        label: "Instagram · DM Keyword", category: "trigger", icon: Zap, channel: "ig",
+        defaultData: { keywords: "", caseSensitive: false, matchMode: "contains" }
+    },
+    trigger_ig_any: {
+        label: "Instagram · Any DM", category: "trigger", icon: MessageSquare, channel: "ig",
+        defaultData: {}
+    },
+    trigger_ig_new_contact: {
+        label: "Instagram · New Contact", category: "trigger", icon: UserPlus, channel: "ig",
+        defaultData: {}
+    },
+    trigger_ig_comment: {
+        label: "Instagram · Comment", category: "trigger", icon: Camera, channel: "ig",
         defaultData: { accountId: "", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
-    trigger_new_contact: {
-        label: "New Contact", category: "trigger", icon: UserPlus,
-        defaultData: { channel: "any" }
+    // ─── WhatsApp actions ───
+    action_wa_send_message: {
+        label: "WhatsApp · Send Message", category: "action", icon: MessageSquare, channel: "wa",
+        defaultData: { text: "", media: null }
     },
-    action_send_message: {
-        label: "Send Message", category: "action", icon: MessageSquare,
+    // ─── Instagram actions ───
+    action_ig_send_dm: {
+        label: "Instagram · Send DM", category: "action", icon: Send, channel: "ig",
+        defaultData: { text: "", media: null, quickReplies: [] }
+    },
+    action_ig_reply_comment: {
+        label: "Instagram · Reply Comment", category: "action", icon: Reply, channel: "ig",
         defaultData: { text: "" }
     },
-    action_send_media: {
-        label: "Send Media", category: "action", icon: Paperclip,
-        defaultData: { mediaKind: "image", url: "", caption: "", filename: "", mimetype: "" }
-    },
-    action_send_dm: {
-        label: "Send Instagram DM", category: "action", icon: Send,
-        defaultData: { kind: "text", text: "", attachmentType: "image", url: "", elements: [], quickReplies: [] }
-    },
-    action_reply_comment: {
-        label: "Reply to Comment", category: "action", icon: Reply,
-        defaultData: { text: "" }
-    },
+    // ─── Generic actions / logic ───
     action_ai_reply: {
-        label: "AI Agent Reply", category: "action", icon: Bot,
+        label: "AI Agent Reply", category: "action", icon: Bot, channel: "generic",
         defaultData: { agentId: "" }
     },
     action_add_tag: {
-        label: "Add Tag", category: "action", icon: Tag,
+        label: "Add Tag", category: "action", icon: Tag, channel: "generic",
         defaultData: { tag: "" }
     },
     action_wait: {
-        label: "Wait / Delay", category: "action", icon: Clock,
+        label: "Wait / Delay", category: "action", icon: Clock, channel: "generic",
         defaultData: { seconds: 60 }
     },
     condition: {
-        label: "Condition", category: "logic", icon: GitBranch,
+        label: "Condition", category: "logic", icon: GitBranch, channel: "generic",
         defaultData: { field: "message", operator: "contains", value: "" }
+    },
+    // ─── Legacy (kept so old saved automations still render) ───
+    trigger_keyword: {
+        label: "Keyword Trigger (legacy)", category: "trigger", icon: Zap,
+        defaultData: { channel: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+    },
+    trigger_any_message: {
+        label: "Any Message (legacy)", category: "trigger", icon: MessageSquare,
+        defaultData: { channel: "any" }
+    },
+    trigger_comment: {
+        label: "IG Comment (legacy)", category: "trigger", icon: Camera,
+        defaultData: { accountId: "", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+    },
+    trigger_new_contact: {
+        label: "New Contact (legacy)", category: "trigger", icon: UserPlus,
+        defaultData: { channel: "any" }
+    },
+    action_send_message: {
+        label: "Send Message (legacy)", category: "action", icon: MessageSquare,
+        defaultData: { text: "" }
+    },
+    action_send_media: {
+        label: "Send Media (legacy)", category: "action", icon: Paperclip,
+        defaultData: { mediaKind: "image", url: "", caption: "", filename: "", mimetype: "" }
+    },
+    action_send_dm: {
+        label: "Send IG DM (legacy)", category: "action", icon: Send,
+        defaultData: { kind: "text", text: "", attachmentType: "image", url: "", elements: [], quickReplies: [] }
+    },
+    action_reply_comment: {
+        label: "Reply Comment (legacy)", category: "action", icon: Reply,
+        defaultData: { text: "" }
     },
 };
 
@@ -76,9 +124,12 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
     logic: { bg: "bg-amber-500/10", border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-500" },
 };
 
-const PALETTE = [
-    { category: "trigger", label: "Triggers", types: ["trigger_keyword", "trigger_any_message", "trigger_comment", "trigger_new_contact"] },
-    { category: "action", label: "Actions", types: ["action_send_message", "action_send_media", "action_send_dm", "action_reply_comment", "action_ai_reply", "action_add_tag", "action_wait"] },
+const PALETTE: { category: "trigger" | "action" | "logic"; label: string; types: string[] }[] = [
+    { category: "trigger", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
+    { category: "trigger", label: "Instagram · Triggers", types: ["trigger_ig_keyword", "trigger_ig_any", "trigger_ig_new_contact", "trigger_ig_comment"] },
+    { category: "action", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
+    { category: "action", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment"] },
+    { category: "action", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_wait"] },
     { category: "logic", label: "Logic", types: ["condition"] },
 ];
 
@@ -93,14 +144,26 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
 
     const d = data as Record<string, any>;
     let summary = "";
-    if (type === "trigger_keyword") summary = d.keywords || "(no keywords)";
-    else if (type === "trigger_comment") {
+    const kwSummary = d.keywords || "(no keywords)";
+    if (type === "trigger_wa_keyword" || type === "trigger_ig_keyword" || type === "trigger_keyword") summary = kwSummary;
+    else if (type === "trigger_wa_any" || type === "trigger_wa_new_contact" || type === "trigger_ig_any" || type === "trigger_ig_new_contact") summary = "—";
+    else if (type === "trigger_ig_comment" || type === "trigger_comment") {
         const post = d.mediaId && d.mediaId !== 'any' ? '1 post' : 'any post';
         const kw = d.keywords ? ` · "${d.keywords}"` : '';
         summary = `${post}${kw}`;
     }
     else if (type === "trigger_any_message" || type === "trigger_new_contact") summary = `channel: ${d.channel}`;
-    else if (type === "action_send_message") summary = d.text || "(empty)";
+    else if (type === "action_wa_send_message" || type === "action_send_message") {
+        const t = d.text || '';
+        const m = d.media?.url ? ` 📎 ${d.media.kind || 'image'}` : '';
+        summary = (t || (d.media?.url ? '(media only)' : '(empty)')) + m;
+    }
+    else if (type === "action_ig_send_dm") {
+        const t = d.text || '';
+        const m = d.media?.url ? ` 📎 ${d.media.kind || 'image'}` : '';
+        const qr = (d.quickReplies || []).length;
+        summary = (t || (d.media?.url ? '(media only)' : '(empty)')) + m + (qr ? ` · ${qr} QR` : '');
+    }
     else if (type === "action_send_media") summary = `${d.mediaKind || 'image'}: ${d.url || '(no url)'}`;
     else if (type === "action_send_dm") {
         const kind = d.kind || 'text';
@@ -108,7 +171,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
         else if (kind === 'attachment') summary = `DM ${d.attachmentType || 'image'}: ${d.url || '(no url)'}`;
         else summary = `DM template (${(d.elements || []).length} card${(d.elements || []).length === 1 ? '' : 's'})`;
     }
-    else if (type === "action_reply_comment") summary = d.text || "(empty)";
+    else if (type === "action_ig_reply_comment" || type === "action_reply_comment") summary = d.text || "(empty)";
     else if (type === "action_ai_reply") summary = d.agentName || (d.agentId ? "agent set" : "(no agent)");
     else if (type === "action_add_tag") summary = d.tag || "(no tag)";
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
@@ -248,7 +311,7 @@ function Editor({ id }: { id: string }) {
                 {/* Node palette */}
                 <div className="w-52 flex-shrink-0 border-r border-border bg-card overflow-y-auto p-3 space-y-4">
                     {PALETTE.map(group => (
-                        <div key={group.category}>
+                        <div key={group.label}>
                             <div className="flex items-center gap-2 mb-2">
                                 <div className={`w-2 h-2 rounded-full ${CATEGORY_COLOR[group.category].dot}`} />
                                 <span className="text-xs font-semibold uppercase text-muted-foreground">{group.label}</span>
@@ -321,6 +384,113 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputCls = "w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+
+// ─── Reusable media picker: paste a URL OR upload from disk ───
+function MediaPicker({
+    media, onChange, allowedKinds = ["image", "video", "audio", "document"]
+}: {
+    media: { kind?: string; url?: string; filename?: string; mimetype?: string } | null;
+    onChange: (m: any) => void;
+    allowedKinds?: string[];
+}) {
+    const [uploading, setUploading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const fileRef = useRef<HTMLInputElement>(null);
+    const m = media || {};
+
+    const detectKind = (mime: string): string => {
+        if (mime.startsWith("image/")) return "image";
+        if (mime.startsWith("video/")) return "video";
+        if (mime.startsWith("audio/")) return "audio";
+        return "document";
+    };
+
+    const upload = async (file: File) => {
+        setError(null);
+        setUploading(true);
+        try {
+            const form = new FormData();
+            form.append("file", file);
+            const r = await api.post("/uploads", form, { headers: { "Content-Type": "multipart/form-data" } });
+            if (r.data?.success) {
+                onChange({
+                    kind: detectKind(r.data.mimetype || ""),
+                    url: r.data.url,
+                    filename: r.data.filename,
+                    mimetype: r.data.mimetype,
+                });
+            } else {
+                setError(r.data?.message || "Upload failed");
+            }
+        } catch (e: any) {
+            setError(e.response?.data?.message || e.message);
+        } finally {
+            setUploading(false);
+            if (fileRef.current) fileRef.current.value = "";
+        }
+    };
+
+    if (!m.url) {
+        return (
+            <div className="space-y-2">
+                <div className="flex gap-2">
+                    <button onClick={() => fileRef.current?.click()} disabled={uploading}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border bg-secondary/30 hover:bg-secondary/60 text-xs disabled:opacity-60">
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
+                        Upload file
+                    </button>
+                    <input ref={fileRef} type="file" className="hidden"
+                        onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
+                </div>
+                <div className="text-[10px] text-center text-muted-foreground">or paste a public URL</div>
+                <div className="flex gap-2">
+                    <input type="url" placeholder="https://yourdomain.com/file.jpg"
+                        onChange={e => {
+                            const url = e.target.value.trim();
+                            if (url) onChange({ kind: m.kind || "image", url });
+                        }}
+                        className={inputCls} />
+                </div>
+                {error && <p className="text-[10px] text-red-400">{error}</p>}
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-2">
+            <div className="flex items-center gap-2 p-2 rounded-lg border border-border bg-secondary/30">
+                {m.kind === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={m.url} alt="" className="w-12 h-12 object-cover rounded" />
+                ) : (
+                    <div className="w-12 h-12 rounded bg-secondary flex items-center justify-center">
+                        {m.kind === "video" ? <Camera className="w-5 h-5 text-muted-foreground" /> :
+                            m.kind === "audio" ? <MessageSquare className="w-5 h-5 text-muted-foreground" /> :
+                                <Paperclip className="w-5 h-5 text-muted-foreground" />}
+                    </div>
+                )}
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs truncate">{m.filename || m.url}</p>
+                    <p className="text-[10px] text-muted-foreground">{m.kind}{m.mimetype ? ` · ${m.mimetype}` : ''}</p>
+                </div>
+                <button onClick={() => onChange(null)}
+                    className="text-muted-foreground hover:text-red-400 p-1">
+                    <X className="w-4 h-4" />
+                </button>
+            </div>
+            <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground">Type:</span>
+                <select value={m.kind || "image"} onChange={e => onChange({ ...m, kind: e.target.value })}
+                    className="bg-secondary/50 border border-border rounded px-2 py-0.5 text-xs">
+                    {allowedKinds.includes("image") && <option value="image">Image</option>}
+                    {allowedKinds.includes("video") && <option value="video">Video</option>}
+                    {allowedKinds.includes("audio") && <option value="audio">Audio</option>}
+                    {allowedKinds.includes("document") && <option value="document">Document</option>}
+                </select>
+            </div>
+        </div>
+    );
+}
 
 // ─── Instagram comment trigger: account + post picker ───
 function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, any>; igAccounts: any[]; onChange: (p: Record<string, any>) => void }) {
@@ -606,9 +776,16 @@ function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents
     );
 
     switch (type) {
-        case 'trigger_keyword':
-            return <div className="space-y-3">{ChannelField}{KeywordFields}</div>;
-        case 'trigger_comment':
+        // ─── New channel-specific triggers ───
+        case 'trigger_wa_keyword':
+        case 'trigger_ig_keyword':
+            return <div className="space-y-3">{KeywordFields}</div>;
+        case 'trigger_wa_any':
+        case 'trigger_wa_new_contact':
+        case 'trigger_ig_any':
+        case 'trigger_ig_new_contact':
+            return <p className="text-xs text-muted-foreground">No settings — fires on every matching event.</p>;
+        case 'trigger_ig_comment':
             return (
                 <div className="space-y-3">
                     <CommentTriggerConfig d={d} igAccounts={igAccounts} onChange={onChange} />
@@ -616,6 +793,85 @@ function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
                         Variables available in actions: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
                     </p>
+                </div>
+            );
+
+        // ─── New channel-specific actions ───
+        case 'action_wa_send_message':
+            return (
+                <div className="space-y-3">
+                    <Field label="Message text">
+                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
+                            placeholder="Use {{name}} for the contact's name" className={inputCls + ' resize-none'} />
+                    </Field>
+                    <Field label="Attachment (optional)">
+                        <MediaPicker media={d.media} onChange={(m) => onChange({ media: m })} />
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground">When both text and image/video/document are set, the text is used as caption.</p>
+                </div>
+            );
+        case 'action_ig_send_dm':
+            return (
+                <div className="space-y-3">
+                    <Field label="DM text">
+                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
+                            placeholder="Hi {{username}}, thanks for your comment!" className={inputCls + ' resize-none'} />
+                    </Field>
+                    <Field label="Attachment (optional)">
+                        <MediaPicker media={d.media}
+                            allowedKinds={["image", "video", "audio"]}
+                            onChange={(m) => onChange({ media: m })} />
+                    </Field>
+                    <div className="border-t border-border pt-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-muted-foreground">Quick replies (max 13)</span>
+                            {(d.quickReplies || []).length < 13 && (
+                                <button onClick={() => onChange({ quickReplies: [...(d.quickReplies || []), { title: '' }] })}
+                                    className="text-[11px] text-primary hover:underline">+ Add</button>
+                            )}
+                        </div>
+                        {(d.quickReplies || []).map((r: any, i: number) => (
+                            <div key={i} className="flex gap-1.5">
+                                <input type="text" value={r.title} placeholder="Button label (max 20 chars)"
+                                    onChange={e => {
+                                        const next = [...(d.quickReplies || [])];
+                                        next[i] = { ...next[i], title: e.target.value };
+                                        onChange({ quickReplies: next });
+                                    }}
+                                    className={inputCls} />
+                                <button onClick={() => onChange({ quickReplies: (d.quickReplies || []).filter((_: any, j: number) => j !== i) })}
+                                    className="text-muted-foreground hover:text-red-400 px-1.5">
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Variables: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>. Documents fall back to a text link on Instagram.
+                    </p>
+                </div>
+            );
+        case 'action_ig_reply_comment':
+            return (
+                <div className="space-y-3">
+                    <Field label="Reply text">
+                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
+                            placeholder="Thanks for commenting, {{username}}!" className={inputCls + ' resize-none'} />
+                    </Field>
+                    <p className="text-[10px] text-amber-400/80 leading-relaxed">
+                        Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
+                    </p>
+                </div>
+            );
+
+        // ─── Legacy (kept for backward compat with old saved automations) ───
+        case 'trigger_keyword':
+            return <div className="space-y-3">{ChannelField}{KeywordFields}</div>;
+        case 'trigger_comment':
+            return (
+                <div className="space-y-3">
+                    <CommentTriggerConfig d={d} igAccounts={igAccounts} onChange={onChange} />
+                    {KeywordFields}
                 </div>
             );
         case 'trigger_any_message':

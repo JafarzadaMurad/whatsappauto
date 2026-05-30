@@ -19,6 +19,7 @@ import inboxRoutes from './modules/inbox/inbox.routes';
 import planRoutes from './modules/plan/plan.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import billingRoutes from './modules/billing/billing.routes';
+import uploadsRoutes from './modules/uploads/uploads.routes';
 import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
@@ -67,6 +68,7 @@ app.use('/api/inbox', inboxRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/uploads', uploadsRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

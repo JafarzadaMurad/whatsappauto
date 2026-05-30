@@ -83,17 +83,35 @@ function channelOk(data: any, channel: Channel): boolean {
 function triggerMatches(node: any, ctx: AutomationContext): boolean {
     const d = node.data || {};
     switch (node.type) {
+        // ─── Legacy / generic (still recognized for backward compat) ───
         case 'trigger_keyword':
             return ctx.source !== 'comment' && channelOk(d, ctx.channel) && keywordMatches(d, ctx.text);
         case 'trigger_any_message':
             return ctx.source !== 'comment' && channelOk(d, ctx.channel);
         case 'trigger_new_contact':
             return ctx.source !== 'comment' && channelOk(d, ctx.channel) && !!ctx.isNewContact;
-        case 'trigger_comment': {
+
+        // ─── WhatsApp-specific ───
+        case 'trigger_wa_keyword':
+            return ctx.channel === 'whatsapp' && ctx.source !== 'comment' && keywordMatches(d, ctx.text);
+        case 'trigger_wa_any':
+            return ctx.channel === 'whatsapp' && ctx.source !== 'comment';
+        case 'trigger_wa_new_contact':
+            return ctx.channel === 'whatsapp' && ctx.source !== 'comment' && !!ctx.isNewContact;
+
+        // ─── Instagram DM triggers ───
+        case 'trigger_ig_keyword':
+            return ctx.channel === 'instagram' && ctx.source === 'dm' && keywordMatches(d, ctx.text);
+        case 'trigger_ig_any':
+            return ctx.channel === 'instagram' && ctx.source === 'dm';
+        case 'trigger_ig_new_contact':
+            return ctx.channel === 'instagram' && ctx.source === 'dm' && !!ctx.isNewContact;
+
+        // ─── Instagram comment trigger (renamed from trigger_comment) ───
+        case 'trigger_comment':
+        case 'trigger_ig_comment': {
             if (ctx.channel !== 'instagram' || ctx.source !== 'comment') return false;
-            // Optional Instagram account filter
             if (d.accountId && d.accountId !== ctx.accountId) return false;
-            // Optional post filter — empty / 'any' means "any post"
             const postId = String(d.mediaId || d.postId || '').trim();
             if (postId && postId !== 'any' && postId !== ctx.mediaId) return false;
             return String(d.keywords || '').trim() === '' || keywordMatches(d, ctx.text);
@@ -101,6 +119,21 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
         default:
             return false;
     }
+}
+
+// Resolve a media field on a node (used by message nodes that have an
+// optional embedded attachment). Returns null when no URL is set.
+function resolveMedia(d: any, ctx: AutomationContext): MediaPayload | null {
+    const media = d?.media;
+    const url = interpolate(String(media?.url || ''), ctx);
+    if (!url) return null;
+    return {
+        kind: (media.kind || 'image') as MediaKind,
+        url,
+        caption: media.caption ? interpolate(String(media.caption), ctx) : undefined,
+        filename: media.filename ? interpolate(String(media.filename), ctx) : undefined,
+        mimetype: media.mimetype || undefined,
+    };
 }
 
 function interpolate(text: string, ctx: AutomationContext): string {
@@ -147,8 +180,50 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
     const d = node.data || {};
     switch (node.type) {
         case 'action_send_message':
-            if (d.text) await ctx.sendMessage(interpolate(String(d.text), ctx));
+        case 'action_wa_send_message': {
+            const media = resolveMedia(d, ctx);
+            const text = d.text ? interpolate(String(d.text), ctx) : '';
+            if (media && ctx.sendMedia) {
+                // Embed text as caption when supported; fall back to two messages otherwise.
+                if (text && (media.kind === 'image' || media.kind === 'video' || media.kind === 'document')) {
+                    await ctx.sendMedia({ ...media, caption: text });
+                } else {
+                    await ctx.sendMedia(media);
+                    if (text) await ctx.sendMessage(text);
+                }
+            } else if (text) {
+                await ctx.sendMessage(text);
+            }
             return true;
+        }
+        case 'action_ig_send_dm': {
+            // Instagram DM with optional attachment + quick replies.
+            const media = resolveMedia(d, ctx);
+            const text = d.text ? interpolate(String(d.text), ctx) : '';
+            const qr = Array.isArray(d.quickReplies)
+                ? d.quickReplies
+                    .map((r: any) => ({ title: interpolate(String(r?.title || ''), ctx), payload: r?.payload ? String(r.payload) : undefined }))
+                    .filter((r: any) => r.title)
+                : undefined;
+            if (media && ctx.sendDm && (media.kind === 'image' || media.kind === 'video' || media.kind === 'audio')) {
+                await ctx.sendDm({ kind: 'attachment', attachmentType: media.kind, url: media.url, quickReplies: qr });
+                if (text) await ctx.sendDm({ kind: 'text', text });
+            } else if (media && ctx.sendMedia) {
+                // Document fallback — IG converts it to a link
+                await ctx.sendMedia(media);
+                if (text && ctx.sendDm) await ctx.sendDm({ kind: 'text', text, quickReplies: qr });
+            } else if (text && ctx.sendDm) {
+                await ctx.sendDm({ kind: 'text', text, quickReplies: qr });
+            } else if (text) {
+                await ctx.sendMessage(text);
+            }
+            return true;
+        }
+        case 'action_ig_reply_comment': {
+            if (!ctx.replyComment || !d.text) return true;
+            await ctx.replyComment(interpolate(String(d.text), ctx));
+            return true;
+        }
         case 'action_send_media': {
             if (!ctx.sendMedia) return true;
             const url = interpolate(String(d.url || ''), ctx);

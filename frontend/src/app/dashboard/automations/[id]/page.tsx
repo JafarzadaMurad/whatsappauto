@@ -209,6 +209,7 @@ function Editor({ id }: { id: string }) {
     const [saving, setSaving] = useState(false);
     const [agents, setAgents] = useState<any[]>([]);
     const [igAccounts, setIgAccounts] = useState<any[]>([]);
+    const [waInstances, setWaInstances] = useState<any[]>([]);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -234,10 +235,11 @@ function Editor({ id }: { id: string }) {
     useEffect(() => {
         const load = async () => {
             try {
-                const [aRes, agRes, igRes] = await Promise.all([
+                const [aRes, agRes, igRes, waRes] = await Promise.all([
                     api.get(`/automations/${id}`),
                     api.get('/agents'),
-                    api.get('/instagram/accounts').catch(() => ({ data: { success: false } }))
+                    api.get('/instagram/accounts').catch(() => ({ data: { success: false } })),
+                    api.get('/instances').catch(() => ({ data: { success: false } })),
                 ]);
                 if (aRes.data.success) {
                     const a = aRes.data.automation;
@@ -248,6 +250,7 @@ function Editor({ id }: { id: string }) {
                 }
                 if (agRes.data.success) setAgents(agRes.data.agents);
                 if (igRes.data.success) setIgAccounts(igRes.data.accounts || []);
+                if (waRes.data.success) setWaInstances(waRes.data.instances || []);
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
         };
@@ -380,7 +383,7 @@ function Editor({ id }: { id: string }) {
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
-                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} waInstances={waInstances} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                         </div>
                     )}
 
@@ -917,7 +920,7 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
     );
 }
 
-function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents: any[]; igAccounts: any[]; onChange: (p: Record<string, any>) => void }) {
+function NodeConfig({ node, agents, igAccounts, waInstances, onChange }: { node: Node; agents: any[]; igAccounts: any[]; waInstances: any[]; onChange: (p: Record<string, any>) => void }) {
     const d = node.data as Record<string, any>;
     const type = node.type as string;
 
@@ -928,6 +931,36 @@ function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents
                 <option value="whatsapp">WhatsApp</option>
                 <option value="instagram">Instagram</option>
             </select>
+        </Field>
+    );
+
+    const WaInstanceField = (
+        <Field label="WhatsApp number">
+            {waInstances.length === 0 ? (
+                <p className="text-[10px] text-amber-400/90">No WhatsApp instances connected yet — fires on no message until you add one.</p>
+            ) : (
+                <select value={d.instanceId || 'any'} onChange={e => onChange({ instanceId: e.target.value })} className={inputCls}>
+                    <option value="any">Any connected number</option>
+                    {waInstances.map(i => (
+                        <option key={i.id} value={i.id}>{i.name || i.phoneNumber || i.id.slice(0, 8)}</option>
+                    ))}
+                </select>
+            )}
+        </Field>
+    );
+
+    const IgAccountField = (
+        <Field label="Instagram account">
+            {igAccounts.length === 0 ? (
+                <p className="text-[10px] text-amber-400/90">No Instagram accounts connected yet.</p>
+            ) : (
+                <select value={d.accountId || 'any'} onChange={e => onChange({ accountId: e.target.value })} className={inputCls}>
+                    <option value="any">Any connected account</option>
+                    {igAccounts.map(a => (
+                        <option key={a.id} value={a.id}>@{a.igUsername}</option>
+                    ))}
+                </select>
+            )}
         </Field>
     );
 
@@ -956,13 +989,15 @@ function NodeConfig({ node, agents, igAccounts, onChange }: { node: Node; agents
     switch (type) {
         // ─── New channel-specific triggers ───
         case 'trigger_wa_keyword':
+            return <div className="space-y-3">{WaInstanceField}{KeywordFields}</div>;
         case 'trigger_ig_keyword':
-            return <div className="space-y-3">{KeywordFields}</div>;
+            return <div className="space-y-3">{IgAccountField}{KeywordFields}</div>;
         case 'trigger_wa_any':
         case 'trigger_wa_new_contact':
+            return <div className="space-y-3">{WaInstanceField}</div>;
         case 'trigger_ig_any':
         case 'trigger_ig_new_contact':
-            return <p className="text-xs text-muted-foreground">No settings — fires on every matching event.</p>;
+            return <div className="space-y-3">{IgAccountField}</div>;
         case 'trigger_ig_comment':
             return (
                 <div className="space-y-3">

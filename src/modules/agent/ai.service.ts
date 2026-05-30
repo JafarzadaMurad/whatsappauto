@@ -658,6 +658,7 @@ export class AiService {
                 contactName: waContact?.pushName || waContact?.name || undefined,
                 isNewContact: inboundCount <= 1,
                 source: 'dm',
+                instanceId,
                 sendMessage: async (t) => { await sock.sendMessage(remoteJid, { text: t }); },
                 sendMedia: async (p) => {
                     // Map MediaPayload → Baileys message shape

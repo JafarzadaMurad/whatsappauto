@@ -38,7 +38,8 @@ export type AutomationContext = {
     contactName?: string;
     isNewContact?: boolean;
     source?: 'dm' | 'comment';
-    // Instagram-only context
+    // Channel-specific context
+    instanceId?: string;      // alChatBot WhatsAppInstance.id (which WA number received the msg)
     accountId?: string;       // alChatBot InstagramAccount.id (the connected biz account)
     igUserId?: string;        // raw IG user id of the business account
     mediaId?: string;         // the post id (only set for comment events)
@@ -93,19 +94,31 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
 
         // ─── WhatsApp-specific ───
         case 'trigger_wa_keyword':
-            return ctx.channel === 'whatsapp' && ctx.source !== 'comment' && keywordMatches(d, ctx.text);
+            if (ctx.channel !== 'whatsapp' || ctx.source === 'comment') return false;
+            if (d.instanceId && d.instanceId !== 'any' && d.instanceId !== ctx.instanceId) return false;
+            return keywordMatches(d, ctx.text);
         case 'trigger_wa_any':
-            return ctx.channel === 'whatsapp' && ctx.source !== 'comment';
+            if (ctx.channel !== 'whatsapp' || ctx.source === 'comment') return false;
+            if (d.instanceId && d.instanceId !== 'any' && d.instanceId !== ctx.instanceId) return false;
+            return true;
         case 'trigger_wa_new_contact':
-            return ctx.channel === 'whatsapp' && ctx.source !== 'comment' && !!ctx.isNewContact;
+            if (ctx.channel !== 'whatsapp' || ctx.source === 'comment' || !ctx.isNewContact) return false;
+            if (d.instanceId && d.instanceId !== 'any' && d.instanceId !== ctx.instanceId) return false;
+            return true;
 
         // ─── Instagram DM triggers ───
         case 'trigger_ig_keyword':
-            return ctx.channel === 'instagram' && ctx.source === 'dm' && keywordMatches(d, ctx.text);
+            if (ctx.channel !== 'instagram' || ctx.source !== 'dm') return false;
+            if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
+            return keywordMatches(d, ctx.text);
         case 'trigger_ig_any':
-            return ctx.channel === 'instagram' && ctx.source === 'dm';
+            if (ctx.channel !== 'instagram' || ctx.source !== 'dm') return false;
+            if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
+            return true;
         case 'trigger_ig_new_contact':
-            return ctx.channel === 'instagram' && ctx.source === 'dm' && !!ctx.isNewContact;
+            if (ctx.channel !== 'instagram' || ctx.source !== 'dm' || !ctx.isNewContact) return false;
+            if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
+            return true;
 
         // ─── Instagram comment trigger (renamed from trigger_comment) ───
         case 'trigger_comment':

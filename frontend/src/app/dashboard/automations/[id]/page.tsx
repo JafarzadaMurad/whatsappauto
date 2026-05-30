@@ -509,12 +509,12 @@ function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, a
     }, [igAccounts.length]);
 
     useEffect(() => {
-        if (!accountId || !pickerOpen) return;
+        if (!accountId) return;
         setLoadingMedia(true);
         api.get(`/instagram/accounts/${accountId}/media`).then(r => {
             if (r.data?.success) setMedia(r.data.media || []);
         }).catch(() => {}).finally(() => setLoadingMedia(false));
-    }, [accountId, pickerOpen]);
+    }, [accountId]);
 
     if (igAccounts.length === 0) {
         return (

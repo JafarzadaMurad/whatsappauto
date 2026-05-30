@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -212,7 +212,24 @@ function Editor({ id }: { id: string }) {
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [addNodeOpen, setAddNodeOpen] = useState(false);
+    const [activeTab, setActiveTab] = useState<'editor' | 'executions'>('editor');
+    const [executions, setExecutions] = useState<any[]>([]);
+    const [loadingExecutions, setLoadingExecutions] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
+
+    const loadExecutions = useCallback(async () => {
+        setLoadingExecutions(true);
+        try {
+            const r = await api.get(`/automations/${id}/executions`);
+            if (r.data?.success) setExecutions(r.data.executions || []);
+        } catch (e) { /* ignore — endpoint may not exist yet */ }
+        finally { setLoadingExecutions(false); }
+    }, [id]);
+
+    useEffect(() => {
+        if (activeTab === 'executions') loadExecutions();
+    }, [activeTab, loadExecutions]);
 
     useEffect(() => {
         const load = async () => {
@@ -299,6 +316,20 @@ function Editor({ id }: { id: string }) {
                 >
                     <Power className="w-4 h-4" /> {isActive ? 'Active' : 'Inactive'}
                 </button>
+
+                {/* Tabs */}
+                <div className="ml-4 inline-flex bg-secondary/50 border border-border rounded-lg p-0.5">
+                    <button onClick={() => setActiveTab('editor')}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab === 'editor' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                        Editor
+                    </button>
+                    <button onClick={() => setActiveTab('executions')}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${activeTab === 'executions' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                        <History className="w-3 h-3" />
+                        Executions
+                    </button>
+                </div>
+
                 <div className="flex-1" />
                 <button onClick={handleSave} disabled={saving}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-lg px-4 py-1.5 flex items-center gap-2 text-sm transition-all disabled:opacity-70">
@@ -307,25 +338,117 @@ function Editor({ id }: { id: string }) {
                 </button>
             </div>
 
-            <div className="flex flex-1 min-h-0">
-                {/* Node palette */}
-                <div className="w-52 flex-shrink-0 border-r border-border bg-card overflow-y-auto p-3 space-y-4">
-                    {PALETTE.map(group => (
-                        <div key={group.label}>
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className={`w-2 h-2 rounded-full ${CATEGORY_COLOR[group.category].dot}`} />
-                                <span className="text-xs font-semibold uppercase text-muted-foreground">{group.label}</span>
+            {activeTab === 'editor' ? (
+                <div className="flex flex-1 min-h-0 relative">
+                    {/* Canvas */}
+                    <div className="flex-1 min-w-0" ref={wrapperRef}>
+                        <ReactFlow
+                            nodes={nodes}
+                            edges={edges}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onConnect={onConnect}
+                            onNodeClick={(_, n) => setSelectedId(n.id)}
+                            onPaneClick={() => setSelectedId(null)}
+                            nodeTypes={nodeTypes}
+                            colorMode="dark"
+                            fitView
+                            proOptions={{ hideAttribution: true }}
+                        >
+                            <Background />
+                            <Controls />
+                            <MiniMap pannable zoomable className="!bg-card" />
+                        </ReactFlow>
+                    </div>
+
+                    {/* Floating "+" button to open Add Node modal */}
+                    {!selectedNode && (
+                        <button onClick={() => setAddNodeOpen(true)}
+                            title="Add node"
+                            className="absolute top-4 right-4 z-20 w-11 h-11 rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 active:scale-95 transition-transform flex items-center justify-center">
+                            <Plus className="w-5 h-5" />
+                        </button>
+                    )}
+
+                    {/* Config panel */}
+                    {selectedNode && (
+                        <div className="w-80 flex-shrink-0 border-l border-border bg-card overflow-y-auto p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-semibold text-sm">{NODE_META[selectedNode.type as string]?.label}</h3>
+                                <button onClick={() => deleteNode(selectedNode.id)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
                             </div>
-                            <div className="space-y-1.5">
+                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                        </div>
+                    )}
+
+                    {/* Add Node modal */}
+                    {addNodeOpen && (
+                        <AddNodeModal
+                            onPick={(t) => { addNode(t); setAddNodeOpen(false); }}
+                            onClose={() => setAddNodeOpen(false)}
+                        />
+                    )}
+                </div>
+            ) : (
+                <ExecutionsView executions={executions} loading={loadingExecutions} onRefresh={loadExecutions} />
+            )}
+        </div>
+    );
+}
+
+// ─── Add Node modal (centered, searchable, grouped by channel) ───
+function AddNodeModal({ onPick, onClose }: { onPick: (type: string) => void; onClose: () => void }) {
+    const [query, setQuery] = useState("");
+    const q = query.trim().toLowerCase();
+    const groups = PALETTE.map(g => ({
+        ...g,
+        types: g.types.filter(t => {
+            if (!q) return true;
+            const meta = NODE_META[t];
+            return meta.label.toLowerCase().includes(q) || t.toLowerCase().includes(q);
+        })
+    })).filter(g => g.types.length > 0);
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-start justify-center pt-20 p-4" onClick={onClose}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[75vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="p-3 border-b border-border">
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50 border border-border focus-within:ring-2 focus-within:ring-primary/40">
+                        <Plus className="w-4 h-4 text-muted-foreground rotate-45" />
+                        <input
+                            autoFocus
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            placeholder="Search node…"
+                            className="flex-1 bg-transparent outline-none text-sm" />
+                        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                    {groups.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-8">No matches.</p>
+                    ) : groups.map(group => (
+                        <div key={group.label}>
+                            <div className="flex items-center gap-2 mb-2 px-1">
+                                <div className={`w-2 h-2 rounded-full ${CATEGORY_COLOR[group.category].dot}`} />
+                                <span className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">{group.label}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
                                 {group.types.map(t => {
                                     const meta = NODE_META[t];
                                     const Icon = meta.icon;
                                     return (
-                                        <button key={t} onClick={() => addNode(t)}
-                                            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/60 text-left text-sm transition-colors">
-                                            <Icon className={`w-4 h-4 ${CATEGORY_COLOR[group.category].text}`} />
-                                            <span className="truncate">{meta.label}</span>
-                                            <Plus className="w-3.5 h-3.5 ml-auto text-muted-foreground" />
+                                        <button key={t} onClick={() => onPick(t)}
+                                            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border bg-secondary/30 hover:bg-secondary/70 hover:border-primary/40 text-left text-sm transition-all">
+                                            <div className={`w-8 h-8 rounded-lg ${CATEGORY_COLOR[group.category].bg} flex items-center justify-center flex-shrink-0`}>
+                                                <Icon className={`w-4 h-4 ${CATEGORY_COLOR[group.category].text}`} />
+                                            </div>
+                                            <span className="truncate font-medium">{meta.label}</span>
                                         </button>
                                     );
                                 })}
@@ -333,39 +456,90 @@ function Editor({ id }: { id: string }) {
                         </div>
                     ))}
                 </div>
+            </div>
+        </div>
+    );
+}
 
-                {/* Canvas */}
-                <div className="flex-1 min-w-0" ref={wrapperRef}>
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onConnect={onConnect}
-                        onNodeClick={(_, n) => setSelectedId(n.id)}
-                        onPaneClick={() => setSelectedId(null)}
-                        nodeTypes={nodeTypes}
-                        colorMode="dark"
-                        fitView
-                        proOptions={{ hideAttribution: true }}
-                    >
-                        <Background />
-                        <Controls />
-                        <MiniMap pannable zoomable className="!bg-card" />
-                    </ReactFlow>
+// ─── Executions view ───
+function ExecutionsView({ executions, loading, onRefresh }: { executions: any[]; loading: boolean; onRefresh: () => void }) {
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const selected = executions.find(e => e.id === selectedId) || executions[0];
+
+    return (
+        <div className="flex flex-1 min-h-0">
+            <div className="w-80 flex-shrink-0 border-r border-border bg-card overflow-y-auto">
+                <div className="sticky top-0 bg-card border-b border-border p-3 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Executions</h3>
+                    <button onClick={onRefresh} className="text-xs text-primary hover:underline">Refresh</button>
                 </div>
-
-                {/* Config panel */}
-                {selectedNode && (
-                    <div className="w-72 flex-shrink-0 border-l border-border bg-card overflow-y-auto p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h3 className="font-semibold text-sm">{NODE_META[selectedNode.type as string]?.label}</h3>
-                            <button onClick={() => deleteNode(selectedNode.id)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
-                                <Trash2 className="w-4 h-4" />
-                            </button>
+                {loading ? (
+                    <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                ) : executions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-8 px-4">No executions yet. Once a trigger fires, runs will appear here.</p>
+                ) : (
+                    <div className="divide-y divide-border">
+                        {executions.map(ex => {
+                            const isActive = selected?.id === ex.id;
+                            const ok = ex.status === 'success';
+                            return (
+                                <button key={ex.id} onClick={() => setSelectedId(ex.id)}
+                                    className={`w-full text-left p-3 hover:bg-secondary/40 transition-colors ${isActive ? 'bg-secondary/60' : ''}`}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                        <span className="text-xs font-medium">{new Date(ex.startedAt).toLocaleString()}</span>
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground flex items-center gap-2">
+                                        <span className={ok ? 'text-emerald-400' : 'text-red-400'}>{ok ? 'Succeeded' : 'Failed'}</span>
+                                        <span>· {ex.durationMs}ms</span>
+                                        <span>· {ex.triggerType?.replace(/^trigger_/, '')}</span>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+                {!selected ? (
+                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Select an execution to see details.</div>
+                ) : (
+                    <div className="max-w-3xl space-y-5">
+                        <div>
+                            <div className="flex items-center gap-3 mb-1">
+                                <h2 className="text-lg font-semibold">{new Date(selected.startedAt).toLocaleString()}</h2>
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${selected.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {selected.status === 'success' ? 'Succeeded' : 'Failed'}
+                                </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Took {selected.durationMs}ms · {selected.nodesExecuted ?? 0} nodes · ID #{selected.id.slice(-8)}
+                            </p>
                         </div>
-                        <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="p-3 rounded-xl border border-border bg-secondary/20">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Trigger</p>
+                                <p className="text-sm">{selected.triggerType}</p>
+                            </div>
+                            <div className="p-3 rounded-xl border border-border bg-secondary/20">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Channel</p>
+                                <p className="text-sm capitalize">{selected.channel}</p>
+                            </div>
+                            <div className="p-3 rounded-xl border border-border bg-secondary/20">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Contact</p>
+                                <p className="text-sm">{selected.contactName || selected.contactId || '—'}</p>
+                            </div>
+                            <div className="p-3 rounded-xl border border-border bg-secondary/20">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Message</p>
+                                <p className="text-sm break-words">{selected.inputText || '—'}</p>
+                            </div>
+                        </div>
+                        {selected.errorMessage && (
+                            <div className="p-3 rounded-xl border border-red-500/30 bg-red-500/5">
+                                <p className="text-[10px] uppercase tracking-wide text-red-400 mb-1">Error</p>
+                                <p className="text-sm font-mono text-red-300">{selected.errorMessage}</p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

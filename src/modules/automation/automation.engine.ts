@@ -286,7 +286,7 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
     }
 }
 
-async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: AutomationContext) {
+async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: AutomationContext): Promise<number> {
     const byId: Record<string, any> = {};
     for (const n of nodes) byId[n.id] = n;
     const outgoing = (id: string, handle?: string) =>
@@ -295,6 +295,7 @@ async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: Auto
     let queue: string[] = outgoing(triggerId).map(e => e.target);
     const visited = new Set<string>();
     let steps = 0;
+    let executed = 0;
     while (queue.length && steps < 100) {
         steps++;
         const nid = queue.shift()!;
@@ -303,12 +304,14 @@ async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: Auto
         const node = byId[nid];
         if (!node) continue;
         const result = await executeNode(node, ctx);
+        executed++;
         if (node.type === 'condition') {
             queue.push(...outgoing(nid, result ? 'true' : 'false').map(e => e.target));
         } else {
             queue.push(...outgoing(nid).map(e => e.target));
         }
     }
+    return executed;
 }
 
 export class AutomationEngine {
@@ -328,7 +331,35 @@ export class AutomationEngine {
                     if (!triggerMatches(node, ctx)) continue;
                     matched = true;
                     logger.info({ automation: auto.name, trigger: node.type }, '[Automation] trigger matched');
-                    await runGraph(node.id, nodes, edges, ctx);
+                    const startedAt = new Date();
+                    const t0 = Date.now();
+                    let status: 'success' | 'failure' = 'success';
+                    let errorMessage: string | null = null;
+                    let executed = 0;
+                    try {
+                        executed = await runGraph(node.id, nodes, edges, ctx);
+                    } catch (runErr: any) {
+                        status = 'failure';
+                        errorMessage = String(runErr?.message || runErr || 'Unknown error').slice(0, 2000);
+                        logger.error({ err: runErr?.message, automation: auto.name }, '[Automation] run error');
+                    }
+                    // Fire-and-forget execution log — don't let DB hiccups break the user message flow.
+                    prisma.automationExecution.create({
+                        data: {
+                            automationId: auto.id,
+                            userId: ctx.userId,
+                            status,
+                            triggerType: node.type,
+                            channel: ctx.channel,
+                            contactId: ctx.contactId,
+                            contactName: ctx.contactName || null,
+                            inputText: (ctx.text || '').slice(0, 4000),
+                            nodesExecuted: executed,
+                            durationMs: Date.now() - t0,
+                            errorMessage,
+                            startedAt,
+                        }
+                    }).catch(e => logger.warn({ err: e.message }, '[Automation] execution log failed'));
                 }
             }
             return { matched };

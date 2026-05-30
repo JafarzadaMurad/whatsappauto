@@ -381,8 +381,31 @@ model Automation {
   nodes Json @default("[]") // React Flow nodes: [{ id, type, position, data }]
   edges Json @default("[]") // React Flow edges: [{ id, source, target, sourceHandle }]
 
+  executions AutomationExecution[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AutomationExecution {
+  id           String     @id @default(uuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  userId       String
+
+  status      String   // 'success' | 'failure'
+  triggerType String   // node type that matched, e.g. 'trigger_ig_comment'
+  channel     String   // 'whatsapp' | 'instagram'
+  contactId   String
+  contactName String?
+  inputText   String?  @db.Text
+  nodesExecuted Int    @default(0)
+  durationMs   Int     @default(0)
+  errorMessage String?  @db.Text
+
+  startedAt   DateTime @default(now())
+
+  @@index([automationId, startedAt(sort: Desc)])
 }
 
 // Cached profile of a person who messaged an Instagram business account

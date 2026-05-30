@@ -98,6 +98,23 @@ export class AutomationController {
         }
     }
 
+    async executions(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const id = req.params.id as string;
+            const auto = await prisma.automation.findFirst({ where: { id, userId } });
+            if (!auto) return res.status(404).json({ success: false, message: 'Automation not found' });
+            const executions = await prisma.automationExecution.findMany({
+                where: { automationId: id },
+                orderBy: { startedAt: 'desc' },
+                take: 100,
+            });
+            return res.json({ success: true, executions });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async remove(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;

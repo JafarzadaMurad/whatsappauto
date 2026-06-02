@@ -78,8 +78,8 @@ function SetupTab() {
     };
 
     const configJson = newKey
-        ? JSON.stringify({ mcpServers: { alchatbot: { url: baseUrl, headers: { Authorization: `Bearer ${newKey}` } } } }, null, 2)
-        : JSON.stringify({ mcpServers: { alchatbot: { url: baseUrl, headers: { Authorization: 'Bearer sk_live_…' } } } }, null, 2);
+        ? JSON.stringify({ mcpServers: { alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: `Bearer ${newKey}` } } } }, null, 2)
+        : JSON.stringify({ mcpServers: { alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: 'Bearer sk_live_…' } } } }, null, 2);
 
     return (
         <div className="space-y-6">
@@ -119,6 +119,24 @@ function SetupTab() {
                     <br />
                     Windows: <code>%APPDATA%\Claude\claude_desktop_config.json</code>
                 </p>
+                <details className="mt-3 text-[11px] text-muted-foreground">
+                    <summary className="cursor-pointer hover:text-foreground">Older client without native HTTP support?</summary>
+                    <div className="mt-2 space-y-1.5">
+                        <p>If your MCP client only supports stdio servers, bridge through <code>mcp-remote</code>:</p>
+                        <CopyField mono multiline value={JSON.stringify({
+                            mcpServers: {
+                                alchatbot: {
+                                    command: 'npx',
+                                    args: [
+                                        '-y', 'mcp-remote',
+                                        baseUrl,
+                                        '--header', `Authorization:Bearer ${newKey || 'sk_live_…'}`,
+                                    ],
+                                },
+                            },
+                        }, null, 2)} />
+                    </div>
+                </details>
             </Card>
 
             <Card title="OAuth (alternative)" description="Claude Desktop also supports OAuth. Pick &quot;Connect via URL&quot; and use the endpoint above; the browser will open a consent screen.">

@@ -78,9 +78,24 @@ function SetupTab() {
     };
 
     const token = newKey || 'sk_live_…';
-    // Default: mcp-remote bridge (works with current Claude Desktop, which only
-    // natively supports stdio MCP servers).
-    const configJson = JSON.stringify({
+    const isWindows = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform || '');
+
+    // mcp-remote bridge — current Claude Desktop only supports stdio MCP.
+    // On Windows we wrap in `cmd /c` because Claude Desktop auto-spawns
+    // through cmd.exe, which breaks on the unquoted "C:\Program Files\…\npx.cmd" path.
+    const configJsonWin = JSON.stringify({
+        mcpServers: {
+            alchatbot: {
+                command: 'cmd',
+                args: [
+                    '/c', 'npx', '-y', 'mcp-remote',
+                    baseUrl,
+                    '--header', `Authorization:Bearer ${token}`,
+                ],
+            },
+        },
+    }, null, 2);
+    const configJsonUnix = JSON.stringify({
         mcpServers: {
             alchatbot: {
                 command: 'npx',
@@ -92,8 +107,11 @@ function SetupTab() {
             },
         },
     }, null, 2);
-    // Future-proof: when Claude Desktop adds native HTTP support, this is
-    // the entry to use instead.
+    const configJson = isWindows ? configJsonWin : configJsonUnix;
+    const otherConfigJson = isWindows ? configJsonUnix : configJsonWin;
+    const otherLabel = isWindows ? 'macOS / Linux' : 'Windows';
+
+    // Future-proof: when Claude Desktop adds native HTTP support, use this.
     const configJsonHttp = JSON.stringify({
         mcpServers: {
             alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: `Bearer ${token}` } },
@@ -131,7 +149,7 @@ function SetupTab() {
                 )}
             </Card>
 
-            <Card title="Claude Desktop config" description="Claude Desktop currently only supports stdio MCP servers, so we bridge through the official mcp-remote npm package. Paste this into your config and restart Claude Desktop.">
+            <Card title={`Claude Desktop config (${isWindows ? 'Windows' : 'macOS / Linux'})`} description="Claude Desktop currently only supports stdio MCP servers, so we bridge through the official mcp-remote npm package. Paste this into your config and restart Claude Desktop.">
                 <CopyField value={configJson} mono multiline />
                 <p className="text-[10px] text-muted-foreground mt-2">
                     macOS: <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
@@ -140,8 +158,18 @@ function SetupTab() {
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-1.5">
                     Requirements: Node.js installed and on PATH. The first launch downloads <code>mcp-remote</code> via <code>npx</code> (10–20 seconds).
+                    {isWindows && (
+                        <>
+                            <br />
+                            The <code>cmd /c</code> wrapper is required on Windows so Claude Desktop can spawn <code>npx.cmd</code> through a path that contains spaces (e.g. <code>C:\Program Files\nodejs</code>).
+                        </>
+                    )}
                 </p>
                 <details className="mt-3 text-[11px] text-muted-foreground">
+                    <summary className="cursor-pointer hover:text-foreground">{otherLabel} variant</summary>
+                    <div className="mt-2"><CopyField mono multiline value={otherConfigJson} /></div>
+                </details>
+                <details className="mt-2 text-[11px] text-muted-foreground">
                     <summary className="cursor-pointer hover:text-foreground">Native HTTP variant (for clients that already support remote MCP)</summary>
                     <div className="mt-2 space-y-1.5">
                         <p>If your MCP client speaks the Streamable HTTP transport natively (e.g. some IDE plugins), use this instead:</p>

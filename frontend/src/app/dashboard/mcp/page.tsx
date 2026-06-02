@@ -77,9 +77,28 @@ function SetupTab() {
         } finally { setCreating(false); }
     };
 
-    const configJson = newKey
-        ? JSON.stringify({ mcpServers: { alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: `Bearer ${newKey}` } } } }, null, 2)
-        : JSON.stringify({ mcpServers: { alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: 'Bearer sk_live_…' } } } }, null, 2);
+    const token = newKey || 'sk_live_…';
+    // Default: mcp-remote bridge (works with current Claude Desktop, which only
+    // natively supports stdio MCP servers).
+    const configJson = JSON.stringify({
+        mcpServers: {
+            alchatbot: {
+                command: 'npx',
+                args: [
+                    '-y', 'mcp-remote',
+                    baseUrl,
+                    '--header', `Authorization:Bearer ${token}`,
+                ],
+            },
+        },
+    }, null, 2);
+    // Future-proof: when Claude Desktop adds native HTTP support, this is
+    // the entry to use instead.
+    const configJsonHttp = JSON.stringify({
+        mcpServers: {
+            alchatbot: { type: 'http', url: baseUrl, headers: { Authorization: `Bearer ${token}` } },
+        },
+    }, null, 2);
 
     return (
         <div className="space-y-6">
@@ -112,29 +131,21 @@ function SetupTab() {
                 )}
             </Card>
 
-            <Card title="Claude Desktop config" description="Paste this into your claude_desktop_config.json and restart Claude Desktop.">
+            <Card title="Claude Desktop config" description="Claude Desktop currently only supports stdio MCP servers, so we bridge through the official mcp-remote npm package. Paste this into your config and restart Claude Desktop.">
                 <CopyField value={configJson} mono multiline />
                 <p className="text-[10px] text-muted-foreground mt-2">
                     macOS: <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
                     <br />
                     Windows: <code>%APPDATA%\Claude\claude_desktop_config.json</code>
                 </p>
+                <p className="text-[10px] text-muted-foreground mt-1.5">
+                    Requirements: Node.js installed and on PATH. The first launch downloads <code>mcp-remote</code> via <code>npx</code> (10–20 seconds).
+                </p>
                 <details className="mt-3 text-[11px] text-muted-foreground">
-                    <summary className="cursor-pointer hover:text-foreground">Older client without native HTTP support?</summary>
+                    <summary className="cursor-pointer hover:text-foreground">Native HTTP variant (for clients that already support remote MCP)</summary>
                     <div className="mt-2 space-y-1.5">
-                        <p>If your MCP client only supports stdio servers, bridge through <code>mcp-remote</code>:</p>
-                        <CopyField mono multiline value={JSON.stringify({
-                            mcpServers: {
-                                alchatbot: {
-                                    command: 'npx',
-                                    args: [
-                                        '-y', 'mcp-remote',
-                                        baseUrl,
-                                        '--header', `Authorization:Bearer ${newKey || 'sk_live_…'}`,
-                                    ],
-                                },
-                            },
-                        }, null, 2)} />
+                        <p>If your MCP client speaks the Streamable HTTP transport natively (e.g. some IDE plugins), use this instead:</p>
+                        <CopyField mono multiline value={configJsonHttp} />
                     </div>
                 </details>
             </Card>

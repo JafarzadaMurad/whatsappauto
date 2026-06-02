@@ -13,6 +13,7 @@
     "@ai-sdk/anthropic": "^3.0.69",
     "@ai-sdk/google": "^3.0.62",
     "@ai-sdk/openai": "^3.0.52",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@types/nodemailer": "^8.0.0",

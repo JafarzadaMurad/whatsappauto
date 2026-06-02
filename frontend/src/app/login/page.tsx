@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
 import api from "@/lib/api";
@@ -10,6 +10,7 @@ import GoogleSignIn from "@/components/GoogleSignIn";
 
 export default function LoginPage() {
     const router = useRouter();
+    const params = useSearchParams();
     const setAuth = useAuthStore((state) => state.login);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -24,7 +25,8 @@ export default function LoginPage() {
             const res = await api.post('/auth/login', form);
             if (res.data.success) {
                 setAuth(res.data.user, res.data.token);
-                router.push('/dashboard');
+                const next = params.get('next');
+                router.push(next && next.startsWith('/') ? next : '/dashboard');
             }
         } catch (err: any) {
             setError(err.response?.data?.message || err.message || "Failed to login");

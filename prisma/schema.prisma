@@ -81,6 +81,12 @@ model User {
   campaigns         Campaign[]
   instagramAccounts InstagramAccount[]
   automations       Automation[]
+
+  // MCP
+  mcpClients     McpClient[]
+  mcpOAuthTokens McpOAuthToken[]
+  mcpPermission  McpPermission?
+  mcpAuditLogs   McpAuditLog[]
 }
 
 model Instance {
@@ -385,6 +391,75 @@ model Automation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── MCP (Model Context Protocol) ──────────────────────────────────
+// Per-user OAuth clients (e.g. Claude Desktop) registered via DCR.
+model McpClient {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId     String   @unique
+  clientSecret String   // bcrypt hash; empty for public clients
+  name         String
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+model McpOAuthToken {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId      String   // public OAuth client id (matches McpClient.clientId)
+  accessToken   String   @unique
+  refreshToken  String?  @unique
+  expiresAt     DateTime
+  scopes        String[]
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Short-lived authorization codes issued during the PKCE flow.
+model McpAuthCode {
+  id                  String   @id @default(uuid())
+  code                String   @unique
+  userId              String
+  clientId            String
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String   // 'S256' | 'plain'
+  scopes              String[]
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime @default(now())
+}
+
+model McpPermission {
+  // Per-user tool allow/deny map. Empty / missing entry = allowed (default).
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolFlags Json     @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
+model McpAuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authKind   String   // 'api_key' | 'oauth'
+  authRef    String?
+  tool       String
+  argsJson   Json
+  resultOk   Boolean
+  errorMsg   String?  @db.Text
+  durationMs Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 model AutomationExecution {

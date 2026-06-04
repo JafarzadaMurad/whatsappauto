@@ -1,5 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../lib/prisma';
+import { config } from '../../config';
+
+function buildWwwAuth(error: string): string {
+    const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+    const resourceMeta = `${base}/.well-known/oauth-protected-resource`;
+    return `Bearer realm="MCP", error="${error}", resource_metadata="${resourceMeta}"`;
+}
 
 export type McpAuthInfo = {
     userId: string;
@@ -30,7 +37,7 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
             if (!apiKey) {
                 return res
                     .status(401)
-                    .setHeader('WWW-Authenticate', 'Bearer realm="MCP", error="invalid_token"')
+                    .setHeader('WWW-Authenticate', buildWwwAuth('invalid_token'))
                     .json({ error: 'invalid_token', error_description: 'API key not found' });
             }
             prisma.apiKey
@@ -45,13 +52,13 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
         if (!oauth) {
             return res
                 .status(401)
-                .setHeader('WWW-Authenticate', 'Bearer realm="MCP", error="invalid_token"')
+                .setHeader('WWW-Authenticate', buildWwwAuth('invalid_token'))
                 .json({ error: 'invalid_token', error_description: 'OAuth token not recognized' });
         }
         if (oauth.expiresAt < new Date()) {
             return res
                 .status(401)
-                .setHeader('WWW-Authenticate', 'Bearer realm="MCP", error="invalid_token"')
+                .setHeader('WWW-Authenticate', buildWwwAuth('invalid_token'))
                 .json({ error: 'invalid_token', error_description: 'OAuth token expired' });
         }
         req.mcpAuth = { userId: oauth.userId, authKind: 'oauth', authRef: oauth.id };

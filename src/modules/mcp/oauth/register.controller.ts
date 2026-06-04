@@ -26,10 +26,9 @@ export async function dynamicRegister(req: Request, res: Response) {
         const clientSecretHash = clientSecret ? await bcrypt.hash(clientSecret, 10) : '';
 
         // Per spec these rows can be unattached to a user until the first
-        // authorization completes. We store userId as empty until then.
+        // authorization completes. userId is filled in then.
         await prisma.mcpClient.create({
             data: {
-                userId: '',
                 clientId,
                 clientSecret: clientSecretHash,
                 name: clientName,

@@ -397,8 +397,8 @@ model Automation {
 // Per-user OAuth clients (e.g. Claude Desktop) registered via DCR.
 model McpClient {
   id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String?  // nullable until first authorize binds the client to a user
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId     String   @unique
   clientSecret String   // bcrypt hash; empty for public clients
   name         String

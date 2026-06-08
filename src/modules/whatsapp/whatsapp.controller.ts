@@ -110,7 +110,10 @@ export class WhatsappController {
         try {
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const schema = z.object({ agentId: z.string().uuid().nullable().optional() });
+            const schema = z.object({
+                agentId: z.string().uuid().nullable().optional(),
+                syncHistory: z.boolean().optional(),
+            });
             const data = schema.parse(req.body);
 
             const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
@@ -120,7 +123,10 @@ export class WhatsappController {
 
             const updated = await prisma.instance.update({
                 where: { id },
-                data: { agentId: data.agentId !== undefined ? data.agentId : instance.agentId }
+                data: {
+                    ...(data.agentId !== undefined ? { agentId: data.agentId } : {}),
+                    ...(data.syncHistory !== undefined ? { syncHistory: data.syncHistory } : {}),
+                },
             });
 
             return res.status(200).json({ success: true, instance: updated });

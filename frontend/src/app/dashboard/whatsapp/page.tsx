@@ -122,7 +122,16 @@ export default function WhatsAppPage() {
     };
 
     const handleLink = async (id: string) => {
+        // Ask the user whether to pull existing chat history off the phone.
+        // confirm() returns true for OK ("Yes, sync"), false for Cancel ("No, only new").
+        const wantsHistory = window.confirm(
+            'Sync existing chats from your phone?\n\n' +
+            'OK: import recent chat history right after scanning the QR (slower on first link, but you immediately see existing conversations in the inbox).\n\n' +
+            'Cancel: only capture new messages going forward.'
+        );
         try {
+            // Persist the choice on the instance, then start the link flow.
+            await api.put(`/instances/${id}`, { syncHistory: wantsHistory });
             await api.post(`/instances/${id}/restart`);
             // QR will arrive via socket
         } catch (err) { console.error(err); }

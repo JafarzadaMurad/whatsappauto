@@ -43,6 +43,10 @@ export class InstanceManager {
                 auth: state,
                 logger: logger.child({ module: 'baileys' }) as any,
                 browser: ['alChatBot', 'Chrome', '1.0.0'],
+                // When the user opted in, request the full chat history from
+                // the phone on the initial sync. Otherwise Baileys defaults
+                // to a small recent window.
+                syncFullHistory: !!instanceDb.syncHistory,
             });
 
             sessions.set(instanceId, sock);
@@ -94,6 +98,70 @@ export class InstanceManager {
             });
 
             sock.ev.on('creds.update', saveCreds);
+
+            // History sync: fires after the phone uploads its message
+            // history right after pairing. Each chunk contains messages
+            // and contact metadata. We persist them so the inbox UI
+            // shows existing conversations alongside live ones.
+            sock.ev.on('messaging-history.set', async (h: any) => {
+                try {
+                    const msgs: any[] = h.messages || [];
+                    if (msgs.length === 0) return;
+                    logger.info(`[${instanceId}] History sync: ${msgs.length} messages, progress=${h.progress ?? '?'}, isLatest=${h.isLatest ?? '?'}`);
+
+                    for (const msg of msgs) {
+                        const remoteJid = msg.key?.remoteJid;
+                        if (!remoteJid || remoteJid === 'status@broadcast' || isJidGroup(remoteJid)) continue;
+                        if (!msg.message) continue;
+
+                        const content = msg.message?.conversation
+                            || msg.message?.extendedTextMessage?.text
+                            || '[Media/Unsupported]';
+                        const ts = new Date(((msg.messageTimestamp as number) || 0) * 1000 || Date.now());
+
+                        // Idempotent: skip duplicates by (instanceId, remoteJid, timestamp, content).
+                        const existing = await prisma.message.findFirst({
+                            where: { instanceId, remoteJid, timestamp: ts, content },
+                            select: { id: true },
+                        });
+                        if (existing) continue;
+
+                        await prisma.message.create({
+                            data: {
+                                instanceId,
+                                remoteJid,
+                                isFromMe: !!msg.key?.fromMe,
+                                messageType: msg.message?.conversation || msg.message?.extendedTextMessage ? 'text' : 'media',
+                                content,
+                                timestamp: ts,
+                            },
+                        }).catch(() => {});
+
+                        // Add to CRM (workspace-scoped). Look up the instance
+                        // once per chunk; cheap because Prisma caches.
+                        if (!msg.key?.fromMe) {
+                            prisma.instance.findUnique({
+                                where: { id: instanceId },
+                                select: { userId: true, name: true, workspaceId: true }
+                            }).then(async inst => {
+                                if (!inst) return;
+                                const wsId = inst.workspaceId
+                                    || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
+                                return upsertCrmContact({
+                                    userId: inst.userId,
+                                    workspaceId: wsId,
+                                    phone: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+                                    name: msg.pushName || null,
+                                    channel: 'whatsapp',
+                                    sourceLabel: inst.name,
+                                });
+                            }).catch(() => {});
+                        }
+                    }
+                } catch (e: any) {
+                    logger.warn({ err: e.message }, `[${instanceId}] History sync handler failed`);
+                }
+            });
 
             sock.ev.on('messages.upsert', async (m) => {
                 if (m.type === 'notify') {

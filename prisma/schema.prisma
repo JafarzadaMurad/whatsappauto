@@ -185,6 +185,10 @@ model Instance {
   status      String  @default("DISCONNECTED") // CONNECTED, DISCONNECTED, CONNECTING
   sessionData String? @db.Text // Can store some meta-info, actual baileys state might be stored elsewhere or here piece by piece
 
+  // When true, on the next link/restart Baileys requests the full chat
+  // history from the phone and we store the incoming messages.
+  syncHistory Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

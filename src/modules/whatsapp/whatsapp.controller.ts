@@ -65,6 +65,14 @@ export class WhatsappController {
 
             return res.status(200).json({ success: true, message: 'Instance deleted' });
         } catch (error: any) {
+            // Prisma FK constraint — surface as a friendlier 409.
+            if (error?.code === 'P2003' || error?.code === 'P2014') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'This instance is still referenced by other records (e.g. campaigns). Delete or unlink those first.',
+                    code: error.code,
+                });
+            }
             return res.status(500).json({ success: false, message: error.message });
         }
     }

@@ -92,6 +92,14 @@ const TOOL_PERMISSION: Record<string, string> = {
     // AI providers
     list_ai_providers: 'aiprovider.read',
     upsert_ai_provider: 'aiprovider.update',
+
+    // User fields
+    list_user_fields: 'user_field.read',
+    create_user_field: 'user_field.create',
+    update_user_field: 'user_field.update',
+    delete_user_field: 'user_field.delete',
+    get_contact_field: 'client.read',
+    set_contact_field: 'client.update',
 };
 
 export const PERMISSION_CATEGORIES = [
@@ -107,6 +115,7 @@ export const PERMISSION_CATEGORIES = [
     'webhook',
     'apikey',
     'aiprovider',
+    'user_field',
 ] as const;
 
 export const PERMISSION_VERBS = ['read', 'create', 'update', 'delete'] as const;

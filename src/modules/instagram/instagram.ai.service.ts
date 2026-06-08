@@ -308,6 +308,17 @@ export class InstagramAiService {
                     update: { tags },
                     create: { userId: account.userId, phone: senderId, tags, status: 'NEW' }
                 });
+            },
+            setUserField: async (key, value) => {
+                const existing = await prisma.client.findUnique({
+                    where: { userId_phone: { userId: account.userId, phone: senderId } }
+                }).catch(() => null);
+                const merged = { ...((existing?.customFields as Record<string, any>) || {}), [key]: value };
+                await prisma.client.upsert({
+                    where: { userId_phone: { userId: account.userId, phone: senderId } },
+                    update: { customFields: merged },
+                    create: { userId: account.userId, phone: senderId, status: 'NEW', tags: [], customFields: merged }
+                });
             }
         });
         if (matched) {

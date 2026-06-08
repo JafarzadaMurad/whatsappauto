@@ -171,6 +171,16 @@ export const AUTOMATION_NODES: Record<string, AutomationNodeSpec> = {
             { name: 'tag', type: 'string', required: true },
         ],
     },
+    action_set_user_field: {
+        id: 'action_set_user_field',
+        category: 'action', channel: 'generic',
+        label: 'Set User Field',
+        description: 'Writes a value into a user-defined custom field on the contact. Use the field key (slug), not the label. Values support variables like {{message}} or {{name}}.',
+        fields: [
+            { name: 'fieldKey', type: 'select', required: true, description: 'Slug of one of the custom fields defined under Contacts → Manage Fields.' },
+            { name: 'value', type: 'string', required: true, description: 'The value to store. Variables: {{message}}, {{name}}, {{username}}, {{comment}}, {{post_url}}.' },
+        ],
+    },
     action_wait: {
         id: 'action_wait',
         category: 'action', channel: 'generic',

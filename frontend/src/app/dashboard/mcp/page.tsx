@@ -17,6 +17,7 @@ const CATEGORIES = [
     { id: 'webhook', label: 'Webhooks' },
     { id: 'apikey', label: 'API Keys' },
     { id: 'aiprovider', label: 'AI Providers' },
+    { id: 'user_field', label: 'User Fields' },
 ];
 const VERBS = ['read', 'create', 'update', 'delete'] as const;
 

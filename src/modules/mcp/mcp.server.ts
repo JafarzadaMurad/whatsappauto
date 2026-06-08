@@ -15,6 +15,7 @@ import { registerWebhookTools } from './tools/webhooks.tools';
 import { registerApiKeyTools } from './tools/api-keys.tools';
 import { registerAiProviderTools } from './tools/ai-providers.tools';
 import { registerMetaTools } from './tools/meta.tools';
+import { registerUserFieldTools } from './tools/user-fields.tools';
 
 export type ToolCtx = {
     auth: McpAuthInfo;
@@ -90,6 +91,7 @@ export function buildMcpServer(ctx: ToolCtx): McpServer {
     registerWebhookTools(register);
     registerApiKeyTools(register);
     registerAiProviderTools(register);
+    registerUserFieldTools(register);
 
     return server;
 }

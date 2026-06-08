@@ -75,6 +75,10 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "Add Tag", category: "action", icon: Tag, channel: "generic",
         defaultData: { tag: "" }
     },
+    action_set_user_field: {
+        label: "Set User Field", category: "action", icon: Tag, channel: "generic",
+        defaultData: { fieldKey: "", value: "" }
+    },
     action_wait: {
         label: "Wait / Delay", category: "action", icon: Clock, channel: "generic",
         defaultData: { seconds: 60 }
@@ -129,7 +133,7 @@ const PALETTE: { category: "trigger" | "action" | "logic"; label: string; types:
     { category: "trigger", label: "Instagram · Triggers", types: ["trigger_ig_keyword", "trigger_ig_any", "trigger_ig_new_contact", "trigger_ig_comment"] },
     { category: "action", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
     { category: "action", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment"] },
-    { category: "action", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_wait"] },
+    { category: "action", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait"] },
     { category: "logic", label: "Logic", types: ["condition"] },
 ];
 
@@ -174,6 +178,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     else if (type === "action_ig_reply_comment" || type === "action_reply_comment") summary = d.text || "(empty)";
     else if (type === "action_ai_reply") summary = d.agentName || (d.agentId ? "agent set" : "(no agent)");
     else if (type === "action_add_tag") summary = d.tag || "(no tag)";
+    else if (type === "action_set_user_field") summary = d.fieldKey ? `${d.fieldKey} = ${d.value || '(empty)'}` : "(no field)";
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
     else if (type === "condition") summary = `${d.field} ${d.operator} ${d.value || "?"}`;
 
@@ -210,6 +215,7 @@ function Editor({ id }: { id: string }) {
     const [agents, setAgents] = useState<any[]>([]);
     const [igAccounts, setIgAccounts] = useState<any[]>([]);
     const [waInstances, setWaInstances] = useState<any[]>([]);
+    const [userFields, setUserFields] = useState<any[]>([]);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -235,11 +241,12 @@ function Editor({ id }: { id: string }) {
     useEffect(() => {
         const load = async () => {
             try {
-                const [aRes, agRes, igRes, waRes] = await Promise.all([
+                const [aRes, agRes, igRes, waRes, ufRes] = await Promise.all([
                     api.get(`/automations/${id}`),
                     api.get('/agents'),
                     api.get('/instagram/accounts').catch(() => ({ data: { success: false } })),
                     api.get('/instances').catch(() => ({ data: { success: false } })),
+                    api.get('/user-fields').catch(() => ({ data: { success: false } })),
                 ]);
                 if (aRes.data.success) {
                     const a = aRes.data.automation;
@@ -251,6 +258,7 @@ function Editor({ id }: { id: string }) {
                 if (agRes.data.success) setAgents(agRes.data.agents);
                 if (igRes.data.success) setIgAccounts(igRes.data.accounts || []);
                 if (waRes.data.success) setWaInstances(waRes.data.instances || []);
+                if (ufRes.data.success) setUserFields(ufRes.data.fields || []);
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
         };
@@ -383,7 +391,7 @@ function Editor({ id }: { id: string }) {
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
-                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} waInstances={waInstances} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                         </div>
                     )}
 
@@ -920,7 +928,7 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
     );
 }
 
-function NodeConfig({ node, agents, igAccounts, waInstances, onChange }: { node: Node; agents: any[]; igAccounts: any[]; waInstances: any[]; onChange: (p: Record<string, any>) => void }) {
+function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChange }: { node: Node; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; onChange: (p: Record<string, any>) => void }) {
     const d = node.data as Record<string, any>;
     const type = node.type as string;
 
@@ -1168,6 +1176,32 @@ function NodeConfig({ node, agents, igAccounts, waInstances, onChange }: { node:
                         <input type="text" value={d.tag || ''} onChange={e => onChange({ tag: e.target.value })}
                             placeholder="VIP" className={inputCls} />
                     </Field>
+                </div>
+            );
+        case 'action_set_user_field':
+            return (
+                <div className="space-y-3">
+                    <Field label="Field">
+                        {userFields.length === 0 ? (
+                            <p className="text-[10px] text-amber-400/90">No custom fields defined yet. Open <code>/dashboard/contacts</code> → <code>Manage Fields</code> to create some.</p>
+                        ) : (
+                            <select value={d.fieldKey || ''}
+                                onChange={e => onChange({ fieldKey: e.target.value })}
+                                className={inputCls}>
+                                <option value="">Pick a field…</option>
+                                {userFields.map((f: any) => (
+                                    <option key={f.id} value={f.key}>{f.label} ({f.type})</option>
+                                ))}
+                            </select>
+                        )}
+                    </Field>
+                    <Field label="Value">
+                        <input type="text" value={d.value || ''} onChange={e => onChange({ value: e.target.value })}
+                            placeholder="e.g. {{message}}, Baku, 25, …" className={inputCls} />
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Variables supported: <code>{'{{message}}'}</code>, <code>{'{{name}}'}</code>, <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
+                    </p>
                 </div>
             );
         case 'action_wait':

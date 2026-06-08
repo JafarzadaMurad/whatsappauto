@@ -81,6 +81,7 @@ model User {
   campaigns         Campaign[]
   instagramAccounts InstagramAccount[]
   automations       Automation[]
+  userFields        UserField[]
 
   // MCP
   mcpClients     McpClient[]
@@ -300,12 +301,32 @@ model Client {
   channel     String? // "whatsapp" | "instagram"
   sourceLabel String? // WhatsApp instance name or @instagram_username
 
-  customFields Json? // Additional CRM data AI extracts or user defines
+  customFields Json? // Map<UserField.key, value> — values for user-defined fields
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, phone])
+}
+
+// Admin-defined custom field on the Client (contact) entity.
+// Values are stored on Client.customFields keyed by `key`.
+model UserField {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  key   String   // machine slug used as the customFields JSON key
+  label String   // human label shown in the UI
+  type  String   // 'text' | 'number' | 'date' | 'select' | 'boolean'
+  options String[] @default([]) // only for type='select'
+  order Int       @default(0)   // table column order
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
+  @@index([userId, order])
 }
 
 // -----------------------------------------

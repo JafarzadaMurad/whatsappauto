@@ -52,6 +52,7 @@ export type AutomationContext = {
     replyComment?: (text: string) => Promise<void>;
     runAgent?: (agentId: string) => Promise<void>;
     addTag?: (tag: string) => Promise<void>;
+    setUserField?: (key: string, value: unknown) => Promise<void>;
 };
 
 function norm(s: string, caseSensitive: boolean): string {
@@ -272,6 +273,15 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         case 'action_add_tag':
             if (d.tag && ctx.addTag) await ctx.addTag(String(d.tag));
             return true;
+        case 'action_set_user_field': {
+            const key = String(d.fieldKey || '').trim();
+            if (!key || !ctx.setUserField) return true;
+            // Value can reference {{message}}, {{name}}, etc.
+            const raw = d.value;
+            const value = typeof raw === 'string' ? interpolate(raw, ctx) : raw;
+            await ctx.setUserField(key, value);
+            return true;
+        }
         case 'action_wait': {
             const secs = Math.min(Math.max(Number(d.seconds) || 0, 0), 120);
             if (secs > 0) await new Promise(r => setTimeout(r, secs * 1000));

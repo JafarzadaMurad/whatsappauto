@@ -145,6 +145,80 @@ function buildCrmTools(userId: string) {
     };
 }
 
+// ─── SKILL: User Fields ───
+// Lets the agent read and write user-defined custom fields on the contact
+// currently being chatted with. The contact phone is bound at runtime
+// inside the chat handler (the agent doesn't have to discover it).
+function buildUserFieldTools(userId: string, contactPhone: string) {
+    return {
+        listUserFields: makeTool(
+            'List all custom fields defined for this account. Returns each field\'s key, label, type, and (for select fields) the allowed options. Call this once before writing values so you use the correct field keys.',
+            z.object({}),
+            async () => {
+                const fields = await prisma.userField.findMany({
+                    where: { userId },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+                });
+                return { fields: fields.map(f => ({ key: f.key, label: f.label, type: f.type, options: f.options })) };
+            }
+        ),
+        getUserField: makeTool(
+            'Read the value of a custom field on the current contact.',
+            z.object({
+                key: z.string().describe('The field key (slug). Use listUserFields if unsure.'),
+            }),
+            async ({ key }) => {
+                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                const client = await prisma.client.findUnique({
+                    where: { userId_phone: { userId, phone: cleanPhone } },
+                    select: { customFields: true },
+                });
+                const v = (client?.customFields as Record<string, any> | null)?.[key];
+                return { value: v ?? null };
+            }
+        ),
+        setUserField: makeTool(
+            'Write a value to a custom field on the current contact. Creates the contact if it does not exist yet. Use for things like saving age, city, purpose, budget, etc.',
+            z.object({
+                key: z.string().describe('The field key (slug) you got from listUserFields'),
+                value: z.union([z.string(), z.number(), z.boolean(), z.null()]).describe('The value to store. Match the field\'s type.'),
+            }),
+            async ({ key, value }) => {
+                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                const existing = await prisma.client.findUnique({
+                    where: { userId_phone: { userId, phone: cleanPhone } },
+                    select: { customFields: true },
+                });
+                const merged: Record<string, any> = { ...((existing?.customFields as any) || {}), [key]: value };
+                const client = await prisma.client.upsert({
+                    where: { userId_phone: { userId, phone: cleanPhone } },
+                    update: { customFields: merged },
+                    create: { userId, phone: cleanPhone, status: 'NEW', tags: [], customFields: merged },
+                });
+                return { success: true, key, value, clientId: client.id };
+            }
+        ),
+        searchContactsByField: makeTool(
+            'Find contacts whose custom field equals a given value. Useful when the user asks something like "show me everyone who lives in Baku".',
+            z.object({
+                key: z.string().describe('The field key (slug)'),
+                value: z.union([z.string(), z.number(), z.boolean()]).describe('The value to match exactly'),
+            }),
+            async ({ key, value }) => {
+                const all = await prisma.client.findMany({
+                    where: { userId },
+                    select: { id: true, phone: true, name: true, customFields: true },
+                });
+                const matches = all.filter(c => (c.customFields as any)?.[key] === value).slice(0, 20);
+                return {
+                    count: matches.length,
+                    results: matches.map(c => ({ phone: c.phone, name: c.name })),
+                };
+            }
+        ),
+    };
+}
+
 // ─── SKILL: HTTP API Requests ───
 import axios from 'axios';
 
@@ -576,6 +650,7 @@ export function buildMemoryTools(agentId: string, remoteJid: string) {
 export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
     crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
+    user_fields: 'You can read and write user-defined custom fields on the contact you are chatting with. Use listUserFields first to learn what fields exist (key + type), then setUserField to save things you learn from the conversation (age, city, purpose, budget, etc.) and getUserField when you need to recall a stored value. Use searchContactsByField when the human asks for filtering across contacts.',
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
 };
@@ -606,6 +681,14 @@ function buildToolsForSkills(
     if (skills.includes('crm')) {
         tools = { ...tools, ...buildCrmTools(userId) };
         prompts.push(resolveSkillPrompt('crm', skillPrompts));
+    }
+
+    if (skills.includes('user_fields') && remoteJid) {
+        // For WA the phone is the digits before @s.whatsapp.net; for IG it's
+        // the IGSID. upsertCrmContact + buildCrmTools normalise both to digits.
+        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        tools = { ...tools, ...buildUserFieldTools(userId, contactPhone) };
+        prompts.push(resolveSkillPrompt('user_fields', skillPrompts));
     }
 
     if (skills.includes('memory') && agentId && remoteJid) {
@@ -683,6 +766,17 @@ export class AiService {
                         where: { userId_phone: { userId: instance.userId, phone: waPhone } },
                         update: { tags },
                         create: { userId: instance.userId, phone: waPhone, tags, status: 'NEW' }
+                    });
+                },
+                setUserField: async (key, value) => {
+                    const existing = await prisma.client.findUnique({
+                        where: { userId_phone: { userId: instance.userId, phone: waPhone } }
+                    }).catch(() => null);
+                    const merged = { ...((existing?.customFields as Record<string, any>) || {}), [key]: value };
+                    await prisma.client.upsert({
+                        where: { userId_phone: { userId: instance.userId, phone: waPhone } },
+                        update: { customFields: merged },
+                        create: { userId: instance.userId, phone: waPhone, status: 'NEW', tags: [], customFields: merged }
                     });
                 }
             });

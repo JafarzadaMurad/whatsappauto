@@ -49,7 +49,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             icon: Users,
             isGroup: true,
             children: [
-                { name: 'Contacts', href: '/dashboard/crm', icon: Users }
+                { name: 'Contacts', href: '/dashboard/contacts', icon: Users }
             ]
         },
         {

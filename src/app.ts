@@ -21,6 +21,7 @@ import adminRoutes from './modules/admin/admin.routes';
 import billingRoutes from './modules/billing/billing.routes';
 import uploadsRoutes from './modules/uploads/uploads.routes';
 import mcpRoutes from './modules/mcp/mcp.routes';
+import userFieldRoutes from './modules/userfield/userfield.routes';
 import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
@@ -71,6 +72,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/uploads', uploadsRoutes);
 app.use('/api/mcp', mcpRoutes);
+app.use('/api/user-fields', userFieldRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

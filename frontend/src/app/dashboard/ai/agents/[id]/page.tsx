@@ -715,6 +715,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             <div className="space-y-3">
                                 {[
                                     { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
+                                    { id: 'user_fields', name: 'User Fields', desc: 'Read and write custom fields you defined on the Contacts page (age, city, purpose, …)' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
                                 ].map(skill => {

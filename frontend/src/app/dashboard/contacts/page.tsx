@@ -27,7 +27,20 @@ interface UserField {
     order: number;
 }
 
-type SortKey = 'name' | 'status' | 'updatedAt' | string; // custom: `cf:${key}`
+// ─── Column model ─────────────────────────────────────────────
+type ColumnId = string; // 'contact' | 'channel' | 'status' | 'tags' | 'summary' | 'updatedAt' | `cf:${key}`
+
+const BASE_COLUMNS: { id: ColumnId; label: string; sortable?: boolean }[] = [
+    { id: 'contact', label: 'Contact', sortable: true },
+    { id: 'channel', label: 'Channel' },
+    { id: 'status', label: 'Status', sortable: true },
+    { id: 'tags', label: 'Tags' },
+    { id: 'summary', label: 'Summary' },
+    { id: 'updatedAt', label: 'Last Activity', sortable: true },
+];
+
+const COLUMN_ORDER_KEY = 'contacts_columns_v1';
+
 type SortDir = 'asc' | 'desc';
 
 const getStatusColor = (status: string) => {
@@ -40,15 +53,28 @@ const getStatusColor = (status: string) => {
     }
 };
 
+// Display a stored phone/IGSID as a friendly identifier. WhatsApp phones
+// arrive as digits-only (e.g. 994773102993); we prefix them with "+".
+// Instagram IGSIDs are also numeric but very long — same treatment is
+// fine, the user just wanted "looks like a number, not an id".
+function formatPhone(phone: string): string {
+    const digits = phone.replace(/[^0-9]/g, '');
+    if (!digits) return phone;
+    return '+' + digits;
+}
+
 export default function ContactsPage() {
     const [clients, setClients] = useState<Client[]>([]);
     const [fields, setFields] = useState<UserField[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
-    const [sortKey, setSortKey] = useState<SortKey>('updatedAt');
+    const [sortKey, setSortKey] = useState<ColumnId>('updatedAt');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [showFieldsModal, setShowFieldsModal] = useState(false);
+    const [columnOrder, setColumnOrder] = useState<ColumnId[] | null>(null);
+    const [dragColumn, setDragColumn] = useState<ColumnId | null>(null);
+    const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -68,15 +94,66 @@ export default function ContactsPage() {
 
     useEffect(() => { load(); }, [load]);
 
+    // Build the full column list = base + each user field. Merge with the
+    // persisted order from localStorage so the user's drag-reordering
+    // survives reloads.
+    const columns = useMemo(() => {
+        const all: { id: ColumnId; label: string; sortable?: boolean; field?: UserField }[] = [
+            ...BASE_COLUMNS,
+            ...fields.map(f => ({ id: `cf:${f.key}`, label: f.label, sortable: true, field: f })),
+        ];
+        if (!columnOrder) return all;
+        const byId = new Map(all.map(c => [c.id, c]));
+        const ordered: typeof all = [];
+        for (const id of columnOrder) {
+            const c = byId.get(id);
+            if (c) { ordered.push(c); byId.delete(id); }
+        }
+        // Append any new columns that weren't in the saved order
+        for (const c of byId.values()) ordered.push(c);
+        return ordered;
+    }, [fields, columnOrder]);
+
+    // Load persisted column order on mount
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(COLUMN_ORDER_KEY);
+            if (saved) setColumnOrder(JSON.parse(saved));
+        } catch { /* ignore */ }
+    }, []);
+
+    // Persist whenever columnOrder is set explicitly by drag
+    const persistColumnOrder = (next: ColumnId[]) => {
+        setColumnOrder(next);
+        try { localStorage.setItem(COLUMN_ORDER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    };
+
+    const onColumnDrop = (toId: ColumnId) => {
+        if (!dragColumn || dragColumn === toId) { setDragColumn(null); setDragOverColumn(null); return; }
+        const ids = columns.map(c => c.id);
+        const from = ids.indexOf(dragColumn);
+        const to = ids.indexOf(toId);
+        if (from === -1 || to === -1) return;
+        const next = [...ids];
+        const [item] = next.splice(from, 1);
+        next.splice(to, 0, item);
+        persistColumnOrder(next);
+        setDragColumn(null);
+        setDragOverColumn(null);
+    };
+
     const sortedFiltered = useMemo(() => {
         const q = search.trim().toLowerCase();
         const filtered = clients.filter(c =>
             !q || (c.name?.toLowerCase().includes(q)) || c.phone.includes(q)
         );
 
-        const getVal = (c: Client, key: SortKey): any => {
-            if (key === 'name') return c.name || '';
+        const getVal = (c: Client, key: ColumnId): any => {
+            if (key === 'contact') return c.name || c.phone || '';
+            if (key === 'channel') return c.channel || '';
             if (key === 'status') return c.status;
+            if (key === 'tags') return c.tags.join(',');
+            if (key === 'summary') return c.summary || '';
             if (key === 'updatedAt') return c.updatedAt;
             if (key.startsWith('cf:')) return c.customFields?.[key.slice(3)] ?? '';
             return '';
@@ -91,12 +168,12 @@ export default function ContactsPage() {
         });
     }, [clients, search, sortKey, sortDir]);
 
-    const toggleSort = (k: SortKey) => {
+    const toggleSort = (k: ColumnId) => {
         if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
         else { setSortKey(k); setSortDir('asc'); }
     };
 
-    const SortIcon = ({ k }: { k: SortKey }) => {
+    const SortIcon = ({ k }: { k: ColumnId }) => {
         if (sortKey !== k) return <ChevronsUpDown className="w-3 h-3 opacity-40" />;
         return sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
     };
@@ -106,7 +183,7 @@ export default function ContactsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-foreground">Contacts</h1>
-                    <p className="text-muted-foreground mt-1 text-sm">People who messaged you across WhatsApp and Instagram, with editable custom fields.</p>
+                    <p className="text-muted-foreground mt-1 text-sm">Drag column headers to reorder. Click a row to edit. Custom fields live in Manage Fields.</p>
                 </div>
                 <button onClick={() => setShowFieldsModal(true)}
                     className="self-start sm:self-auto inline-flex items-center gap-2 bg-card border border-border px-4 py-2 rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors">
@@ -130,34 +207,39 @@ export default function ContactsPage() {
                     <table className="w-full text-left border-collapse text-sm">
                         <thead>
                             <tr className="bg-secondary/50 border-b border-border">
-                                <Th onClick={() => toggleSort('name')}>
-                                    Contact <SortIcon k="name" />
-                                </Th>
-                                <Th>Channel</Th>
-                                <Th onClick={() => toggleSort('status')}>
-                                    Status <SortIcon k="status" />
-                                </Th>
-                                <Th>Tags</Th>
-                                {fields.map(f => (
-                                    <Th key={f.id} onClick={() => toggleSort(`cf:${f.key}`)}>
-                                        {f.label} <SortIcon k={`cf:${f.key}`} />
-                                    </Th>
+                                {columns.map(col => (
+                                    <th key={col.id}
+                                        draggable
+                                        onDragStart={() => setDragColumn(col.id)}
+                                        onDragEnter={() => setDragOverColumn(col.id)}
+                                        onDragOver={e => e.preventDefault()}
+                                        onDragEnd={() => { setDragColumn(null); setDragOverColumn(null); }}
+                                        onDrop={() => onColumnDrop(col.id)}
+                                        onClick={() => col.sortable && toggleSort(col.id)}
+                                        className={`px-5 py-3 font-semibold text-muted-foreground text-xs uppercase tracking-wide select-none
+                                            ${col.sortable ? 'cursor-pointer hover:text-foreground' : 'cursor-grab'}
+                                            ${dragColumn === col.id ? 'opacity-50' : ''}
+                                            ${dragOverColumn === col.id && dragColumn !== col.id ? 'bg-primary/10' : ''}`}
+                                        title="Drag to reorder. Click to sort.">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <GripVertical className="w-3 h-3 opacity-30" />
+                                            {col.label}
+                                            {col.sortable && <SortIcon k={col.id} />}
+                                        </span>
+                                    </th>
                                 ))}
-                                <Th onClick={() => toggleSort('updatedAt')}>
-                                    Last Activity <SortIcon k="updatedAt" />
-                                </Th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan={5 + fields.length} className="px-6 py-12 text-center">
+                                    <td colSpan={columns.length} className="px-6 py-12 text-center">
                                         <Loader2 className="w-7 h-7 animate-spin text-muted-foreground mx-auto" />
                                     </td>
                                 </tr>
                             ) : sortedFiltered.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5 + fields.length} className="px-6 py-12 text-center">
+                                    <td colSpan={columns.length} className="px-6 py-12 text-center">
                                         <div className="flex flex-col items-center text-muted-foreground">
                                             <Users className="w-12 h-12 mb-3 opacity-50" />
                                             <p className="font-medium">No contacts yet</p>
@@ -169,51 +251,11 @@ export default function ContactsPage() {
                                 <tr key={c.id}
                                     onClick={() => setEditingClient(c)}
                                     className="border-b border-border/50 hover:bg-secondary/20 transition-colors last:border-0 cursor-pointer">
-                                    <td className="px-5 py-3.5">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
-                                                {c.name ? c.name.charAt(0).toUpperCase() : <Phone className="w-3.5 h-3.5" />}
-                                            </div>
-                                            <div className="min-w-0">
-                                                <div className="font-medium text-foreground truncate">{c.name || 'Unknown'}</div>
-                                                <div className="text-xs text-muted-foreground font-mono truncate">{c.phone.split('@')[0]}</div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-5 py-3.5">
-                                        {c.channel === 'instagram' ? (
-                                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-pink-500/10 text-pink-400 border border-pink-500/20">
-                                                <Camera className="w-3 h-3" /> Instagram
-                                            </span>
-                                        ) : c.channel === 'whatsapp' ? (
-                                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                                <MessageSquare className="w-3 h-3" /> WhatsApp
-                                            </span>
-                                        ) : <span className="text-xs text-muted-foreground italic">—</span>}
-                                    </td>
-                                    <td className="px-5 py-3.5">
-                                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${getStatusColor(c.status)}`}>
-                                            {c.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-5 py-3.5">
-                                        <div className="flex flex-wrap gap-1">
-                                            {c.tags.length > 0 ? c.tags.slice(0, 3).map((t, i) => (
-                                                <span key={i} className="bg-secondary text-[10px] px-1.5 py-0.5 rounded border border-border flex items-center gap-1">
-                                                    <Tag className="w-2.5 h-2.5" /> {t}
-                                                </span>
-                                            )) : <span className="text-muted-foreground text-xs italic">—</span>}
-                                            {c.tags.length > 3 && <span className="text-[10px] text-muted-foreground">+{c.tags.length - 3}</span>}
-                                        </div>
-                                    </td>
-                                    {fields.map(f => (
-                                        <td key={f.id} className="px-5 py-3.5 text-xs text-muted-foreground">
-                                            {renderFieldValue(c.customFields?.[f.key], f)}
+                                    {columns.map(col => (
+                                        <td key={col.id} className="px-5 py-3.5 align-middle">
+                                            <CellValue client={c} columnId={col.id} field={col.field} />
                                         </td>
                                     ))}
-                                    <td className="px-5 py-3.5 text-xs text-muted-foreground">
-                                        {new Date(c.updatedAt).toLocaleDateString()}
-                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -244,13 +286,64 @@ export default function ContactsPage() {
     );
 }
 
-function Th({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-    return (
-        <th onClick={onClick}
-            className={`px-5 py-3 font-semibold text-muted-foreground text-xs uppercase tracking-wide ${onClick ? 'cursor-pointer hover:text-foreground' : ''}`}>
-            <span className="inline-flex items-center gap-1.5">{children}</span>
-        </th>
-    );
+// ─── Per-column cell renderer ─────────────────────────────────
+function CellValue({ client: c, columnId, field }: { client: Client; columnId: ColumnId; field?: UserField }) {
+    if (columnId === 'contact') {
+        return (
+            <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs flex-shrink-0">
+                    {c.name ? c.name.charAt(0).toUpperCase() : <Phone className="w-3.5 h-3.5" />}
+                </div>
+                <div className="min-w-0">
+                    <div className="font-medium text-foreground truncate">{c.name || 'Unknown'}</div>
+                    <div className="text-xs text-muted-foreground font-mono truncate">{formatPhone(c.phone)}</div>
+                </div>
+            </div>
+        );
+    }
+    if (columnId === 'channel') {
+        if (c.channel === 'instagram') return (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                <Camera className="w-3 h-3" /> Instagram
+            </span>
+        );
+        if (c.channel === 'whatsapp') return (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <MessageSquare className="w-3 h-3" /> WhatsApp
+            </span>
+        );
+        return <span className="text-xs text-muted-foreground italic">—</span>;
+    }
+    if (columnId === 'status') {
+        return (
+            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${getStatusColor(c.status)}`}>
+                {c.status}
+            </span>
+        );
+    }
+    if (columnId === 'tags') {
+        if (c.tags.length === 0) return <span className="text-muted-foreground text-xs italic">—</span>;
+        return (
+            <div className="flex flex-wrap gap-1">
+                {c.tags.slice(0, 3).map((t, i) => (
+                    <span key={i} className="bg-secondary text-[10px] px-1.5 py-0.5 rounded border border-border inline-flex items-center gap-1">
+                        <Tag className="w-2.5 h-2.5" /> {t}
+                    </span>
+                ))}
+                {c.tags.length > 3 && <span className="text-[10px] text-muted-foreground">+{c.tags.length - 3}</span>}
+            </div>
+        );
+    }
+    if (columnId === 'summary') {
+        return <span className="text-xs text-muted-foreground line-clamp-2 max-w-[200px]">{c.summary || '—'}</span>;
+    }
+    if (columnId === 'updatedAt') {
+        return <span className="text-xs text-muted-foreground">{new Date(c.updatedAt).toLocaleDateString()}</span>;
+    }
+    if (columnId.startsWith('cf:') && field) {
+        return <span className="text-xs text-muted-foreground">{renderFieldValue(c.customFields?.[field.key], field)}</span>;
+    }
+    return null;
 }
 
 function renderFieldValue(v: any, f: UserField) {
@@ -465,7 +558,7 @@ function EditContactDrawer({ client, fields, onClose, onSaved }: {
                         </div>
                         <div className="min-w-0">
                             <h2 className="font-semibold truncate">{name || 'Unknown'}</h2>
-                            <p className="text-xs text-muted-foreground font-mono truncate">{client.phone.split('@')[0]}</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{formatPhone(client.phone)}</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="text-muted-foreground hover:text-foreground">

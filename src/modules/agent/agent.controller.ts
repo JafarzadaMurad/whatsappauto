@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate } from './ai.service';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -52,8 +53,9 @@ export class AgentController {
     async getAgents(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const agents = await prisma.agent.findMany({
-                where: { userId },
+                where: { workspaceId },
                 include: { provider: true, instances: true },
                 orderBy: { createdAt: 'desc' }
             });
@@ -66,9 +68,10 @@ export class AgentController {
     async getAgent(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const agent = await prisma.agent.findFirst({
-                where: { id, userId },
+                where: { id, workspaceId },
                 include: { provider: true, instances: true }
             });
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
@@ -81,17 +84,19 @@ export class AgentController {
     async createAgent(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createAgentSchema.parse(req.body);
 
             await checkPlanLimit(userId, 'agent');
 
-            // Verify provider belongs to user
-            const provider = await prisma.aiProvider.findFirst({ where: { id: data.providerId, userId } });
+            // Verify provider belongs to workspace
+            const provider = await prisma.aiProvider.findFirst({ where: { id: data.providerId, workspaceId } });
             if (!provider) return res.status(404).json({ success: false, message: 'Invalid AI Provider' });
 
             const agent = await prisma.agent.create({
                 data: {
                     userId,
+                    workspaceId,
                     name: data.name,
                     providerId: data.providerId,
                     model: data.model,
@@ -115,10 +120,11 @@ export class AgentController {
     async updateAgent(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const data = createAgentSchema.parse(req.body);
 
-            const existing = await prisma.agent.findFirst({ where: { id, userId } });
+            const existing = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             const agent = await prisma.agent.update({
@@ -147,9 +153,10 @@ export class AgentController {
     async deleteAgent(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const existing = await prisma.agent.findFirst({ where: { id, userId } });
+            const existing = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             await prisma.agent.delete({ where: { id } });
@@ -162,9 +169,10 @@ export class AgentController {
     async getConversations(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            const agent = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             const logs = await prisma.aiConversationLog.findMany({
@@ -217,12 +225,13 @@ export class AgentController {
     async getConversationMessages(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const remoteJid = req.query.remoteJid as string;
 
             if (!remoteJid) return res.status(400).json({ success: false, message: 'remoteJid required' });
 
-            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            const agent = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             const messages = await prisma.aiConversationLog.findMany({
@@ -239,9 +248,10 @@ export class AgentController {
     async getTokenStats(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            const agent = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             const logs = await prisma.aiConversationLog.findMany({
@@ -333,6 +343,7 @@ export class AgentController {
     async replyToConversation(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const schema = z.object({
                 remoteJid: z.string().min(1),
@@ -340,7 +351,7 @@ export class AgentController {
             });
             const { remoteJid, text } = schema.parse(req.body);
 
-            const agent = await prisma.agent.findFirst({ where: { id, userId } });
+            const agent = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
 
             if (!remoteJid.startsWith('ig:')) {
@@ -349,7 +360,7 @@ export class AgentController {
 
             const senderId = remoteJid.slice(3);
             const account = await prisma.instagramAccount.findFirst({
-                where: { agentId: id, userId }
+                where: { agentId: id, workspaceId }
             });
             if (!account) return res.status(400).json({ success: false, message: 'No Instagram account linked to this agent' });
 

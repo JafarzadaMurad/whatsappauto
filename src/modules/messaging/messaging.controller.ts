@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { MessagingService } from './messaging.service';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const messagingService = new MessagingService();
 
@@ -24,12 +25,11 @@ const sendMediaSchema = z.object({
 export class MessagingController {
     async sendText(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = sendTextSchema.parse(req.body);
 
-            // Ensure the instance belongs to the user
             const instance = await prisma.instance.findFirst({
-                where: { id: data.instanceId, userId }
+                where: { id: data.instanceId, workspaceId }
             });
 
             if (!instance) {

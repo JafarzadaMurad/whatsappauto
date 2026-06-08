@@ -7,6 +7,7 @@ import { startWebhookWorker } from './modules/webhook/webhook.dispatcher';
 import { startCampaignWorker } from './modules/campaign/campaign.queue';
 
 import { InstanceManager } from './modules/whatsapp/instance.manager';
+import { ensureWorkspacesForAllUsers } from './lib/workspace-migration';
 
 const server = http.createServer(app);
 
@@ -34,6 +35,13 @@ const PORT = config.PORT;
 
 server.listen(PORT, async () => {
     logger.info(`🚀 Server running on port ${PORT} in ${config.NODE_ENV} mode`);
+
+    // One-time: back-fill workspaces for any pre-existing users. Idempotent.
+    try {
+        await ensureWorkspacesForAllUsers();
+    } catch (e: any) {
+        logger.error({ err: e.message }, '[workspace-migration] failed');
+    }
 
     // Initialize active instances
     await InstanceManager.init();

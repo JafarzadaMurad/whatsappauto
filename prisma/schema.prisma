@@ -14,6 +14,82 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 }
 
+// ─── Workspaces ──────────────────────────────────────────────────
+// Every user owns a personal workspace and can be a member of other
+// workspaces (e.g. invited by someone else). All "tenant" data
+// (instances, automations, clients, etc.) is scoped by workspaceId.
+model Workspace {
+  id      String  @id @default(uuid())
+  name    String
+  ownerId String
+  owner   User    @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Subscription + plan apply at the workspace level. Members of a
+  // workspace use the owner's plan; their own plan is irrelevant inside
+  // someone else's workspace.
+  planId               String?
+  plan                 Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  subscriptionStatus   String    @default("none") // none | trialing | active | past_due | canceled
+  subscriptionEndsAt   DateTime?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members     WorkspaceMember[]
+  invitations WorkspaceInvitation[]
+
+  instances         Instance[]
+  webhooks          WebhookConfig[]
+  apiKeys           ApiKey[]
+  aiProviders       AiProvider[]
+  agents            Agent[]
+  customTables      CustomTable[]
+  clients           Client[]
+  campaigns         Campaign[]
+  instagramAccounts InstagramAccount[]
+  automations       Automation[]
+  userFields        UserField[]
+  automationExecutions AutomationExecution[]
+  mcpClients     McpClient[]
+  mcpOAuthTokens McpOAuthToken[]
+  mcpPermission  McpPermission?
+  mcpAuditLogs   McpAuditLog[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role        String   @default("MEMBER") // OWNER | ADMIN | MEMBER | VIEWER
+  createdAt   DateTime @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceInvitation {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email       String
+  role        String   @default("MEMBER")
+  token       String   @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  invitedById String
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([email])
+}
+
 // Subscription plans (managed by admins)
 model Plan {
   id          String  @id @default(uuid())
@@ -40,7 +116,8 @@ model Plan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users User[]
+  users      User[]
+  workspaces Workspace[]
 }
 
 model User {
@@ -88,12 +165,18 @@ model User {
   mcpOAuthTokens McpOAuthToken[]
   mcpPermission  McpPermission?
   mcpAuditLogs   McpAuditLog[]
+
+  // Workspaces
+  ownedWorkspaces      Workspace[]       @relation("WorkspaceOwner")
+  workspaceMemberships WorkspaceMember[]
 }
 
 model Instance {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   agentId String?
   agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
@@ -112,20 +195,24 @@ model Instance {
 }
 
 model ApiKey {
-  id     String @id @default(uuid())
-  key    String @unique
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name   String
+  id          String @id @default(uuid())
+  key         String @unique
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
 
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 }
 
 model WebhookConfig {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   instanceId String? // Optional: if null applies to all, otherwise specific to instance
   instance   Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
@@ -193,9 +280,11 @@ model AuthKey {
 // -----------------------------------------
 
 model AiProvider {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   provider String // OPENAI, CLAUDE, GEMINI
   apiKey   String
@@ -206,12 +295,15 @@ model AiProvider {
   agents Agent[]
 
   @@unique([userId, provider])
+  @@index([workspaceId])
 }
 
 model Agent {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name       String
   providerId String
@@ -262,9 +354,11 @@ model AiConversationLog {
 }
 
 model CustomTable {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name        String
   description String? @db.Text
@@ -288,9 +382,11 @@ model CustomRow {
 }
 
 model Client {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   phone   String // RemoteJid digits (WhatsApp) or IGSID (Instagram)
   name    String?
@@ -312,9 +408,11 @@ model Client {
 // Admin-defined custom field on the Client (contact) entity.
 // Values are stored on Client.customFields keyed by `key`.
 model UserField {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   key   String   // machine slug used as the customFields JSON key
   label String   // human label shown in the UI
@@ -334,9 +432,11 @@ model UserField {
 // -----------------------------------------
 
 model Campaign {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   agentId    String
   agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Restrict)
@@ -376,9 +476,11 @@ model CampaignRecipient {
 // -----------------------------------------
 
 model InstagramAccount {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   igUserId    String  @unique // Instagram User ID from API
   igUsername   String  // @username
@@ -398,9 +500,11 @@ model InstagramAccount {
 // -----------------------------------------
 
 model Automation {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name     String
   isActive Boolean @default(false)
@@ -420,6 +524,8 @@ model McpClient {
   id           String   @id @default(uuid())
   userId       String?  // nullable until first authorize binds the client to a user
   user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   clientId     String   @unique
   clientSecret String   // bcrypt hash; empty for public clients
   name         String
@@ -427,12 +533,15 @@ model McpClient {
   createdAt    DateTime @default(now())
 
   @@index([userId])
+  @@index([workspaceId])
 }
 
 model McpOAuthToken {
   id            String   @id @default(uuid())
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId   String?
+  workspace     Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   clientId      String   // public OAuth client id (matches McpClient.clientId)
   accessToken   String   @unique
   refreshToken  String?  @unique
@@ -448,6 +557,7 @@ model McpAuthCode {
   id                  String   @id @default(uuid())
   code                String   @unique
   userId              String
+  workspaceId         String?
   clientId            String
   redirectUri         String
   codeChallenge       String
@@ -459,28 +569,33 @@ model McpAuthCode {
 }
 
 model McpPermission {
-  // Per-user tool allow/deny map. Empty / missing entry = allowed (default).
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  toolFlags Json     @default("{}")
-  updatedAt DateTime @updatedAt
+  // Per-workspace tool allow/deny map. Empty / missing entry = allowed (default).
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?  @unique
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  toolFlags   Json     @default("{}")
+  updatedAt   DateTime @updatedAt
 }
 
 model McpAuditLog {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  authKind   String   // 'api_key' | 'oauth'
-  authRef    String?
-  tool       String
-  argsJson   Json
-  resultOk   Boolean
-  errorMsg   String?  @db.Text
-  durationMs Int      @default(0)
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  authKind    String   // 'api_key' | 'oauth'
+  authRef     String?
+  tool        String
+  argsJson    Json
+  resultOk    Boolean
+  errorMsg    String?  @db.Text
+  durationMs  Int      @default(0)
+  createdAt   DateTime @default(now())
 
   @@index([userId, createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
 }
 
 model AutomationExecution {
@@ -488,6 +603,8 @@ model AutomationExecution {
   automationId String
   automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
   userId       String
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   status      String   // 'success' | 'failure'
   triggerType String   // node type that matched, e.g. 'trigger_ig_comment'

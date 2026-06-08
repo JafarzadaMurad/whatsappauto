@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const updateClientSchema = z.object({
     status: z.string().optional(),
@@ -12,8 +13,9 @@ export class ClientController {
     async getClients(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const clients = await prisma.client.findMany({
-                where: { userId },
+                where: { workspaceId },
                 orderBy: { updatedAt: 'desc' }
             });
             return res.json({ success: true, clients });
@@ -25,9 +27,10 @@ export class ClientController {
     async getClient(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const client = await prisma.client.findFirst({
-                where: { id, userId }
+                where: { id, workspaceId }
             });
             if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
             return res.json({ success: true, client });
@@ -39,10 +42,11 @@ export class ClientController {
     async updateClient(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const data = updateClientSchema.parse(req.body);
 
-            const existing = await prisma.client.findFirst({ where: { id, userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Client not found' });
 
             // Define update payload dynamically
@@ -66,9 +70,10 @@ export class ClientController {
     async deleteClient(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const existing = await prisma.client.findFirst({ where: { id, userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Client not found' });
 
             await prisma.client.delete({ where: { id } });

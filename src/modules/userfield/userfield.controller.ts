@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean'] as const;
 
@@ -31,8 +32,9 @@ export class UserFieldController {
     async list(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const rows = await prisma.userField.findMany({
-                where: { userId },
+                where: { workspaceId },
                 orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             });
             return res.json({ success: true, fields: rows });
@@ -44,18 +46,19 @@ export class UserFieldController {
     async create(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createSchema.parse(req.body);
             const key = data.key || slugify(data.label);
 
-            const conflict = await prisma.userField.findUnique({ where: { userId_key: { userId, key } } });
+            const conflict = await prisma.userField.findFirst({ where: { workspaceId, key } });
             if (conflict) return res.status(409).json({ success: false, message: `Field key "${key}" already exists` });
 
-            const lastOrder = await prisma.userField.aggregate({ where: { userId }, _max: { order: true } });
+            const lastOrder = await prisma.userField.aggregate({ where: { workspaceId }, _max: { order: true } });
             const order = (lastOrder._max.order ?? -1) + 1;
 
             const row = await prisma.userField.create({
                 data: {
-                    userId, key,
+                    userId, workspaceId, key,
                     label: data.label,
                     type: data.type,
                     options: data.type === 'select' ? (data.options || []) : [],
@@ -71,11 +74,11 @@ export class UserFieldController {
 
     async update(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const data = updateSchema.parse(req.body);
 
-            const existing = await prisma.userField.findFirst({ where: { id, userId } });
+            const existing = await prisma.userField.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Field not found' });
 
             const row = await prisma.userField.update({
@@ -95,9 +98,9 @@ export class UserFieldController {
 
     async remove(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const existing = await prisma.userField.findFirst({ where: { id, userId } });
+            const existing = await prisma.userField.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Field not found' });
 
             await prisma.userField.delete({ where: { id } });
@@ -110,9 +113,9 @@ export class UserFieldController {
     // Drag-to-reorder: pass the ids in their new order.
     async reorder(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const { ids } = reorderSchema.parse(req.body);
-            const owned = await prisma.userField.findMany({ where: { userId }, select: { id: true } });
+            const owned = await prisma.userField.findMany({ where: { workspaceId }, select: { id: true } });
             const ownedSet = new Set(owned.map(r => r.id));
             for (const id of ids) if (!ownedSet.has(id)) return res.status(400).json({ success: false, message: 'Unknown field id' });
             await prisma.$transaction(ids.map((id, i) => prisma.userField.update({ where: { id }, data: { order: i } })));

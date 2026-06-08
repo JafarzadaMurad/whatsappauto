@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const nodeSchema = z.object({
     id: z.string(),
@@ -29,8 +30,9 @@ export class AutomationController {
     async list(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const automations = await prisma.automation.findMany({
-                where: { userId },
+                where: { workspaceId },
                 orderBy: { updatedAt: 'desc' }
             });
             return res.json({ success: true, automations });
@@ -42,8 +44,9 @@ export class AutomationController {
     async get(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const automation = await prisma.automation.findFirst({ where: { id, userId } });
+            const automation = await prisma.automation.findFirst({ where: { id, workspaceId } });
             if (!automation) return res.status(404).json({ success: false, message: 'Automation not found' });
             return res.json({ success: true, automation });
         } catch (error: any) {
@@ -54,11 +57,13 @@ export class AutomationController {
     async create(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = upsertSchema.parse(req.body);
             await checkPlanLimit(userId, 'automation');
             const automation = await prisma.automation.create({
                 data: {
                     userId,
+                    workspaceId,
                     name: data.name,
                     isActive: data.isActive ?? false,
                     nodes: (data.nodes || []) as any,
@@ -76,10 +81,11 @@ export class AutomationController {
     async update(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const data = upsertSchema.parse(req.body);
 
-            const existing = await prisma.automation.findFirst({ where: { id, userId } });
+            const existing = await prisma.automation.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Automation not found' });
 
             const automation = await prisma.automation.update({
@@ -101,8 +107,9 @@ export class AutomationController {
     async executions(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const auto = await prisma.automation.findFirst({ where: { id, userId } });
+            const auto = await prisma.automation.findFirst({ where: { id, workspaceId } });
             if (!auto) return res.status(404).json({ success: false, message: 'Automation not found' });
             const executions = await prisma.automationExecution.findMany({
                 where: { automationId: id },
@@ -118,8 +125,9 @@ export class AutomationController {
     async remove(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const existing = await prisma.automation.findFirst({ where: { id, userId } });
+            const existing = await prisma.automation.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Automation not found' });
             await prisma.automation.delete({ where: { id } });
             return res.json({ success: true, message: 'Automation deleted' });

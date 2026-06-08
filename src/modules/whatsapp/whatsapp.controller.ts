@@ -3,6 +3,7 @@ import { InstanceManager } from './instance.manager';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createInstanceSchema = z.object({
     name: z.string().min(1),
@@ -10,9 +11,9 @@ const createInstanceSchema = z.object({
 
 export class WhatsappController {
     async listInstances(req: Request, res: Response) {
-        const userId = (req as any).user.id;
+        const workspaceId = getWorkspaceId(req);
         const instances = await prisma.instance.findMany({
-            where: { userId },
+            where: { workspaceId },
             include: { agent: true },
             orderBy: { createdAt: 'desc' }
         });
@@ -23,6 +24,7 @@ export class WhatsappController {
     async createInstance(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createInstanceSchema.parse(req.body);
 
             await checkPlanLimit(userId, 'whatsapp');
@@ -30,12 +32,12 @@ export class WhatsappController {
             const instance = await prisma.instance.create({
                 data: {
                     userId,
+                    workspaceId,
                     name: data.name,
                     status: 'DISCONNECTED',
                 }
             });
 
-            // Start the Baileys instance process
             InstanceManager.startInstance(instance.id);
 
             return res.status(201).json({ success: true, instance });
@@ -50,16 +52,15 @@ export class WhatsappController {
 
     async deleteInstance(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const instance = await prisma.instance.findFirst({ where: { id, userId } });
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
             if (!instance) {
                 return res.status(404).json({ success: false, message: 'Instance not found' });
             }
 
             await InstanceManager.stopInstance(id as string);
-
             await prisma.instance.delete({ where: { id: id as string } });
 
             return res.status(200).json({ success: true, message: 'Instance deleted' });
@@ -70,10 +71,10 @@ export class WhatsappController {
 
     async restartInstance(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const instance = await prisma.instance.findFirst({ where: { id, userId } });
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
             if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
 
             await InstanceManager.stopInstance(id);
@@ -87,12 +88,12 @@ export class WhatsappController {
 
     async updateInstance(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const schema = z.object({ agentId: z.string().uuid().nullable().optional() });
             const data = schema.parse(req.body);
 
-            const instance = await prisma.instance.findFirst({ where: { id, userId } });
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
             if (!instance) {
                 return res.status(404).json({ success: false, message: 'Instance not found' });
             }

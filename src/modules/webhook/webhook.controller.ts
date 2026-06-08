@@ -1,19 +1,20 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createWebhookSchema = z.object({
     url: z.string().url(),
-    events: z.array(z.string()).default([]), // Empty array means all events
+    events: z.array(z.string()).default([]),
     isActive: z.boolean().default(true),
     instanceId: z.string().uuid().optional().nullable()
 });
 
 export class WebhookController {
     async listWebhooks(req: Request, res: Response) {
-        const userId = (req as any).user.id;
+        const workspaceId = getWorkspaceId(req);
         const webhooks = await prisma.webhookConfig.findMany({
-            where: { userId },
+            where: { workspaceId } as any,
             include: { instance: { select: { name: true } } }
         });
         return res.status(200).json({ success: true, webhooks });
@@ -22,11 +23,13 @@ export class WebhookController {
     async createWebhook(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createWebhookSchema.parse(req.body);
 
             const webhook = await prisma.webhookConfig.create({
                 data: {
                     userId,
+                    workspaceId,
                     url: data.url,
                     events: data.events,
                     isActive: data.isActive,
@@ -44,10 +47,10 @@ export class WebhookController {
 
     async deleteWebhook(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const { id } = req.params;
 
-            const webhook = await prisma.webhookConfig.findFirst({ where: { id, userId } });
+            const webhook = await prisma.webhookConfig.findFirst({ where: { id, workspaceId } as any });
             if (!webhook) {
                 return res.status(404).json({ success: false, message: 'Webhook not found' });
             }

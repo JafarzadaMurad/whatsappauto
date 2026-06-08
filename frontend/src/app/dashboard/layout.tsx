@@ -8,6 +8,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import VerifyEmailBanner from "@/components/VerifyEmailBanner";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -124,6 +125,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             <PanelLeft className="w-5 h-5" />
                         </button>
                     )}
+                </div>
+
+                <div className="p-2 border-b border-border">
+                    <WorkspaceSwitcher collapsed={collapsed} />
                 </div>
 
                 <div className="p-2 flex-1 overflow-y-auto overflow-x-hidden">

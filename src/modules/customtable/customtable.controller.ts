@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createTableSchema = z.object({
     name: z.string().min(1),
@@ -22,9 +23,9 @@ export class CustomTableController {
 
     async getTables(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const tables = await prisma.customTable.findMany({
-                where: { userId },
+                where: { workspaceId },
                 orderBy: { createdAt: 'desc' }
             });
             return res.json({ success: true, tables });
@@ -35,11 +36,9 @@ export class CustomTableController {
 
     async getTable(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const table = await prisma.customTable.findFirst({
-                where: { id, userId }
-            });
+            const table = await prisma.customTable.findFirst({ where: { id, workspaceId } });
             if (!table) return res.status(404).json({ success: false, message: 'Table not found' });
             return res.json({ success: true, table });
         } catch (error: any) {
@@ -50,11 +49,12 @@ export class CustomTableController {
     async createTable(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createTableSchema.parse(req.body);
 
             const table = await prisma.customTable.create({
                 data: {
-                    userId,
+                    userId, workspaceId,
                     name: data.name,
                     description: data.description || "",
                     columns: data.columns as any
@@ -70,11 +70,11 @@ export class CustomTableController {
 
     async updateTable(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const data = createTableSchema.parse(req.body);
 
-            const existing = await prisma.customTable.findFirst({ where: { id, userId } });
+            const existing = await prisma.customTable.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Table not found' });
 
             const table = await prisma.customTable.update({
@@ -95,10 +95,10 @@ export class CustomTableController {
 
     async deleteTable(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const existing = await prisma.customTable.findFirst({ where: { id, userId } });
+            const existing = await prisma.customTable.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Table not found' });
 
             await prisma.customTable.delete({ where: { id } });
@@ -112,11 +112,10 @@ export class CustomTableController {
 
     async getRows(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const tableId = req.params.tableId as string;
 
-            // Optional: verify access
-            const table = await prisma.customTable.findFirst({ where: { id: tableId, userId } });
+            const table = await prisma.customTable.findFirst({ where: { id: tableId, workspaceId } });
             if (!table) return res.status(404).json({ success: false, message: 'Table not found' });
 
             const rows = await prisma.customRow.findMany({
@@ -131,18 +130,15 @@ export class CustomTableController {
 
     async createRow(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const tableId = req.params.tableId as string;
             const data = createRowSchema.parse(req.body);
 
-            const table = await prisma.customTable.findFirst({ where: { id: tableId, userId } });
+            const table = await prisma.customTable.findFirst({ where: { id: tableId, workspaceId } });
             if (!table) return res.status(404).json({ success: false, message: 'Table not found' });
 
             const row = await prisma.customRow.create({
-                data: {
-                    tableId,
-                    data: data.data as any
-                }
+                data: { tableId, data: data.data as any }
             });
 
             return res.status(201).json({ success: true, row });
@@ -154,12 +150,12 @@ export class CustomTableController {
 
     async updateRow(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const tableId = req.params.tableId as string;
             const id = req.params.id as string;
             const data = createRowSchema.parse(req.body);
 
-            const table = await prisma.customTable.findFirst({ where: { id: tableId, userId } });
+            const table = await prisma.customTable.findFirst({ where: { id: tableId, workspaceId } });
             if (!table) return res.status(404).json({ success: false, message: 'Table not found' });
 
             const row = await prisma.customRow.update({
@@ -176,11 +172,11 @@ export class CustomTableController {
 
     async deleteRow(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const tableId = req.params.tableId as string;
             const id = req.params.id as string;
 
-            const table = await prisma.customTable.findFirst({ where: { id: tableId, userId } });
+            const table = await prisma.customTable.findFirst({ where: { id: tableId, workspaceId } });
             if (!table) return res.status(404).json({ success: false, message: 'Table not found' });
 
             await prisma.customRow.delete({ where: { id } });

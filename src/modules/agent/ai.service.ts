@@ -837,6 +837,14 @@ export class AiService {
                 where: { workspaceId: wsId, phone }
             }).catch(() => null);
 
+            // Per-contact pause: messages keep flowing into the message table
+            // (so the next time the agent unpauses it has full history via
+            // memory tools), but no auto-reply is generated.
+            if (client?.agentPaused) {
+                logger.info(`[${instanceId}] Agent paused for ${phone} — skipping reply`);
+                return;
+            }
+
             const contactName = client?.name || contact?.pushName || contact?.name || null;
             const contactContext = `\n\nCurrent contact info:\n- Phone: ${phone}${contactName ? `\n- Name: ${contactName}` : ''}${client?.status ? `\n- CRM Status: ${client.status}` : ''}${client?.tags?.length ? `\n- Tags: ${client.tags.join(', ')}` : ''}${client?.summary ? `\n- Summary: ${client.summary}` : ''}\nYou already have this info — do NOT ask the customer for their phone number or name.`;
 

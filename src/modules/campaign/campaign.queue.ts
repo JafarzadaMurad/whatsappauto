@@ -35,6 +35,16 @@ export const startCampaignWorker = () => {
         if (campaign.status !== 'RUNNING') return;
 
         const agent = campaign.agent;
+        // Agent or instance may have been deleted after the campaign was
+        // created (we use SetNull on delete so the campaign itself
+        // survives). Fail the recipient gracefully.
+        if (!agent || !campaign.instanceId) {
+            await prisma.campaignRecipient.update({
+                where: { id: recipientId },
+                data: { status: 'FAILED', error: !agent ? 'Agent deleted' : 'Instance deleted' }
+            });
+            return;
+        }
         if (!(agent as any).isActive || !agent.provider) return;
 
         const sock = sessions.get(campaign.instanceId);

@@ -334,6 +334,18 @@ export class InstagramAiService {
 
         if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
 
+        // Per-contact pause: agent stops replying to this contact until
+        // un-paused. Incoming messages remain in the conversation log so
+        // memory tools still see the full history when resumed.
+        const pausedClient = await prisma.client.findFirst({
+            where: { workspaceId: accountWorkspaceId, phone: senderId },
+            select: { agentPaused: true },
+        }).catch(() => null);
+        if (pausedClient?.agentPaused) {
+            logger.info(`[IG] Agent paused for ${senderId} — skipping reply`);
+            return;
+        }
+
         const agent = account.agent;
         const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');
         if (!text) return;

@@ -8,6 +8,7 @@ const controller = new ClientController();
 router.use(authMiddleware);
 
 router.get('/', controller.getClients.bind(controller));
+router.post('/pause', controller.pauseByPhone.bind(controller));
 router.get('/:id', controller.getClient.bind(controller));
 router.put('/:id', controller.updateClient.bind(controller));
 router.delete('/:id', controller.deleteClient.bind(controller));

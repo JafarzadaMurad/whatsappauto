@@ -399,6 +399,12 @@ model Client {
 
   customFields Json? // Map<UserField.key, value> — values for user-defined fields
 
+  // When true, the AI agent stops auto-replying to this contact's
+  // incoming messages. Messages still get logged so the agent has
+  // full memory after the human un-pauses.
+  agentPaused      Boolean   @default(false)
+  pausedAt         DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

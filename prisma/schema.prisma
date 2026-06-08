@@ -438,11 +438,11 @@ model Campaign {
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  agentId    String
-  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId    String?
+  agent      Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
-  instanceId String
-  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId String?
+  instance   Instance? @relation(fields: [instanceId], references: [id], onDelete: SetNull)
 
   name       String
   status     String   @default("PENDING") // PENDING, RUNNING, PAUSED, COMPLETED, FAILED

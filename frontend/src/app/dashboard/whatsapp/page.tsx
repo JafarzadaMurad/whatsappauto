@@ -95,10 +95,30 @@ export default function WhatsAppPage() {
     const handleDelete = async (id: string) => {
         if (!confirm('Delete this instance?')) return;
         try {
+            // First attempt — backend reports linked campaigns without deleting.
             await api.delete(`/instances/${id}`);
             setInstances(prev => prev.filter(i => i.id !== id));
             if (activeQr?.id === id) setActiveQr(null);
-        } catch (err) { console.error(err); }
+        } catch (err: any) {
+            // 409 with requiresConfirmation = there are dependent campaigns.
+            const body = err?.response?.data;
+            if (err?.response?.status === 409 && body?.requiresConfirmation) {
+                const list = (body.campaigns || []).map((c: any) => `• ${c.name} (${c.status})`).join('\n');
+                const proceed = confirm(
+                    `${body.message}\n\nLinked campaigns:\n${list}\n\nDelete this instance anyway?`
+                );
+                if (!proceed) return;
+                try {
+                    await api.delete(`/instances/${id}?force=true`);
+                    setInstances(prev => prev.filter(i => i.id !== id));
+                    if (activeQr?.id === id) setActiveQr(null);
+                } catch (e: any) {
+                    alert(e?.response?.data?.message || e.message);
+                }
+                return;
+            }
+            alert(body?.message || err.message || 'Delete failed');
+        }
     };
 
     const handleLink = async (id: string) => {

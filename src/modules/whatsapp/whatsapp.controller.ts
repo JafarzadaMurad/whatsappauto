@@ -54,25 +54,37 @@ export class WhatsappController {
         try {
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
+            const force = String(req.query.force || '') === 'true';
 
             const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
             if (!instance) {
                 return res.status(404).json({ success: false, message: 'Instance not found' });
             }
 
+            // Check campaigns that would lose their instance reference.
+            const campaigns = await prisma.campaign.findMany({
+                where: { instanceId: id },
+                select: { id: true, name: true, status: true },
+            });
+
+            if (campaigns.length > 0 && !force) {
+                return res.status(409).json({
+                    success: false,
+                    requiresConfirmation: true,
+                    campaigns,
+                    message: `${campaigns.length} campaign(s) use this number. They will stay but their number will show as "deleted".`,
+                });
+            }
+
             await InstanceManager.stopInstance(id as string);
             await prisma.instance.delete({ where: { id: id as string } });
 
-            return res.status(200).json({ success: true, message: 'Instance deleted' });
+            return res.status(200).json({
+                success: true,
+                message: 'Instance deleted',
+                orphanedCampaigns: campaigns.length,
+            });
         } catch (error: any) {
-            // Prisma FK constraint — surface as a friendlier 409.
-            if (error?.code === 'P2003' || error?.code === 'P2014') {
-                return res.status(409).json({
-                    success: false,
-                    message: 'This instance is still referenced by other records (e.g. campaigns). Delete or unlink those first.',
-                    code: error.code,
-                });
-            }
             return res.status(500).json({ success: false, message: error.message });
         }
     }

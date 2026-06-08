@@ -85,8 +85,21 @@ export default function AiAgentsPage() {
         try {
             await api.delete(`/agents/${id}`);
             setAgents(agents.filter(a => a.id !== id));
-        } catch (err) {
-            console.error(err);
+        } catch (err: any) {
+            const body = err?.response?.data;
+            if (err?.response?.status === 409 && body?.requiresConfirmation) {
+                const list = (body.campaigns || []).map((c: any) => `• ${c.name} (${c.status})`).join('\n');
+                const proceed = confirm(`${body.message}\n\nLinked campaigns:\n${list}\n\nDelete this agent anyway?`);
+                if (!proceed) return;
+                try {
+                    await api.delete(`/agents/${id}?force=true`);
+                    setAgents(agents.filter(a => a.id !== id));
+                } catch (e: any) {
+                    alert(e?.response?.data?.message || e.message);
+                }
+                return;
+            }
+            alert(body?.message || err.message || 'Delete failed');
         }
     };
 

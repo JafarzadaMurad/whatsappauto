@@ -167,9 +167,9 @@ export default function CampaignsPage() {
                                     <div>
                                         <h3 className="font-bold text-lg">{c.name}</h3>
                                         <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                                            <span>{c.agent?.name}</span>
+                                            <span className={c.agent?.name ? '' : 'italic text-red-400/70'}>{c.agent?.name || '(agent deleted)'}</span>
                                             <span>&bull;</span>
-                                            <span>{c.instance?.name}</span>
+                                            <span className={c.instance?.name ? '' : 'italic text-red-400/70'}>{c.instance?.name || '(number deleted)'}</span>
                                             <span>&bull;</span>
                                             <span>{c._count?.recipients || 0} recipients</span>
                                         </div>

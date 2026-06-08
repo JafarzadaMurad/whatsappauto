@@ -152,15 +152,34 @@ export class AgentController {
 
     async deleteAgent(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
+            const force = String(req.query.force || '') === 'true';
 
             const existing = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Agent not found' });
 
+            // Check campaigns linked to this agent.
+            const campaigns = await prisma.campaign.findMany({
+                where: { agentId: id },
+                select: { id: true, name: true, status: true },
+            });
+
+            if (campaigns.length > 0 && !force) {
+                return res.status(409).json({
+                    success: false,
+                    requiresConfirmation: true,
+                    campaigns,
+                    message: `${campaigns.length} campaign(s) use this agent. They will stay but their agent will show as "deleted".`,
+                });
+            }
+
             await prisma.agent.delete({ where: { id } });
-            return res.json({ success: true, message: 'Agent deleted' });
+            return res.json({
+                success: true,
+                message: 'Agent deleted',
+                orphanedCampaigns: campaigns.length,
+            });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

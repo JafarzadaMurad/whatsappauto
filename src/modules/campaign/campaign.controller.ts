@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { campaignQueue } from './campaign.queue';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createCampaignSchema = z.object({
     name: z.string().min(1),
@@ -13,9 +14,9 @@ const createCampaignSchema = z.object({
 export class CampaignController {
     async getCampaigns(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const campaigns = await prisma.campaign.findMany({
-                where: { userId },
+                where: { workspaceId },
                 include: {
                     agent: { select: { name: true } },
                     instance: { select: { name: true } },
@@ -44,11 +45,11 @@ export class CampaignController {
 
     async getCampaign(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
             const campaign = await prisma.campaign.findFirst({
-                where: { id, userId },
+                where: { id, workspaceId },
                 include: {
                     agent: { select: { name: true, model: true } },
                     instance: { select: { name: true, status: true } },
@@ -66,12 +67,13 @@ export class CampaignController {
     async createCampaign(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const data = createCampaignSchema.parse(req.body);
 
-            // Verify agent and instance belong to user
+            // Verify agent and instance belong to workspace
             const [agent, instance] = await Promise.all([
-                prisma.agent.findFirst({ where: { id: data.agentId, userId } }),
-                prisma.instance.findFirst({ where: { id: data.instanceId, userId } })
+                prisma.agent.findFirst({ where: { id: data.agentId, workspaceId } }),
+                prisma.instance.findFirst({ where: { id: data.instanceId, workspaceId } })
             ]);
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
             if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
@@ -80,6 +82,7 @@ export class CampaignController {
             const campaign = await prisma.campaign.create({
                 data: {
                     userId,
+                    workspaceId,
                     agentId: data.agentId,
                     instanceId: data.instanceId,
                     name: data.name,
@@ -119,10 +122,10 @@ export class CampaignController {
 
     async pauseCampaign(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const campaign = await prisma.campaign.findFirst({ where: { id, userId } });
+            const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
             if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
 
             await prisma.campaign.update({ where: { id }, data: { status: 'PAUSED' } });
@@ -134,10 +137,10 @@ export class CampaignController {
 
     async resumeCampaign(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const campaign = await prisma.campaign.findFirst({ where: { id, userId } });
+            const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
             if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
 
             await prisma.campaign.update({ where: { id }, data: { status: 'RUNNING' } });
@@ -163,10 +166,10 @@ export class CampaignController {
 
     async deleteCampaign(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const campaign = await prisma.campaign.findFirst({ where: { id, userId } });
+            const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
             if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
 
             await prisma.campaign.delete({ where: { id } });

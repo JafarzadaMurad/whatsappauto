@@ -28,7 +28,7 @@ export function registerMetaTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const providers = await prisma.aiProvider.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 select: { id: true, provider: true, createdAt: true },
             });
             return ok({ providers });
@@ -42,11 +42,11 @@ export function registerMetaTools(reg: RegisterToolFn) {
         async (_args, ctx) => {
             const [whatsapp, instagram] = await Promise.all([
                 prisma.instance.findMany({
-                    where: { userId: ctx.userId },
+                    where: { workspaceId: ctx.workspaceId },
                     select: { id: true, name: true, status: true, agentId: true },
                 }),
                 prisma.instagramAccount.findMany({
-                    where: { userId: ctx.userId },
+                    where: { workspaceId: ctx.workspaceId },
                     select: { id: true, igUsername: true, igUserId: true, isActive: true, agentId: true },
                 }),
             ]);

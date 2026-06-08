@@ -71,7 +71,7 @@ function buildTableTools(allowedTableIds: string[]) {
 }
 
 // ─── SKILL: CRM ───
-function buildCrmTools(userId: string) {
+function buildCrmTools(workspaceId: string, userId: string) {
     return {
         upsertClient: makeTool(
             'Create or update a client in the CRM. Use this to save contact info, update status, add tags, or write a summary about the conversation.',
@@ -85,25 +85,29 @@ function buildCrmTools(userId: string) {
             }),
             async ({ phone, name, status, tags, summary, customFields }) => {
                 const cleanPhone = phone.replace(/[^0-9]/g, '');
-                const client = await prisma.client.upsert({
-                    where: { userId_phone: { userId, phone: cleanPhone } },
-                    update: {
-                        ...(name !== undefined ? { name } : {}),
-                        ...(status !== undefined ? { status } : {}),
-                        ...(tags !== undefined ? { tags } : {}),
-                        ...(summary !== undefined ? { summary } : {}),
-                        ...(customFields !== undefined ? { customFields } : {}),
-                    },
-                    create: {
-                        userId,
-                        phone: cleanPhone,
-                        name: name || null,
-                        status: status || 'NEW',
-                        tags: tags || [],
-                        summary: summary || null,
-                        customFields: customFields || null,
-                    }
-                });
+                const existing = await prisma.client.findFirst({ where: { workspaceId, phone: cleanPhone } });
+                const client = existing
+                    ? await prisma.client.update({
+                        where: { id: existing.id },
+                        data: {
+                            ...(name !== undefined ? { name } : {}),
+                            ...(status !== undefined ? { status } : {}),
+                            ...(tags !== undefined ? { tags } : {}),
+                            ...(summary !== undefined ? { summary } : {}),
+                            ...(customFields !== undefined ? { customFields } : {}),
+                        },
+                    })
+                    : await prisma.client.create({
+                        data: {
+                            userId, workspaceId,
+                            phone: cleanPhone,
+                            name: name || null,
+                            status: status || 'NEW',
+                            tags: tags || [],
+                            summary: summary || null,
+                            customFields: customFields || null,
+                        },
+                    });
                 return { success: true, clientId: client.id, phone: client.phone, status: client.status };
             }
         ),
@@ -114,9 +118,7 @@ function buildCrmTools(userId: string) {
             }),
             async ({ phone }) => {
                 const cleanPhone = phone.replace(/[^0-9]/g, '');
-                const client = await prisma.client.findUnique({
-                    where: { userId_phone: { userId, phone: cleanPhone } }
-                });
+                const client = await prisma.client.findFirst({ where: { workspaceId, phone: cleanPhone } });
                 if (!client) return { found: false };
                 return { found: true, name: client.name, status: client.status, tags: client.tags, summary: client.summary, customFields: client.customFields };
             }
@@ -131,7 +133,7 @@ function buildCrmTools(userId: string) {
             async ({ query, status, tag }) => {
                 const clients = await prisma.client.findMany({
                     where: {
-                        userId,
+                        workspaceId,
                         ...(query ? { name: { contains: query, mode: 'insensitive' as any } } : {}),
                         ...(status ? { status } : {}),
                         ...(tag ? { tags: { has: tag } } : {}),
@@ -149,14 +151,14 @@ function buildCrmTools(userId: string) {
 // Lets the agent read and write user-defined custom fields on the contact
 // currently being chatted with. The contact phone is bound at runtime
 // inside the chat handler (the agent doesn't have to discover it).
-function buildUserFieldTools(userId: string, contactPhone: string) {
+function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: string) {
     return {
         listUserFields: makeTool(
             'List all custom fields defined for this account. Returns each field\'s key, label, type, and (for select fields) the allowed options. Call this once before writing values so you use the correct field keys.',
             z.object({}),
             async () => {
                 const fields = await prisma.userField.findMany({
-                    where: { userId },
+                    where: { workspaceId },
                     orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
                 });
                 return { fields: fields.map(f => ({ key: f.key, label: f.label, type: f.type, options: f.options })) };
@@ -169,8 +171,8 @@ function buildUserFieldTools(userId: string, contactPhone: string) {
             }),
             async ({ key }) => {
                 const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
-                const client = await prisma.client.findUnique({
-                    where: { userId_phone: { userId, phone: cleanPhone } },
+                const client = await prisma.client.findFirst({
+                    where: { workspaceId, phone: cleanPhone },
                     select: { customFields: true },
                 });
                 const v = (client?.customFields as Record<string, any> | null)?.[key];
@@ -185,16 +187,14 @@ function buildUserFieldTools(userId: string, contactPhone: string) {
             }),
             async ({ key, value }) => {
                 const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
-                const existing = await prisma.client.findUnique({
-                    where: { userId_phone: { userId, phone: cleanPhone } },
-                    select: { customFields: true },
+                const existing = await prisma.client.findFirst({
+                    where: { workspaceId, phone: cleanPhone },
+                    select: { id: true, customFields: true },
                 });
                 const merged: Record<string, any> = { ...((existing?.customFields as any) || {}), [key]: value };
-                const client = await prisma.client.upsert({
-                    where: { userId_phone: { userId, phone: cleanPhone } },
-                    update: { customFields: merged },
-                    create: { userId, phone: cleanPhone, status: 'NEW', tags: [], customFields: merged },
-                });
+                const client = existing
+                    ? await prisma.client.update({ where: { id: existing.id }, data: { customFields: merged } })
+                    : await prisma.client.create({ data: { userId, workspaceId, phone: cleanPhone, status: 'NEW', tags: [], customFields: merged } });
                 return { success: true, key, value, clientId: client.id };
             }
         ),
@@ -206,7 +206,7 @@ function buildUserFieldTools(userId: string, contactPhone: string) {
             }),
             async ({ key, value }) => {
                 const all = await prisma.client.findMany({
-                    where: { userId },
+                    where: { workspaceId },
                     select: { id: true, phone: true, name: true, customFields: true },
                 });
                 const matches = all.filter(c => (c.customFields as any)?.[key] === value).slice(0, 20);
@@ -665,6 +665,7 @@ function buildToolsForSkills(
     skills: string[],
     allowedTableIds: string[],
     userId: string,
+    workspaceId: string,
     httpTools: HttpToolTemplate[] = [],
     agentId: string = '',
     remoteJid: string = '',
@@ -679,7 +680,7 @@ function buildToolsForSkills(
     }
 
     if (skills.includes('crm')) {
-        tools = { ...tools, ...buildCrmTools(userId) };
+        tools = { ...tools, ...buildCrmTools(workspaceId, userId) };
         prompts.push(resolveSkillPrompt('crm', skillPrompts));
     }
 
@@ -687,7 +688,7 @@ function buildToolsForSkills(
         // For WA the phone is the digits before @s.whatsapp.net; for IG it's
         // the IGSID. upsertCrmContact + buildCrmTools normalise both to digits.
         const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
-        tools = { ...tools, ...buildUserFieldTools(userId, contactPhone) };
+        tools = { ...tools, ...buildUserFieldTools(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('user_fields', skillPrompts));
     }
 
@@ -826,8 +827,14 @@ export class AiService {
             const contact = await prisma.contact.findFirst({
                 where: { instanceId, remoteJid }
             });
-            const client = await prisma.client.findUnique({
-                where: { userId_phone: { userId: agent.userId, phone } }
+            // Instance carries workspaceId after migration; fall back to the
+            // agent owner's personal workspace for safety.
+            const inst = await prisma.instance.findUnique({ where: { id: instanceId }, select: { workspaceId: true } });
+            const wsId = inst?.workspaceId
+                || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(agent.userId));
+
+            const client = await prisma.client.findFirst({
+                where: { workspaceId: wsId, phone }
             }).catch(() => null);
 
             const contactName = client?.name || contact?.pushName || contact?.name || null;
@@ -837,7 +844,7 @@ export class AiService {
             const httpTools = (((agent as any).httpTools) || []) as HttpToolTemplate[];
             const skillPrompts = (((agent as any).skillPrompts) || {}) as Record<string, string>;
             const { tools, skillPrompt } = buildToolsForSkills(
-                skills, agent.allowedTableIds, agent.userId, httpTools,
+                skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, remoteJid, skillPrompts
             );
 

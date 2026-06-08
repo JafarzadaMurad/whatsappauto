@@ -259,9 +259,15 @@ export class InstagramAiService {
             where: { igUserId_senderId: { igUserId, senderId } }
         }).catch(() => null);
 
-        // Auto-add the sender to CRM with channel info
+        // Auto-add the sender to CRM with channel info. IG accounts that
+        // pre-date the workspace migration have workspaceId set by the
+        // migration runner; if still missing, fall back to the owner's
+        // personal workspace.
+        const wsId = account.workspaceId || (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(account.userId);
+        const accountWorkspaceId = typeof wsId === 'string' ? wsId : await wsId;
         await upsertCrmContact({
             userId: account.userId,
+            workspaceId: accountWorkspaceId,
             phone: senderId,
             name: contact?.name || contact?.username || null,
             channel: 'instagram',

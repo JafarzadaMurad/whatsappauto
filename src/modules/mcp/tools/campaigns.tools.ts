@@ -9,7 +9,7 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.campaign.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 include: {
                     agent: { select: { name: true } },
                     instance: { select: { name: true } },
@@ -27,7 +27,7 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         { id: z.string() },
         async ({ id }, ctx) => {
             const row = await prisma.campaign.findFirst({
-                where: { id, userId: ctx.userId },
+                where: { id, workspaceId: ctx.workspaceId },
                 include: {
                     agent: { select: { name: true } },
                     instance: { select: { name: true } },
@@ -50,14 +50,14 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         },
         async ({ name, agentId, instanceId, phoneNumbers }, ctx) => {
             const [agent, instance] = await Promise.all([
-                prisma.agent.findFirst({ where: { id: agentId, userId: ctx.userId } }),
-                prisma.instance.findFirst({ where: { id: instanceId, userId: ctx.userId } }),
+                prisma.agent.findFirst({ where: { id: agentId, workspaceId: ctx.workspaceId } }),
+                prisma.instance.findFirst({ where: { id: instanceId, workspaceId: ctx.workspaceId } }),
             ]);
             if (!agent) return fail(`Agent ${agentId} not found or not yours`);
             if (!instance) return fail(`Instance ${instanceId} not found or not yours`);
 
             const campaign = await prisma.campaign.create({
-                data: { userId: ctx.userId, name, agentId, instanceId, status: 'PENDING' },
+                data: { userId: ctx.userId, workspaceId: ctx.workspaceId, name, agentId, instanceId, status: 'PENDING' },
             });
             await prisma.campaignRecipient.createMany({
                 data: phoneNumbers.map((p: string) => ({
@@ -76,7 +76,7 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         'Pauses a running campaign. Pending recipients are halted; in-flight sends complete.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.campaign.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.campaign.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Campaign ${id} not found`);
             const row = await prisma.campaign.update({ where: { id }, data: { status: 'PAUSED' } });
             return ok(row);
@@ -88,7 +88,7 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         'Resumes a paused campaign.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.campaign.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.campaign.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Campaign ${id} not found`);
             const row = await prisma.campaign.update({ where: { id }, data: { status: 'RUNNING' } });
             return ok(row);
@@ -100,7 +100,7 @@ export function registerCampaignTools(reg: RegisterToolFn) {
         'Deletes a campaign and its recipient rows.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.campaign.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.campaign.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Campaign ${id} not found`);
             await prisma.campaign.delete({ where: { id } });
             return ok({ deleted: true, id });

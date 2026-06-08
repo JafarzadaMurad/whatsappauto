@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const planSchema = z.object({
     name: z.string().min(1),
@@ -20,30 +21,30 @@ const planSchema = z.object({
 });
 
 export class PlanController {
-    // Authenticated — current user's plan + usage counts
+    // Authenticated — current workspace's plan + usage counts
     async getCurrent(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
-            const user = await prisma.user.findUnique({
-                where: { id: userId },
+            const workspaceId = getWorkspaceId(req);
+            const workspace = await prisma.workspace.findUnique({
+                where: { id: workspaceId },
                 select: {
                     planId: true, subscriptionStatus: true, subscriptionEndsAt: true,
                     plan: true
                 }
             });
-            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            if (!workspace) return res.status(404).json({ success: false, message: 'Workspace not found' });
             const [agents, whatsapp, instagram, automations] = await Promise.all([
-                prisma.agent.count({ where: { userId } }),
-                prisma.instance.count({ where: { userId } }),
-                prisma.instagramAccount.count({ where: { userId } }),
-                prisma.automation.count({ where: { userId } })
+                prisma.agent.count({ where: { workspaceId } }),
+                prisma.instance.count({ where: { workspaceId } }),
+                prisma.instagramAccount.count({ where: { workspaceId } }),
+                prisma.automation.count({ where: { workspaceId } })
             ]);
             return res.json({
                 success: true,
-                plan: user.plan,
+                plan: workspace.plan,
                 subscription: {
-                    status: user.subscriptionStatus,
-                    endsAt: user.subscriptionEndsAt
+                    status: workspace.subscriptionStatus,
+                    endsAt: workspace.subscriptionEndsAt
                 },
                 usage: { agents, whatsapp, instagram, automations }
             });

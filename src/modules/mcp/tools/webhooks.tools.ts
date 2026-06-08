@@ -9,7 +9,7 @@ export function registerWebhookTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.webhookConfig.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 orderBy: { createdAt: 'desc' },
             });
             return ok(rows);
@@ -27,12 +27,13 @@ export function registerWebhookTools(reg: RegisterToolFn) {
         },
         async ({ url, events, instanceId, isActive }, ctx) => {
             if (instanceId) {
-                const inst = await prisma.instance.findFirst({ where: { id: instanceId, userId: ctx.userId } });
+                const inst = await prisma.instance.findFirst({ where: { id: instanceId, workspaceId: ctx.workspaceId } });
                 if (!inst) return fail(`Instance ${instanceId} not found`);
             }
             const row = await prisma.webhookConfig.create({
                 data: {
                     userId: ctx.userId,
+                    workspaceId: ctx.workspaceId,
                     url,
                     events,
                     instanceId: instanceId || null,
@@ -48,7 +49,7 @@ export function registerWebhookTools(reg: RegisterToolFn) {
         'Deletes a webhook subscription.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.webhookConfig.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.webhookConfig.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Webhook ${id} not found`);
             await prisma.webhookConfig.delete({ where: { id } });
             return ok({ deleted: true, id });

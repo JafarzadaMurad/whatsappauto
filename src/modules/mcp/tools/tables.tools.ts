@@ -9,8 +9,8 @@ const columnSchema = z.object({
     relationTableId: z.string().optional(),
 });
 
-async function ownsTable(userId: string, tableId: string) {
-    return prisma.customTable.findFirst({ where: { id: tableId, userId } });
+async function ownsTable(workspaceId: string, tableId: string) {
+    return prisma.customTable.findFirst({ where: { id: tableId, workspaceId } });
 }
 
 export function registerTableTools(reg: RegisterToolFn) {
@@ -20,7 +20,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.customTable.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 orderBy: { updatedAt: 'desc' },
             });
             return ok(rows);
@@ -32,7 +32,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         'Returns a single data table with its column definitions and row count.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.customTable.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.customTable.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Table ${id} not found`);
             const count = await prisma.customRow.count({ where: { tableId: id } });
             return ok({ ...row, rowCount: count });
@@ -44,7 +44,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         'Returns rows from a data table (each row is just its `data` JSON keyed by column name).',
         { tableId: z.string(), limit: z.number().int().min(1).max(500).optional(), offset: z.number().int().min(0).optional() },
         async ({ tableId, limit, offset }, ctx) => {
-            const t = await ownsTable(ctx.userId, tableId);
+            const t = await ownsTable(ctx.workspaceId, tableId);
             if (!t) return fail(`Table ${tableId} not found`);
             const rows = await prisma.customRow.findMany({
                 where: { tableId },
@@ -64,6 +64,7 @@ export function registerTableTools(reg: RegisterToolFn) {
             const row = await prisma.customTable.create({
                 data: {
                     userId: ctx.userId,
+                    workspaceId: ctx.workspaceId,
                     name,
                     description: description || null,
                     columns: columns as any,
@@ -78,7 +79,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         'Adds a row to a data table. `data` is an object keyed by the column `name` (not id) where values match the column type.',
         { tableId: z.string(), data: z.record(z.string(), z.any()) },
         async ({ tableId, data }, ctx) => {
-            const t = await ownsTable(ctx.userId, tableId);
+            const t = await ownsTable(ctx.workspaceId, tableId);
             if (!t) return fail(`Table ${tableId} not found`);
             const row = await prisma.customRow.create({ data: { tableId, data: data as any } });
             return ok(row);
@@ -90,7 +91,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         'Updates a single row in a data table. The supplied `data` object is shallow-merged into the existing row.',
         { tableId: z.string(), rowId: z.string(), data: z.record(z.string(), z.any()) },
         async ({ tableId, rowId, data }, ctx) => {
-            const t = await ownsTable(ctx.userId, tableId);
+            const t = await ownsTable(ctx.workspaceId, tableId);
             if (!t) return fail(`Table ${tableId} not found`);
             const existing = await prisma.customRow.findFirst({ where: { id: rowId, tableId } });
             if (!existing) return fail(`Row ${rowId} not found`);
@@ -105,7 +106,7 @@ export function registerTableTools(reg: RegisterToolFn) {
         'Deletes one row from a data table.',
         { tableId: z.string(), rowId: z.string() },
         async ({ tableId, rowId }, ctx) => {
-            const t = await ownsTable(ctx.userId, tableId);
+            const t = await ownsTable(ctx.workspaceId, tableId);
             if (!t) return fail(`Table ${tableId} not found`);
             const existing = await prisma.customRow.findFirst({ where: { id: rowId, tableId } });
             if (!existing) return fail(`Row ${rowId} not found`);

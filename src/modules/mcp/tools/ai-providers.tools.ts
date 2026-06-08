@@ -9,7 +9,7 @@ export function registerAiProviderTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.aiProvider.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 select: { id: true, provider: true, createdAt: true, updatedAt: true },
             });
             return ok(rows);
@@ -24,10 +24,10 @@ export function registerAiProviderTools(reg: RegisterToolFn) {
             apiKey: z.string().min(10),
         },
         async ({ provider, apiKey }, ctx) => {
-            const existing = await prisma.aiProvider.findFirst({ where: { userId: ctx.userId, provider } });
+            const existing = await prisma.aiProvider.findFirst({ where: { workspaceId: ctx.workspaceId, provider } });
             const row = existing
                 ? await prisma.aiProvider.update({ where: { id: existing.id }, data: { apiKey } })
-                : await prisma.aiProvider.create({ data: { userId: ctx.userId, provider, apiKey } });
+                : await prisma.aiProvider.create({ data: { userId: ctx.userId, workspaceId: ctx.workspaceId, provider, apiKey } });
             return ok({ id: row.id, provider: row.provider, updatedAt: row.updatedAt });
         },
     );

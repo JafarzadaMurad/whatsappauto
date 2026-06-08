@@ -80,6 +80,7 @@ export async function issueToken(req: Request, res: Response) {
             await prisma.mcpOAuthToken.create({
                 data: {
                     userId: row.userId,
+                    workspaceId: row.workspaceId,
                     clientId: row.clientId,
                     accessToken,
                     refreshToken,
@@ -113,6 +114,7 @@ export async function issueToken(req: Request, res: Response) {
                 prisma.mcpOAuthToken.create({
                     data: {
                         userId: old.userId,
+                        workspaceId: old.workspaceId,
                         clientId: old.clientId,
                         accessToken,
                         refreshToken: newRefresh,

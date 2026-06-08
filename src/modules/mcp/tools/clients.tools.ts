@@ -14,7 +14,7 @@ export function registerClientTools(reg: RegisterToolFn) {
             limit: z.number().int().min(1).max(500).optional(),
         },
         async ({ search, tags, status, channel, limit }, ctx) => {
-            const where: any = { userId: ctx.userId };
+            const where: any = { workspaceId: ctx.workspaceId };
             if (search) {
                 where.OR = [
                     { phone: { contains: search } },
@@ -38,7 +38,7 @@ export function registerClientTools(reg: RegisterToolFn) {
         'Returns a single CRM contact.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.client.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.client.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Client ${id} not found`);
             return ok(row);
         },
@@ -57,7 +57,7 @@ export function registerClientTools(reg: RegisterToolFn) {
         },
         async (args, ctx) => {
             const { id, ...patch } = args;
-            const existing = await prisma.client.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Client ${id} not found`);
             const row = await prisma.client.update({
                 where: { id },
@@ -78,7 +78,7 @@ export function registerClientTools(reg: RegisterToolFn) {
         'Adds a tag to a CRM contact (no-op if already present).',
         { id: z.string(), tag: z.string().min(1) },
         async ({ id, tag }, ctx) => {
-            const existing = await prisma.client.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Client ${id} not found`);
             const tags = Array.from(new Set([...(existing.tags || []), tag]));
             const row = await prisma.client.update({ where: { id }, data: { tags } });
@@ -91,7 +91,7 @@ export function registerClientTools(reg: RegisterToolFn) {
         'Removes a tag from a CRM contact.',
         { id: z.string(), tag: z.string().min(1) },
         async ({ id, tag }, ctx) => {
-            const existing = await prisma.client.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Client ${id} not found`);
             const tags = (existing.tags || []).filter(t => t !== tag);
             const row = await prisma.client.update({ where: { id }, data: { tags } });
@@ -104,7 +104,7 @@ export function registerClientTools(reg: RegisterToolFn) {
         'Deletes a CRM contact. This does not delete their message history.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.client.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.client.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Client ${id} not found`);
             await prisma.client.delete({ where: { id } });
             return ok({ deleted: true, id });

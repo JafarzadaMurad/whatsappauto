@@ -14,7 +14,7 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.userField.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
             });
             return ok(rows);
@@ -32,13 +32,15 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
         },
         async (args, ctx) => {
             const key = args.key || slugify(args.label);
-            const conflict = await prisma.userField.findUnique({ where: { userId_key: { userId: ctx.userId, key } } });
+            const conflict = await prisma.userField.findFirst({ where: { workspaceId: ctx.workspaceId, key } });
             if (conflict) return fail(`Field key "${key}" already exists`);
-            const lastOrder = await prisma.userField.aggregate({ where: { userId: ctx.userId }, _max: { order: true } });
+            const lastOrder = await prisma.userField.aggregate({ where: { workspaceId: ctx.workspaceId }, _max: { order: true } });
             const order = (lastOrder._max.order ?? -1) + 1;
             const row = await prisma.userField.create({
                 data: {
-                    userId: ctx.userId, key,
+                    userId: ctx.userId,
+                    workspaceId: ctx.workspaceId,
+                    key,
                     label: args.label,
                     type: args.type,
                     options: args.type === 'select' ? (args.options || []) : [],
@@ -59,7 +61,7 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
             options: z.array(z.string().min(1)).optional(),
         },
         async (args, ctx) => {
-            const existing = await prisma.userField.findFirst({ where: { id: args.id, userId: ctx.userId } });
+            const existing = await prisma.userField.findFirst({ where: { id: args.id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Field ${args.id} not found`);
             const row = await prisma.userField.update({
                 where: { id: args.id },
@@ -78,7 +80,7 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
         'Deletes a custom field. Existing values in contacts.customFields are left in the database but stop being displayed.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.userField.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.userField.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Field ${id} not found`);
             await prisma.userField.delete({ where: { id } });
             return ok({ deleted: true, id });
@@ -95,16 +97,26 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
         },
         async ({ phone, key, value }, ctx) => {
             const cleanPhone = phone.replace(/[^0-9]/g, '') || phone;
-            const existing = await prisma.client.findUnique({
-                where: { userId_phone: { userId: ctx.userId, phone: cleanPhone } },
-                select: { customFields: true },
+            const existing = await prisma.client.findFirst({
+                where: { workspaceId: ctx.workspaceId, phone: cleanPhone },
+                select: { id: true, customFields: true },
             });
             const merged: Record<string, any> = { ...((existing?.customFields as any) || {}), [key]: value };
-            const client = await prisma.client.upsert({
-                where: { userId_phone: { userId: ctx.userId, phone: cleanPhone } },
-                update: { customFields: merged },
-                create: { userId: ctx.userId, phone: cleanPhone, status: 'NEW', tags: [], customFields: merged },
-            });
+            const client = existing
+                ? await prisma.client.update({
+                    where: { id: existing.id },
+                    data: { customFields: merged },
+                })
+                : await prisma.client.create({
+                    data: {
+                        userId: ctx.userId,
+                        workspaceId: ctx.workspaceId,
+                        phone: cleanPhone,
+                        status: 'NEW',
+                        tags: [],
+                        customFields: merged,
+                    },
+                });
             return ok({ clientId: client.id, phone: cleanPhone, key, value });
         },
     );
@@ -115,8 +127,8 @@ export function registerUserFieldTools(reg: RegisterToolFn) {
         { phone: z.string().min(3), key: z.string().min(1) },
         async ({ phone, key }, ctx) => {
             const cleanPhone = phone.replace(/[^0-9]/g, '') || phone;
-            const client = await prisma.client.findUnique({
-                where: { userId_phone: { userId: ctx.userId, phone: cleanPhone } },
+            const client = await prisma.client.findFirst({
+                where: { workspaceId: ctx.workspaceId, phone: cleanPhone },
                 select: { customFields: true },
             });
             const value = (client?.customFields as any)?.[key] ?? null;

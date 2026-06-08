@@ -44,7 +44,7 @@ router.post('/oauth/token', issueToken);
 async function handleMcp(req: Request, res: Response) {
     if (!req.mcpAuth) return res.status(401).end();
     try {
-        const server = buildMcpServer({ auth: req.mcpAuth, userId: req.mcpAuth.userId });
+        const server = buildMcpServer({ auth: req.mcpAuth, userId: req.mcpAuth.userId, workspaceId: req.mcpAuth.workspaceId });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await server.connect(transport);
         await transport.handleRequest(req as any, res, req.body);
@@ -59,8 +59,8 @@ router.delete('/', mcpAuth, handleMcp);
 
 // ─── Settings API (JWT-protected; used by the dashboard) ───
 router.get('/permissions', authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
-    const flags = await listPermissions(userId);
+    const workspaceId = req.workspaceId!;
+    const flags = await listPermissions(workspaceId);
     res.json({
         success: true,
         categories: PERMISSION_CATEGORIES,
@@ -71,21 +71,22 @@ router.get('/permissions', authMiddleware, async (req: Request, res: Response) =
 
 router.put('/permissions', authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
+    const workspaceId = req.workspaceId!;
     const flags = (req.body?.toolFlags || {}) as Record<string, boolean>;
-    await setPermissions(userId, flags);
+    await setPermissions(userId, workspaceId, flags);
     res.json({ success: true });
 });
 
 router.get('/clients', authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const workspaceId = req.workspaceId!;
     const [clients, tokens] = await Promise.all([
         prisma.mcpClient.findMany({
-            where: { userId },
+            where: { workspaceId },
             select: { id: true, clientId: true, name: true, createdAt: true },
             orderBy: { createdAt: 'desc' },
         }),
         prisma.mcpOAuthToken.findMany({
-            where: { userId },
+            where: { workspaceId },
             select: { id: true, clientId: true, expiresAt: true, createdAt: true },
             orderBy: { createdAt: 'desc' },
             take: 50,
@@ -95,35 +96,34 @@ router.get('/clients', authMiddleware, async (req: Request, res: Response) => {
 });
 
 router.delete('/clients/:id', authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const workspaceId = req.workspaceId!;
     const id = String(req.params.id || '');
-    const existing = await prisma.mcpClient.findFirst({ where: { id, userId } });
+    const existing = await prisma.mcpClient.findFirst({ where: { id, workspaceId } });
     if (!existing) return res.status(404).json({ success: false, message: 'Not found' });
-    // Cascade: revoke all tokens issued to this clientId
     await prisma.$transaction([
-        prisma.mcpOAuthToken.deleteMany({ where: { userId, clientId: existing.clientId } }),
+        prisma.mcpOAuthToken.deleteMany({ where: { workspaceId, clientId: existing.clientId } }),
         prisma.mcpClient.delete({ where: { id } }),
     ]);
     res.json({ success: true });
 });
 
 router.delete('/tokens/:id', authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const workspaceId = req.workspaceId!;
     const id = String(req.params.id || '');
-    const existing = await prisma.mcpOAuthToken.findFirst({ where: { id, userId } });
+    const existing = await prisma.mcpOAuthToken.findFirst({ where: { id, workspaceId } });
     if (!existing) return res.status(404).json({ success: false, message: 'Not found' });
     await prisma.mcpOAuthToken.delete({ where: { id } });
     res.json({ success: true });
 });
 
 router.get('/audit', authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const workspaceId = req.workspaceId!;
     const tool = req.query.tool as string | undefined;
     const status = req.query.status as string | undefined;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const rows = await prisma.mcpAuditLog.findMany({
         where: {
-            userId,
+            workspaceId,
             ...(tool ? { tool } : {}),
             ...(status === 'ok' ? { resultOk: true } : status === 'error' ? { resultOk: false } : {}),
         },

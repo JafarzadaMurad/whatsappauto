@@ -131,11 +131,14 @@ export class InstanceManager {
                             // Auto-add the sender to CRM with channel info
                             prisma.instance.findUnique({
                                 where: { id: instanceId },
-                                select: { userId: true, name: true }
-                            }).then(inst => {
+                                select: { userId: true, name: true, workspaceId: true }
+                            }).then(async inst => {
                                 if (!inst) return;
+                                const wsId = inst.workspaceId
+                                    || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
                                 return upsertCrmContact({
                                     userId: inst.userId,
+                                    workspaceId: wsId,
                                     phone: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
                                     name: msg.pushName || null,
                                     channel: 'whatsapp',

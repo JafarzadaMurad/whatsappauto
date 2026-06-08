@@ -2,20 +2,21 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 export class InboxController {
     // List all messaging accounts (WhatsApp instances + Instagram accounts)
     async getAccounts(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const [instances, igAccounts] = await Promise.all([
                 prisma.instance.findMany({
-                    where: { userId },
+                    where: { workspaceId },
                     select: { id: true, name: true, status: true },
                     orderBy: { createdAt: 'asc' }
                 }),
                 prisma.instagramAccount.findMany({
-                    where: { userId },
+                    where: { workspaceId },
                     select: { id: true, igUsername: true, igUserId: true, isActive: true },
                     orderBy: { createdAt: 'asc' }
                 })
@@ -33,17 +34,17 @@ export class InboxController {
     // Conversations for a given account (WhatsApp instance or Instagram account)
     async getConversations(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const accountId = req.query.accountId as string;
             const channel = req.query.channel as string; // 'whatsapp' | 'instagram'
             if (!accountId) return res.status(400).json({ success: false, message: 'accountId required' });
 
-            // Verify the account belongs to the user
+            // Verify the account belongs to the workspace
             if (channel === 'instagram') {
-                const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId } });
+                const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
                 if (!acc) return res.status(404).json({ success: false, message: 'Account not found' });
             } else {
-                const inst = await prisma.instance.findFirst({ where: { id: accountId, userId } });
+                const inst = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } });
                 if (!inst) return res.status(404).json({ success: false, message: 'Account not found' });
             }
 
@@ -96,14 +97,14 @@ export class InboxController {
 
     async getMessages(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const accountId = req.query.accountId as string;
             const remoteJid = req.query.remoteJid as string;
             if (!accountId || !remoteJid) return res.status(400).json({ success: false, message: 'accountId and remoteJid required' });
 
             // Ownership check via either account type
-            const owns = await prisma.instance.findFirst({ where: { id: accountId, userId } })
-                || await prisma.instagramAccount.findFirst({ where: { id: accountId, userId } });
+            const owns = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } })
+                || await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
             if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
 
             const messages = await prisma.aiConversationLog.findMany({
@@ -119,7 +120,7 @@ export class InboxController {
     // Manual reply (Instagram only for now)
     async reply(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const schema = z.object({
                 accountId: z.string().min(1),
                 remoteJid: z.string().min(1),
@@ -131,7 +132,7 @@ export class InboxController {
                 return res.status(400).json({ success: false, message: 'Manual reply is currently supported for Instagram conversations only' });
             }
 
-            const account = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Instagram account not found' });
 
             const senderId = remoteJid.slice(3);
@@ -143,10 +144,10 @@ export class InboxController {
             }
 
             // Record the manual reply. agentId is required on the log — use the
-            // account's assigned agent if any, else any agent of the user.
+            // account's assigned agent if any, else any agent of the workspace.
             let agentId = account.agentId;
             if (!agentId) {
-                const anyAgent = await prisma.agent.findFirst({ where: { userId }, select: { id: true } });
+                const anyAgent = await prisma.agent.findFirst({ where: { workspaceId }, select: { id: true } });
                 agentId = anyAgent?.id || null;
             }
             let log = null;

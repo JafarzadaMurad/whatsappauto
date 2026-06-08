@@ -12,7 +12,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.instagramAccount.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 select: { id: true, igUserId: true, igUsername: true, isActive: true, agentId: true, createdAt: true },
                 orderBy: { createdAt: 'desc' },
             });
@@ -26,7 +26,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         { id: z.string() },
         async ({ id }, ctx) => {
             const row = await prisma.instagramAccount.findFirst({
-                where: { id, userId: ctx.userId },
+                where: { id, workspaceId: ctx.workspaceId },
                 select: { id: true, igUserId: true, igUsername: true, isActive: true, agentId: true, createdAt: true },
             });
             if (!row) return fail(`Instagram account ${id} not found`);
@@ -55,7 +55,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         'Disconnects an Instagram account. The user can reconnect later via OAuth.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.instagramAccount.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.instagramAccount.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Instagram account ${id} not found`);
             await prisma.instagramAccount.delete({ where: { id } });
             return ok({ deleted: true, id });
@@ -67,7 +67,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         'Lists recent posts on a connected Instagram account (up to 30). Returns id, caption, media_type, permalink, comment / like counts. Use the post id as `mediaId` for the trigger_ig_comment node.',
         { accountId: z.string() },
         async ({ accountId }, ctx) => {
-            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } });
+            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
             if (!acc) return fail(`Instagram account ${accountId} not found`);
             try {
                 const r = await axios.get('https://graph.instagram.com/v21.0/me/media', {
@@ -89,7 +89,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         'Lists comments on a specific Instagram post.',
         { accountId: z.string(), mediaId: z.string() },
         async ({ accountId, mediaId }, ctx) => {
-            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } });
+            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
             if (!acc) return fail(`Instagram account ${accountId} not found`);
             try {
                 const r = await axios.get(`https://graph.instagram.com/v21.0/${mediaId}/comments`, {
@@ -118,7 +118,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
             }).optional(),
         },
         async ({ accountId, recipientId, text, attachment }, ctx) => {
-            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } });
+            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
             if (!acc) return fail(`Instagram account ${accountId} not found`);
             if (!text && !attachment) return fail('Provide at least one of `text` or `attachment`.');
             try {
@@ -140,7 +140,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
         'Posts a public reply to an Instagram comment. Requires the instagram_business_manage_comments permission — pending re-approval from Meta on this app.',
         { accountId: z.string(), commentId: z.string(), text: z.string().min(1) },
         async ({ accountId, commentId, text }, ctx) => {
-            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } });
+            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
             if (!acc) return fail(`Instagram account ${accountId} not found`);
             try {
                 await axios.post(`https://graph.instagram.com/v21.0/${commentId}/replies`,

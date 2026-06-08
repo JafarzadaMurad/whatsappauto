@@ -36,7 +36,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.automation.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 orderBy: { updatedAt: 'desc' },
             });
             return ok(rows.map(r => ({
@@ -53,7 +53,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
         'Returns one automation with its full node + edge graph.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.automation.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.automation.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Automation ${id} not found`);
             return ok(row);
         },
@@ -64,7 +64,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
         'Returns recent execution records for an automation, newest first. Each row: id, status, triggerType, channel, contact, duration, error.',
         { automationId: z.string(), limit: z.number().int().min(1).max(200).optional() },
         async ({ automationId, limit }, ctx) => {
-            const auto = await prisma.automation.findFirst({ where: { id: automationId, userId: ctx.userId } });
+            const auto = await prisma.automation.findFirst({ where: { id: automationId, workspaceId: ctx.workspaceId } });
             if (!auto) return fail(`Automation ${automationId} not found`);
             const rows = await prisma.automationExecution.findMany({
                 where: { automationId },
@@ -90,6 +90,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
             const row = await prisma.automation.create({
                 data: {
                     userId: ctx.userId,
+                    workspaceId: ctx.workspaceId,
                     name,
                     isActive: isActive ?? false,
                     nodes: nodes as any,
@@ -111,7 +112,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
             edges: z.array(edgeSchema).optional(),
         },
         async ({ id, name, isActive, nodes, edges }, ctx) => {
-            const existing = await prisma.automation.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.automation.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Automation ${id} not found`);
             if (nodes) {
                 const err = validateGraph(nodes);
@@ -135,7 +136,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
         'Activates or deactivates an automation. Inactive automations do not fire on incoming messages.',
         { id: z.string(), isActive: z.boolean() },
         async ({ id, isActive }, ctx) => {
-            const existing = await prisma.automation.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.automation.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Automation ${id} not found`);
             const row = await prisma.automation.update({ where: { id }, data: { isActive } });
             return ok({ id: row.id, isActive: row.isActive });
@@ -147,7 +148,7 @@ export function registerAutomationTools(reg: RegisterToolFn) {
         'Permanently deletes an automation. The audit log entry is preserved. This action cannot be undone.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.automation.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.automation.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Automation ${id} not found`);
             await prisma.automation.delete({ where: { id } });
             return ok({ deleted: true, id });

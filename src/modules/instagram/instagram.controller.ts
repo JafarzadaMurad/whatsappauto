@@ -5,6 +5,7 @@ import { config } from '../../config';
 import axios from 'axios';
 import { InstagramAiService } from './instagram.ai.service';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
+import { getWorkspaceId } from '../../lib/workspace-context';
 
 const VERIFY_TOKEN = 'alchatbot_verify_2024';
 
@@ -212,6 +213,7 @@ export class InstagramController {
     async saveAccount(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const { igUserId, username, accessToken, agentId } = req.body;
 
             if (!igUserId || !accessToken) {
@@ -227,8 +229,8 @@ export class InstagramController {
 
             const account = await prisma.instagramAccount.upsert({
                 where: { igUserId },
-                update: { accessToken, igUsername: username, agentId: agentId || null, userId },
-                create: { userId, igUserId, igUsername: username, accessToken, agentId: agentId || null }
+                update: { accessToken, igUsername: username, agentId: agentId || null, userId, workspaceId },
+                create: { userId, workspaceId, igUserId, igUsername: username, accessToken, agentId: agentId || null }
             });
 
             // Subscribe to webhooks for this account (use me/ endpoint with Bearer auth)
@@ -252,9 +254,9 @@ export class InstagramController {
     // ─── List connected accounts ───
     async getAccounts(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const accounts = await prisma.instagramAccount.findMany({
-                where: { userId },
+                where: { workspaceId },
                 include: { agent: { select: { name: true, id: true } } },
                 orderBy: { createdAt: 'desc' }
             });
@@ -267,11 +269,11 @@ export class InstagramController {
     // ─── Update account (change agent, toggle active) ───
     async updateAccount(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const { agentId, isActive } = req.body;
 
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             const updated = await prisma.instagramAccount.update({
@@ -291,10 +293,10 @@ export class InstagramController {
     // ─── Delete account ───
     async deleteAccount(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
 
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             await prisma.instagramAccount.delete({ where: { id } });
@@ -307,9 +309,9 @@ export class InstagramController {
     // ─── Account profile (live from Instagram) ───
     async getAccountProfile(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             let profile: any = { username: account.igUsername, igUserId: account.igUserId };
@@ -333,9 +335,9 @@ export class InstagramController {
     // ─── Recent media (posts) ───
     async getAccountMedia(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             try {
@@ -358,10 +360,10 @@ export class InstagramController {
     // ─── Comments on a media post ───
     async getMediaComments(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const mediaId = req.params.mediaId as string;
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             try {
@@ -383,13 +385,13 @@ export class InstagramController {
     // ─── Reply to a comment ───
     async replyToMediaComment(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const commentId = req.params.commentId as string;
             const text = String(req.body.text || '').trim();
             if (!text) return res.status(400).json({ success: false, message: 'Reply text required' });
 
-            const account = await prisma.instagramAccount.findFirst({ where: { id, userId } });
+            const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             try {

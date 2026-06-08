@@ -15,7 +15,7 @@ export function registerApiKeyTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.apiKey.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 orderBy: { createdAt: 'desc' },
                 select: { id: true, name: true, key: true, createdAt: true, lastUsedAt: true },
             });
@@ -30,7 +30,7 @@ export function registerApiKeyTools(reg: RegisterToolFn) {
         async ({ name }, ctx) => {
             const key = 'sk_live_' + crypto.randomBytes(24).toString('hex');
             const row = await prisma.apiKey.create({
-                data: { userId: ctx.userId, name, key },
+                data: { userId: ctx.userId, workspaceId: ctx.workspaceId, name, key },
                 select: { id: true, name: true, key: true, createdAt: true },
             });
             return ok({
@@ -45,7 +45,7 @@ export function registerApiKeyTools(reg: RegisterToolFn) {
         'Revokes an API key. Any clients using it will start receiving 401 errors immediately.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.apiKey.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.apiKey.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`API key ${id} not found`);
             await prisma.apiKey.delete({ where: { id } });
             return ok({ deleted: true, id });

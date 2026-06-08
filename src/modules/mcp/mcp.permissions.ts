@@ -124,24 +124,24 @@ export function getToolPermissionKey(tool: string): string {
     return TOOL_PERMISSION[tool] || 'meta.read';
 }
 
-export async function isToolAllowed(userId: string, tool: string): Promise<boolean> {
+export async function isToolAllowed(workspaceId: string, tool: string): Promise<boolean> {
     const key = getToolPermissionKey(tool);
-    const row = await prisma.mcpPermission.findUnique({ where: { userId } });
+    const row = await prisma.mcpPermission.findFirst({ where: { workspaceId } });
     if (!row) return true; // default = allow everything
     const flags = (row.toolFlags as Record<string, boolean>) || {};
-    // Explicit false denies. Missing key = allow.
     return flags[key] !== false;
 }
 
-export async function listPermissions(userId: string): Promise<Record<string, boolean>> {
-    const row = await prisma.mcpPermission.findUnique({ where: { userId } });
+export async function listPermissions(workspaceId: string): Promise<Record<string, boolean>> {
+    const row = await prisma.mcpPermission.findFirst({ where: { workspaceId } });
     return (row?.toolFlags as Record<string, boolean>) || {};
 }
 
-export async function setPermissions(userId: string, toolFlags: Record<string, boolean>) {
-    await prisma.mcpPermission.upsert({
-        where: { userId },
-        create: { userId, toolFlags },
-        update: { toolFlags },
-    });
+export async function setPermissions(userId: string, workspaceId: string, toolFlags: Record<string, boolean>) {
+    const existing = await prisma.mcpPermission.findFirst({ where: { workspaceId } });
+    if (existing) {
+        await prisma.mcpPermission.update({ where: { id: existing.id }, data: { toolFlags } });
+    } else {
+        await prisma.mcpPermission.create({ data: { userId, workspaceId, toolFlags } });
+    }
 }

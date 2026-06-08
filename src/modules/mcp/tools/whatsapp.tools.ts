@@ -12,7 +12,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.instance.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 select: { id: true, name: true, status: true, agentId: true, createdAt: true, updatedAt: true },
                 orderBy: { createdAt: 'desc' },
             });
@@ -25,7 +25,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         'Returns details about a specific WhatsApp instance.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.instance.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.instance.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Instance ${id} not found`);
             return ok(row);
         },
@@ -37,11 +37,11 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         { name: z.string().min(1), agentId: z.string().uuid().optional() },
         async ({ name, agentId }, ctx) => {
             if (agentId) {
-                const agent = await prisma.agent.findFirst({ where: { id: agentId, userId: ctx.userId } });
+                const agent = await prisma.agent.findFirst({ where: { id: agentId, workspaceId: ctx.workspaceId } });
                 if (!agent) return fail(`Agent ${agentId} not found or not yours`);
             }
             const row = await prisma.instance.create({
-                data: { userId: ctx.userId, name, agentId: agentId || null },
+                data: { userId: ctx.userId, workspaceId: ctx.workspaceId, name, agentId: agentId || null },
             });
             return ok({ ...row, note: 'Scan the QR code in the dashboard at /dashboard/whatsapp to finish linking.' });
         },
@@ -52,7 +52,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         'Restarts a WhatsApp instance — useful when the connection is stuck.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.instance.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.instance.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Instance ${id} not found`);
             // Mark status; the worker watches for status flips
             await prisma.instance.update({ where: { id }, data: { status: 'CONNECTING' } });
@@ -65,7 +65,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         'Permanently deletes a WhatsApp instance. The session is destroyed and the connection is dropped.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const row = await prisma.instance.findFirst({ where: { id, userId: ctx.userId } });
+            const row = await prisma.instance.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!row) return fail(`Instance ${id} not found`);
             await prisma.instance.delete({ where: { id } });
             return ok({ deleted: true, id });
@@ -77,7 +77,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
         'Sends a plain-text WhatsApp message from the given instance to a phone number (international format, e.g. 994501234567).',
         { instanceId: z.string().uuid(), to: z.string().min(5), text: z.string().min(1) },
         async ({ instanceId, to, text }, ctx) => {
-            const inst = await prisma.instance.findFirst({ where: { id: instanceId, userId: ctx.userId } });
+            const inst = await prisma.instance.findFirst({ where: { id: instanceId, workspaceId: ctx.workspaceId } });
             if (!inst) return fail(`Instance ${instanceId} not found`);
             const result = await messaging.sendText(instanceId, to, text);
             return ok(result);
@@ -97,7 +97,7 @@ export function registerWhatsappTools(reg: RegisterToolFn) {
             mimetype: z.string().optional(),
         },
         async ({ instanceId, to, type, url, caption, fileName, mimetype }, ctx) => {
-            const inst = await prisma.instance.findFirst({ where: { id: instanceId, userId: ctx.userId } });
+            const inst = await prisma.instance.findFirst({ where: { id: instanceId, workspaceId: ctx.workspaceId } });
             if (!inst) return fail(`Instance ${instanceId} not found`);
             const result = await messaging.sendMedia(instanceId, to, type, url, caption, fileName, mimetype);
             return ok(result);

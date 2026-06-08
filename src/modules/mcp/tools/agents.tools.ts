@@ -22,7 +22,7 @@ export function registerAgentTools(reg: RegisterToolFn) {
         {},
         async (_args, ctx) => {
             const rows = await prisma.agent.findMany({
-                where: { userId: ctx.userId },
+                where: { workspaceId: ctx.workspaceId },
                 include: { provider: { select: { id: true, provider: true } } },
                 orderBy: { createdAt: 'desc' },
             });
@@ -36,7 +36,7 @@ export function registerAgentTools(reg: RegisterToolFn) {
         { id: z.string() },
         async ({ id }, ctx) => {
             const row = await prisma.agent.findFirst({
-                where: { id, userId: ctx.userId },
+                where: { id, workspaceId: ctx.workspaceId },
                 include: { provider: true },
             });
             if (!row) return fail(`Agent ${id} not found`);
@@ -49,11 +49,12 @@ export function registerAgentTools(reg: RegisterToolFn) {
         'Creates a new AI agent. `providerId` must reference an existing AiProvider row owned by you (list with describe_ai_providers). `skills` is any subset of [crm, tables, memory, http]. The agent is inactive by default unless isActive=true.',
         agentCommonFields,
         async (args, ctx) => {
-            const provider = await prisma.aiProvider.findFirst({ where: { id: args.providerId, userId: ctx.userId } });
+            const provider = await prisma.aiProvider.findFirst({ where: { id: args.providerId, workspaceId: ctx.workspaceId } });
             if (!provider) return fail(`Provider ${args.providerId} not found or not yours`);
             const row = await prisma.agent.create({
                 data: {
                     userId: ctx.userId,
+                    workspaceId: ctx.workspaceId,
                     name: args.name,
                     providerId: args.providerId,
                     model: args.model,
@@ -79,10 +80,10 @@ export function registerAgentTools(reg: RegisterToolFn) {
         },
         async (args: any, ctx) => {
             const { id, ...patch } = args;
-            const existing = await prisma.agent.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.agent.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Agent ${id} not found`);
             if (patch.providerId) {
-                const provider = await prisma.aiProvider.findFirst({ where: { id: patch.providerId, userId: ctx.userId } });
+                const provider = await prisma.aiProvider.findFirst({ where: { id: patch.providerId, workspaceId: ctx.workspaceId } });
                 if (!provider) return fail(`Provider ${patch.providerId} not found or not yours`);
             }
             const row = await prisma.agent.update({
@@ -109,7 +110,7 @@ export function registerAgentTools(reg: RegisterToolFn) {
         'Permanently deletes an agent. Any WhatsApp instances or Instagram accounts pointing at this agent will be set to no-agent.',
         { id: z.string() },
         async ({ id }, ctx) => {
-            const existing = await prisma.agent.findFirst({ where: { id, userId: ctx.userId } });
+            const existing = await prisma.agent.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Agent ${id} not found`);
             await prisma.agent.delete({ where: { id } });
             return ok({ deleted: true, id });
@@ -121,7 +122,7 @@ export function registerAgentTools(reg: RegisterToolFn) {
         'Lists the recent conversation threads an agent has had (distinct contact ids it has replied to).',
         { agentId: z.string(), limit: z.number().int().min(1).max(200).optional() },
         async ({ agentId, limit }, ctx) => {
-            const agent = await prisma.agent.findFirst({ where: { id: agentId, userId: ctx.userId } });
+            const agent = await prisma.agent.findFirst({ where: { id: agentId, workspaceId: ctx.workspaceId } });
             if (!agent) return fail(`Agent ${agentId} not found`);
             const rows = await prisma.aiConversationLog.groupBy({
                 by: ['remoteJid'],
@@ -144,7 +145,7 @@ export function registerAgentTools(reg: RegisterToolFn) {
         'Returns recent message turns between an agent and a specific contact (oldest first).',
         { agentId: z.string(), contactId: z.string(), limit: z.number().int().min(1).max(200).optional() },
         async ({ agentId, contactId, limit }, ctx) => {
-            const agent = await prisma.agent.findFirst({ where: { id: agentId, userId: ctx.userId } });
+            const agent = await prisma.agent.findFirst({ where: { id: agentId, workspaceId: ctx.workspaceId } });
             if (!agent) return fail(`Agent ${agentId} not found`);
             const rows = await prisma.aiConversationLog.findMany({
                 where: { agentId, remoteJid: contactId },

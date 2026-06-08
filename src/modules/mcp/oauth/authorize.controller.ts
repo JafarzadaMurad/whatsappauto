@@ -44,13 +44,13 @@ export async function issueAuthCode(req: Request, res: Response) {
             return res.status(400).json({ success: false, message: 'redirect_uri not registered for this client' });
         }
 
-        // Attach the client to this user on first consent
+        // Use the consenting user's active workspace (or their personal one).
+        const workspaceId = (req as any).workspaceId as string | undefined;
+        if (!workspaceId) return res.status(400).json({ success: false, message: 'Workspace not resolved' });
+
+        // Attach the client to this user/workspace on first consent
         if (!client.userId) {
-            await prisma.mcpClient.update({ where: { id: client.id }, data: { userId } });
-        } else if (client.userId !== userId) {
-            // Soft re-bind: a different user authorizing the same client_id
-            // should get their own row. Easiest: just keep multiple consents
-            // by issuing the code against the requesting user.
+            await prisma.mcpClient.update({ where: { id: client.id }, data: { userId, workspaceId } });
         }
 
         const code = crypto.randomBytes(32).toString('hex');
@@ -59,6 +59,7 @@ export async function issueAuthCode(req: Request, res: Response) {
             data: {
                 code,
                 userId,
+                workspaceId,
                 clientId: client_id,
                 redirectUri: redirect_uri,
                 codeChallenge: code_challenge,

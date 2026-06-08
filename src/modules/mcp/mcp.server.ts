@@ -20,6 +20,7 @@ import { registerUserFieldTools } from './tools/user-fields.tools';
 export type ToolCtx = {
     auth: McpAuthInfo;
     userId: string;
+    workspaceId: string;
 };
 
 export type ToolResult =
@@ -57,7 +58,7 @@ export function buildMcpServer(ctx: ToolCtx): McpServer {
         const cb = async (args: any) => {
             const t0 = Date.now();
             try {
-                const allowed = await isToolAllowed(ctx.userId, name);
+                const allowed = await isToolAllowed(ctx.workspaceId, name);
                 if (!allowed) {
                     const r = fail(`Permission denied for tool "${name}". Enable it under Settings → MCP → Permissions.`);
                     await writeAudit({ auth: ctx.auth, tool: name, args, resultOk: false, errorMsg: 'permission_denied', durationMs: Date.now() - t0 });

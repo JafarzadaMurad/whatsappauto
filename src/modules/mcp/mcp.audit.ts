@@ -30,6 +30,7 @@ export async function writeAudit(opts: {
         await prisma.mcpAuditLog.create({
             data: {
                 userId: opts.auth.userId,
+                workspaceId: opts.auth.workspaceId,
                 authKind: opts.auth.authKind,
                 authRef: opts.auth.authRef,
                 tool: opts.tool,

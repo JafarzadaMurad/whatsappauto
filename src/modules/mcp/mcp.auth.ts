@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../lib/prisma';
 import { config } from '../../config';
+import { getOrCreatePersonalWorkspace } from '../../lib/workspace-migration';
 
 function buildWwwAuth(error: string): string {
     const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
@@ -10,6 +11,7 @@ function buildWwwAuth(error: string): string {
 
 export type McpAuthInfo = {
     userId: string;
+    workspaceId: string;
     authKind: 'api_key' | 'oauth';
     authRef: string;
 };
@@ -43,7 +45,11 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
             prisma.apiKey
                 .update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } })
                 .catch(() => {});
-            req.mcpAuth = { userId: apiKey.userId, authKind: 'api_key', authRef: apiKey.id };
+            // API keys remember the workspace they were created in; fall back
+            // to the user's personal workspace for keys minted before the
+            // workspace migration.
+            const wsId = apiKey.workspaceId || (await getOrCreatePersonalWorkspace(apiKey.userId));
+            req.mcpAuth = { userId: apiKey.userId, workspaceId: wsId, authKind: 'api_key', authRef: apiKey.id };
             return next();
         }
 
@@ -61,7 +67,8 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
                 .setHeader('WWW-Authenticate', buildWwwAuth('invalid_token'))
                 .json({ error: 'invalid_token', error_description: 'OAuth token expired' });
         }
-        req.mcpAuth = { userId: oauth.userId, authKind: 'oauth', authRef: oauth.id };
+        const oauthWs = oauth.workspaceId || (await getOrCreatePersonalWorkspace(oauth.userId));
+        req.mcpAuth = { userId: oauth.userId, workspaceId: oauthWs, authKind: 'oauth', authRef: oauth.id };
         return next();
     } catch (err: any) {
         return res.status(500).json({ error: 'server_error', error_description: err.message });

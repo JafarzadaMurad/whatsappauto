@@ -6,12 +6,12 @@ import { ok, fail, type RegisterToolFn } from '../mcp.server';
 
 const messaging = new MessagingService();
 
-async function ownsAccount(userId: string, channel: string, accountId: string): Promise<boolean> {
+async function ownsAccount(workspaceId: string, channel: string, accountId: string): Promise<boolean> {
     if (channel === 'instagram') {
-        const a = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId } });
+        const a = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
         return !!a;
     }
-    const i = await prisma.instance.findFirst({ where: { id: accountId, userId } });
+    const i = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } });
     return !!i;
 }
 
@@ -25,7 +25,7 @@ export function registerInboxTools(reg: RegisterToolFn) {
             limit: z.number().int().min(1).max(200).optional(),
         },
         async ({ channel, accountId, limit }, ctx) => {
-            const owned = await ownsAccount(ctx.userId, channel, accountId);
+            const owned = await ownsAccount(ctx.workspaceId, channel, accountId);
             if (!owned) return fail(`Account ${accountId} not found`);
             const rows = await prisma.aiConversationLog.groupBy({
                 by: ['remoteJid'],
@@ -54,8 +54,8 @@ export function registerInboxTools(reg: RegisterToolFn) {
         async ({ accountId, contactId, limit }, ctx) => {
             // Confirm the user owns the account this conversation belongs to
             const [inst, ig] = await Promise.all([
-                prisma.instance.findFirst({ where: { id: accountId, userId: ctx.userId } }),
-                prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } }),
+                prisma.instance.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } }),
+                prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } }),
             ]);
             if (!inst && !ig) return fail(`Account ${accountId} not found`);
             const rows = await prisma.aiConversationLog.findMany({
@@ -79,12 +79,12 @@ export function registerInboxTools(reg: RegisterToolFn) {
         },
         async ({ channel, accountId, to, text }, ctx) => {
             if (channel === 'whatsapp') {
-                const inst = await prisma.instance.findFirst({ where: { id: accountId, userId: ctx.userId } });
+                const inst = await prisma.instance.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
                 if (!inst) return fail(`WhatsApp instance ${accountId} not found`);
                 const result = await messaging.sendText(accountId, to, text);
                 return ok(result);
             }
-            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, userId: ctx.userId } });
+            const acc = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId: ctx.workspaceId } });
             if (!acc) return fail(`Instagram account ${accountId} not found`);
             await sendIgMessage(acc.igUserId, to, text, acc.accessToken);
             return ok({ sent: true });

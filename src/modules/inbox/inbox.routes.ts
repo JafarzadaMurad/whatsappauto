@@ -8,6 +8,7 @@ const controller = new InboxController();
 router.use(authMiddleware);
 
 router.get('/accounts', controller.getAccounts.bind(controller));
+router.get('/unified', controller.getUnified.bind(controller));
 router.get('/conversations', controller.getConversations.bind(controller));
 router.get('/messages', controller.getMessages.bind(controller));
 router.post('/reply', controller.reply.bind(controller));

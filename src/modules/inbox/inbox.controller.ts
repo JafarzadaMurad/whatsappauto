@@ -32,6 +32,155 @@ export class InboxController {
     }
 
     // Conversations for a given account (WhatsApp instance or Instagram account)
+    // Unified inbox: every conversation from every connected account in
+    // the active workspace, with channel info, contact name (best
+    // effort), last message preview, and lastMessageAt. Sorted newest
+    // first. The UI uses this to render a single Wazzup-style list.
+    async getUnified(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const channelFilter = String(req.query.channel || ''); // '', 'whatsapp', 'instagram'
+
+            const [instances, igAccounts] = await Promise.all([
+                prisma.instance.findMany({
+                    where: { workspaceId },
+                    select: { id: true, name: true },
+                }),
+                prisma.instagramAccount.findMany({
+                    where: { workspaceId },
+                    select: { id: true, igUsername: true, igUserId: true },
+                }),
+            ]);
+
+            const instanceIds = instances.map(i => i.id);
+            const igAccountIds = igAccounts.map(a => a.id);
+
+            const wantWa = !channelFilter || channelFilter === 'whatsapp';
+            const wantIg = !channelFilter || channelFilter === 'instagram';
+
+            type Convo = {
+                accountId: string;
+                accountName: string;
+                channel: 'whatsapp' | 'instagram';
+                remoteJid: string;
+                name: string | null;
+                phone: string;
+                lastMessage: string;
+                lastFromMe: boolean;
+                lastMessageAt: Date;
+                messageCount: number;
+                profilePic?: string | null;
+            };
+
+            const convos: Convo[] = [];
+
+            // ─── WhatsApp ───
+            if (wantWa && instanceIds.length > 0) {
+                const grouped = await prisma.message.groupBy({
+                    by: ['instanceId', 'remoteJid'],
+                    where: { instanceId: { in: instanceIds } },
+                    _count: { _all: true },
+                    _max: { timestamp: true },
+                });
+
+                // Fetch the latest message per (instance, jid) for preview
+                const lastMessages = await Promise.all(grouped.map(async g => {
+                    if (!g.remoteJid) return null;
+                    const last = await prisma.message.findFirst({
+                        where: { instanceId: g.instanceId, remoteJid: g.remoteJid },
+                        orderBy: { timestamp: 'desc' },
+                        select: { content: true, isFromMe: true, timestamp: true },
+                    });
+                    return { g, last };
+                }));
+
+                const contactsByInstance = new Map<string, Map<string, any>>();
+                for (const inst of instances) {
+                    const contacts = await prisma.contact.findMany({ where: { instanceId: inst.id } });
+                    const m = new Map<string, any>();
+                    for (const c of contacts) m.set(c.remoteJid, c);
+                    contactsByInstance.set(inst.id, m);
+                }
+
+                for (const lm of lastMessages) {
+                    if (!lm || !lm.last || !lm.g.remoteJid) continue;
+                    const inst = instances.find(i => i.id === lm.g.instanceId);
+                    if (!inst) continue;
+                    const c = contactsByInstance.get(inst.id)?.get(lm.g.remoteJid);
+                    const phone = lm.g.remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+                    convos.push({
+                        accountId: inst.id,
+                        accountName: inst.name,
+                        channel: 'whatsapp',
+                        remoteJid: lm.g.remoteJid,
+                        name: c?.pushName || c?.name || null,
+                        phone,
+                        lastMessage: lm.last.content || '',
+                        lastFromMe: lm.last.isFromMe,
+                        lastMessageAt: lm.last.timestamp || new Date(0),
+                        messageCount: lm.g._count._all,
+                    });
+                }
+            }
+
+            // ─── Instagram ───
+            if (wantIg && igAccountIds.length > 0) {
+                const grouped = await prisma.aiConversationLog.groupBy({
+                    by: ['instanceId', 'remoteJid'],
+                    where: { instanceId: { in: igAccountIds } },
+                    _count: { _all: true },
+                    _max: { createdAt: true },
+                });
+
+                const igContactsByJid = new Map<string, any>();
+                const senderIds = grouped
+                    .map(g => g.remoteJid)
+                    .filter(j => j.startsWith('ig:'))
+                    .map(j => j.slice(3));
+                if (senderIds.length > 0) {
+                    const contacts = await prisma.instagramContact.findMany({ where: { senderId: { in: senderIds } } });
+                    for (const c of contacts) igContactsByJid.set(`ig:${c.senderId}`, c);
+                }
+
+                const lastMessages = await Promise.all(grouped.map(async g => {
+                    const last = await prisma.aiConversationLog.findFirst({
+                        where: { instanceId: g.instanceId, remoteJid: g.remoteJid },
+                        orderBy: { createdAt: 'desc' },
+                        select: { userMessage: true, agentReply: true, createdAt: true },
+                    });
+                    return { g, last };
+                }));
+
+                for (const lm of lastMessages) {
+                    if (!lm || !lm.last) continue;
+                    const acc = igAccounts.find(a => a.id === lm.g.instanceId);
+                    if (!acc) continue;
+                    const c = igContactsByJid.get(lm.g.remoteJid);
+                    const isFromMe = !!lm.last.agentReply && !lm.last.userMessage;
+                    const previewText = isFromMe ? lm.last.agentReply : lm.last.userMessage;
+                    convos.push({
+                        accountId: acc.id,
+                        accountName: '@' + acc.igUsername,
+                        channel: 'instagram',
+                        remoteJid: lm.g.remoteJid,
+                        name: c?.name || c?.username || null,
+                        phone: lm.g.remoteJid.replace(/^ig:/, ''),
+                        lastMessage: previewText || '',
+                        lastFromMe: isFromMe,
+                        lastMessageAt: lm.last.createdAt,
+                        messageCount: lm.g._count._all,
+                        profilePic: c?.profilePic || null,
+                    });
+                }
+            }
+
+            convos.sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
+            return res.json({ success: true, conversations: convos });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async getConversations(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);

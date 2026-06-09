@@ -65,6 +65,31 @@ export class InboxController {
                 grouped[log.remoteJid].messageCount++;
             }
 
+            // For WhatsApp, also fold in raw messages from the Message table
+            // (this is where the Baileys history sync and live messages
+            // land). Without this, an inbox for a freshly synced instance
+            // would look empty even though the data is in the database.
+            if (channel !== 'instagram') {
+                const rawCounts = await prisma.message.groupBy({
+                    by: ['remoteJid'],
+                    where: { instanceId: accountId },
+                    _count: { _all: true },
+                    _max: { timestamp: true },
+                });
+                for (const r of rawCounts) {
+                    if (!r.remoteJid) continue;
+                    const slot = grouped[r.remoteJid] || (grouped[r.remoteJid] = {
+                        remoteJid: r.remoteJid,
+                        messageCount: 0,
+                        lastMessageAt: r._max.timestamp || new Date(0),
+                    });
+                    slot.messageCount = Math.max(slot.messageCount, r._count._all);
+                    if (r._max.timestamp && (!slot.lastMessageAt || r._max.timestamp > slot.lastMessageAt)) {
+                        slot.lastMessageAt = r._max.timestamp;
+                    }
+                }
+            }
+
             if (channel === 'instagram') {
                 const senderIds = Object.keys(grouped).filter(j => j.startsWith('ig:')).map(j => j.slice(3));
                 if (senderIds.length > 0) {
@@ -107,17 +132,56 @@ export class InboxController {
                 || await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
             if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
 
-            const messages = await prisma.aiConversationLog.findMany({
+            const logs = await prisma.aiConversationLog.findMany({
                 where: { instanceId: accountId, remoteJid },
                 orderBy: { createdAt: 'asc' }
             });
-            return res.json({ success: true, messages });
+
+            // Pull raw WhatsApp messages from the Message table (history sync
+            // + live capture). For Instagram there is no Message table use.
+            const isIg = remoteJid.startsWith('ig:');
+            const rawMessages = isIg ? [] : await prisma.message.findMany({
+                where: { instanceId: accountId, remoteJid },
+                orderBy: { timestamp: 'asc' }
+            });
+
+            // Project Message rows into the same shape the UI uses for
+            // aiConversationLog rows: incoming as userMessage, outgoing as
+            // agentReply. Drop rows whose content already appears in a log
+            // entry (cheap dedupe by exact match within the same chat).
+            const logTexts = new Set<string>();
+            for (const l of logs) {
+                if (l.userMessage) logTexts.add(`u:${l.userMessage}`);
+                if (l.agentReply) logTexts.add(`a:${l.agentReply}`);
+            }
+            const projected = rawMessages
+                .filter(r => {
+                    const key = r.isFromMe ? `a:${r.content}` : `u:${r.content}`;
+                    return !logTexts.has(key);
+                })
+                .map(r => ({
+                    id: r.id,
+                    userMessage: r.isFromMe ? '' : r.content,
+                    agentReply: r.isFromMe ? r.content : '',
+                    createdAt: r.timestamp,
+                    provider: 'PHONE',
+                    model: '',
+                    promptTokens: 0,
+                    completionTokens: 0,
+                    totalTokens: 0,
+                    toolCalls: [],
+                }));
+
+            const merged = [...logs, ...projected]
+                .sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+            return res.json({ success: true, messages: merged });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }
     }
 
-    // Manual reply (Instagram only for now)
+    // Manual reply — supports WhatsApp and Instagram.
     async reply(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);
@@ -128,40 +192,60 @@ export class InboxController {
             });
             const { accountId, remoteJid, text } = schema.parse(req.body);
 
-            if (!remoteJid.startsWith('ig:')) {
-                return res.status(400).json({ success: false, message: 'Manual reply is currently supported for Instagram conversations only' });
+            // Instagram path
+            if (remoteJid.startsWith('ig:')) {
+                const account = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
+                if (!account) return res.status(404).json({ success: false, message: 'Instagram account not found' });
+                const senderId = remoteJid.slice(3);
+                try {
+                    await sendIgMessage(account.igUserId, senderId, text, account.accessToken);
+                } catch (e: any) {
+                    const ig = e.response?.data?.error;
+                    return res.status(502).json({ success: false, message: ig?.error_user_msg || ig?.message || e.message });
+                }
+                let agentId = account.agentId;
+                if (!agentId) {
+                    const anyAgent = await prisma.agent.findFirst({ where: { workspaceId }, select: { id: true } });
+                    agentId = anyAgent?.id || null;
+                }
+                let log = null;
+                if (agentId) {
+                    log = await prisma.aiConversationLog.create({
+                        data: {
+                            agentId, instanceId: accountId, remoteJid,
+                            userMessage: '', agentReply: text,
+                            promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                            provider: 'MANUAL', model: 'manual', toolCalls: []
+                        }
+                    });
+                }
+                return res.json({ success: true, message: log });
             }
 
-            const account = await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
-            if (!account) return res.status(404).json({ success: false, message: 'Instagram account not found' });
-
-            const senderId = remoteJid.slice(3);
+            // WhatsApp path — send via Baileys, save into Message table.
+            const instance = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } });
+            if (!instance) return res.status(404).json({ success: false, message: 'WhatsApp instance not found' });
+            const { sessions } = await import('../whatsapp/instance.manager');
+            const sock = sessions.get(accountId);
+            if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
             try {
-                await sendIgMessage(account.igUserId, senderId, text, account.accessToken);
+                await sock.sendMessage(remoteJid, { text });
             } catch (e: any) {
-                const ig = e.response?.data?.error;
-                return res.status(502).json({ success: false, message: ig?.error_user_msg || ig?.message || e.message });
+                return res.status(502).json({ success: false, message: e.message || 'Send failed' });
             }
-
-            // Record the manual reply. agentId is required on the log — use the
-            // account's assigned agent if any, else any agent of the workspace.
-            let agentId = account.agentId;
-            if (!agentId) {
-                const anyAgent = await prisma.agent.findFirst({ where: { workspaceId }, select: { id: true } });
-                agentId = anyAgent?.id || null;
-            }
-            let log = null;
-            if (agentId) {
-                log = await prisma.aiConversationLog.create({
-                    data: {
-                        agentId, instanceId: accountId, remoteJid,
-                        userMessage: '', agentReply: text,
-                        promptTokens: 0, completionTokens: 0, totalTokens: 0,
-                        provider: 'MANUAL', model: 'manual', toolCalls: []
-                    }
-                });
-            }
-            return res.json({ success: true, message: log });
+            const saved = await prisma.message.create({
+                data: {
+                    instanceId: accountId, remoteJid, isFromMe: true,
+                    messageType: 'text', content: text, timestamp: new Date(),
+                }
+            });
+            return res.json({ success: true, message: {
+                id: saved.id,
+                userMessage: '', agentReply: text,
+                createdAt: saved.timestamp,
+                provider: 'MANUAL', model: 'manual',
+                promptTokens: 0, completionTokens: 0, totalTokens: 0, toolCalls: [],
+            }});
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });

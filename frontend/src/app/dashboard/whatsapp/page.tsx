@@ -81,11 +81,27 @@ export default function WhatsAppPage() {
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newInstanceName) return;
+        // Ask BEFORE creating so the freshly-spawned Baileys session boots
+        // with the right syncFullHistory flag — otherwise the first link
+        // happens with the default (off) and the user sees an empty inbox.
+        const wantsHistory = window.confirm(
+            'Sync existing chats from your phone?\n\n' +
+            'OK: import the recent chat history from the phone right after you scan the QR. The inbox will show existing conversations immediately.\n\n' +
+            'Cancel: capture only new messages from now on.'
+        );
         setCreating(true);
         try {
             const res = await api.post('/instances', { name: newInstanceName });
             if (res.data.success) {
-                setInstances(prev => [res.data.instance, ...prev]);
+                const inst = res.data.instance;
+                // Persist the choice before the QR appears so the next
+                // (re)connection picks the right Baileys options.
+                if (wantsHistory) {
+                    try { await api.put(`/instances/${inst.id}`, { syncHistory: true }); } catch { /* ignore */ }
+                    // Restart so the live session re-spawns with syncFullHistory=true.
+                    try { await api.post(`/instances/${inst.id}/restart`); } catch { /* ignore */ }
+                }
+                setInstances(prev => [inst, ...prev]);
                 setNewInstanceName("");
             }
         } catch (err) { console.error(err); }

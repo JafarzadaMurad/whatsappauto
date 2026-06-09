@@ -309,21 +309,17 @@ export default function InboxPage() {
 
                             <div className="border-t border-border p-3 flex-shrink-0">
                                 {replyError && <div className="text-xs text-red-400 mb-2">{replyError}</div>}
-                                {selectedJid.startsWith('ig:') ? (
-                                    <div className="flex gap-2">
-                                        <input type="text" value={replyText}
-                                            onChange={e => setReplyText(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-                                            placeholder="Type a reply…" maxLength={950} disabled={sendingReply}
-                                            className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60" />
-                                        <button onClick={sendReply} disabled={sendingReply || !replyText.trim()}
-                                            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-4 flex items-center gap-2 text-sm font-medium transition-all disabled:opacity-50">
-                                            {sendingReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <div className="text-xs text-muted-foreground text-center">Manual reply is available for Instagram conversations only.</div>
-                                )}
+                                <div className="flex gap-2">
+                                    <input type="text" value={replyText}
+                                        onChange={e => setReplyText(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
+                                        placeholder="Type a reply…" maxLength={950} disabled={sendingReply}
+                                        className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60" />
+                                    <button onClick={sendReply} disabled={sendingReply || !replyText.trim()}
+                                        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-4 flex items-center gap-2 text-sm font-medium transition-all disabled:opacity-50">
+                                        {sendingReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                    </button>
+                                </div>
                             </div>
                         </>
                     )}

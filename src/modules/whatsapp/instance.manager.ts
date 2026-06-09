@@ -123,15 +123,17 @@ export class InstanceManager {
 
             sock.ev.on('contacts.upsert', async (contacts: any[]) => {
                 const withName = contacts.filter(c => c.name || c.verifiedName).length;
-                logger.info(`[${instanceId}] contacts.upsert: ${contacts.length} total, ${withName} with saved name`);
+                logger.info(
+                    `[${instanceId}] contacts.upsert: ${contacts.length} total, ${withName} with saved name | sample=${JSON.stringify(contacts.slice(0, 3))}`
+                );
                 for (const c of contacts) await persistContactRow(c);
             });
 
             sock.ev.on('contacts.update', async (contacts: any[]) => {
                 const withName = contacts.filter(c => c.name || c.verifiedName).length;
-                if (withName > 0) {
-                    logger.info(`[${instanceId}] contacts.update: ${contacts.length} total, ${withName} with saved name`);
-                }
+                logger.info(
+                    `[${instanceId}] contacts.update: ${contacts.length} total, ${withName} with saved name | sample=${JSON.stringify(contacts.slice(0, 3))}`
+                );
                 for (const c of contacts) await persistContactRow(c);
             });
 

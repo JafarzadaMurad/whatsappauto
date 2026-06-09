@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck } from "lucide-react";
 import api from "@/lib/api";
+
+const PAGE_SIZE = 50;
 
 // ─── Helpers ──────────────────────────────────────────────────
 function jidToPhone(jid: string): string {
@@ -95,6 +97,18 @@ export default function InboxPage() {
     const [agentPaused, setAgentPaused] = useState<boolean | null>(null);
     const [pauseBusy, setPauseBusy] = useState(false);
 
+    // Pagination state for the open chat
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+    // Anchored-scroll bookkeeping so prepending older messages keeps the
+    // viewport pinned to whatever the user was reading.
+    const prevHeightRef = useRef<number>(0);
+    // Tracks whether the next layout should snap to the bottom (after
+    // initial load or sending a reply) vs. keep the current scroll
+    // anchor (after prepending older messages).
+    const stickToBottomRef = useRef<boolean>(true);
+
     const loadConvos = useCallback(async () => {
         setLoadingConvs(true);
         try {
@@ -133,14 +147,67 @@ export default function InboxPage() {
         setMessages([]);
         setReplyText('');
         setAgentPaused(null);
+        setHasMore(false);
+        stickToBottomRef.current = true;
         refreshPauseStatus(c.remoteJid);
         setLoadingChat(true);
         try {
-            const r = await api.get(`/inbox/messages?accountId=${c.accountId}&remoteJid=${encodeURIComponent(c.remoteJid)}`);
-            if (r.data?.success) setMessages(r.data.messages);
+            const r = await api.get(
+                `/inbox/messages?accountId=${c.accountId}&remoteJid=${encodeURIComponent(c.remoteJid)}&limit=${PAGE_SIZE}`
+            );
+            if (r.data?.success) {
+                setMessages(r.data.messages);
+                setHasMore(!!r.data.hasMore);
+            }
         } catch (e) { console.error(e); }
         finally { setLoadingChat(false); }
     };
+
+    const loadMoreMessages = useCallback(async () => {
+        if (!selected || loadingMore || !hasMore || messages.length === 0) return;
+        const oldest = messages[0]?.createdAt;
+        if (!oldest) return;
+        setLoadingMore(true);
+        // Remember scroll height before prepend so we can restore the
+        // user's viewport position after the new rows render.
+        if (scrollRef.current) prevHeightRef.current = scrollRef.current.scrollHeight;
+        stickToBottomRef.current = false;
+        try {
+            const r = await api.get(
+                `/inbox/messages?accountId=${selected.accountId}&remoteJid=${encodeURIComponent(selected.remoteJid)}&limit=${PAGE_SIZE}&before=${encodeURIComponent(oldest)}`
+            );
+            if (r.data?.success) {
+                const older: Message[] = r.data.messages || [];
+                if (older.length > 0) {
+                    setMessages(prev => [...older, ...prev]);
+                }
+                setHasMore(!!r.data.hasMore);
+            }
+        } catch (e) { console.error(e); }
+        finally { setLoadingMore(false); }
+    }, [selected, loadingMore, hasMore, messages]);
+
+    // After messages update: snap to bottom on initial/new-message
+    // renders, or restore the anchored scroll position after a
+    // load-more prepend.
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        if (stickToBottomRef.current) {
+            el.scrollTop = el.scrollHeight;
+        } else {
+            // Preserve viewport: new scrollTop = old scrollTop + (new height - old height)
+            const newScrollTop = el.scrollTop + (el.scrollHeight - prevHeightRef.current);
+            el.scrollTop = newScrollTop;
+            stickToBottomRef.current = true;
+        }
+    }, [messages]);
+
+    const onChatScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        if (e.currentTarget.scrollTop < 60 && hasMore && !loadingMore) {
+            loadMoreMessages();
+        }
+    }, [hasMore, loadingMore, loadMoreMessages]);
 
     const sendReply = async () => {
         if (!selected || !replyText.trim()) return;
@@ -153,6 +220,7 @@ export default function InboxPage() {
                 text,
             });
             if (r.data?.success && r.data.message) {
+                stickToBottomRef.current = true;
                 setMessages(prev => [...prev, r.data.message]);
                 setReplyText('');
                 // Optimistically bump conversation to top
@@ -279,13 +347,26 @@ export default function InboxPage() {
                             </div>
 
                             {/* Messages */}
-                            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+                            <div ref={scrollRef} onScroll={onChatScroll}
+                                className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
                                 {loadingChat ? (
                                     <div className="flex justify-center pt-12"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
                                 ) : messages.length === 0 ? (
                                     <div className="text-center text-sm text-muted-foreground pt-12">No messages yet.</div>
                                 ) : (
-                                    <MessageList messages={messages} />
+                                    <>
+                                        {loadingMore && (
+                                            <div className="flex justify-center py-2">
+                                                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                                            </div>
+                                        )}
+                                        {!loadingMore && !hasMore && messages.length > PAGE_SIZE && (
+                                            <div className="text-center text-[10px] uppercase tracking-wide text-muted-foreground/60 py-1">
+                                                Start of conversation
+                                            </div>
+                                        )}
+                                        <MessageList messages={messages} />
+                                    </>
                                 )}
                             </div>
 

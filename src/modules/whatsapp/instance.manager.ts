@@ -101,26 +101,38 @@ export class InstanceManager {
             sock.ev.on('creds.update', saveCreds);
 
             // Live contact-list updates (name changes, new contacts pulled
-            // from the phone). Baileys also fires this right after the
-            // history sync, which is where we pick up the names the user
-            // saved on their phone (as opposed to pushName / "notify"
-            // which is what each contact broadcasts about themselves).
+            // from the phone). Baileys fires `contacts.upsert` when a
+            // contact is first seen and `contacts.update` for subsequent
+            // changes — both can carry the phone-book name the user has
+            // saved, so we treat them the same.
+            const persistContactRow = async (c: any) => {
+                const remoteJid = c.id;
+                if (!remoteJid) return;
+                const name = c.name || c.verifiedName || null;
+                const pushName = c.notify || c.pushName || null;
+                if (!name && !pushName) return;
+                await prisma.contact.upsert({
+                    where: { instanceId_remoteJid: { instanceId, remoteJid } },
+                    update: {
+                        ...(name ? { name } : {}),
+                        ...(pushName ? { pushName } : {}),
+                    },
+                    create: { instanceId, remoteJid, name, pushName },
+                }).catch(() => {});
+            };
+
             sock.ev.on('contacts.upsert', async (contacts: any[]) => {
-                for (const c of contacts) {
-                    const remoteJid = c.id;
-                    if (!remoteJid) continue;
-                    const name = c.name || c.verifiedName || null;
-                    const pushName = c.notify || c.pushName || null;
-                    if (!name && !pushName) continue;
-                    await prisma.contact.upsert({
-                        where: { instanceId_remoteJid: { instanceId, remoteJid } },
-                        update: {
-                            ...(name ? { name } : {}),
-                            ...(pushName ? { pushName } : {}),
-                        },
-                        create: { instanceId, remoteJid, name, pushName },
-                    }).catch(() => {});
+                const withName = contacts.filter(c => c.name || c.verifiedName).length;
+                logger.info(`[${instanceId}] contacts.upsert: ${contacts.length} total, ${withName} with saved name`);
+                for (const c of contacts) await persistContactRow(c);
+            });
+
+            sock.ev.on('contacts.update', async (contacts: any[]) => {
+                const withName = contacts.filter(c => c.name || c.verifiedName).length;
+                if (withName > 0) {
+                    logger.info(`[${instanceId}] contacts.update: ${contacts.length} total, ${withName} with saved name`);
                 }
+                for (const c of contacts) await persistContactRow(c);
             });
 
             // History sync: fires after the phone uploads its message

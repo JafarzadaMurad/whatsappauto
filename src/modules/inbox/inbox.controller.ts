@@ -4,6 +4,16 @@ import { z } from 'zod';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { getWorkspaceId } from '../../lib/workspace-context';
 
+// Older rows in DB still carry "[Media/Unsupported]" / "[Media]" as the
+// literal preview text from before message-content.ts started producing
+// friendly labels. Rewrite them on the way out so the inbox UI never
+// shows the raw placeholder.
+function prettifyContent(s: string | null | undefined): string {
+    if (!s) return '';
+    if (s === '[Media/Unsupported]' || s === '[Media]') return '📎 Media';
+    return s;
+}
+
 export class InboxController {
     // List all messaging accounts (WhatsApp instances + Instagram accounts)
     async getAccounts(req: Request, res: Response) {
@@ -123,7 +133,7 @@ export class InboxController {
                         name: c?.name || c?.pushName || null,
                         phone,
                         isAnonymous,
-                        lastMessage: lm.last.content || '',
+                        lastMessage: prettifyContent(lm.last.content),
                         lastFromMe: lm.last.isFromMe,
                         lastMessageAt: lm.last.timestamp || new Date(0),
                         messageCount: lm.g._count._all,
@@ -175,7 +185,7 @@ export class InboxController {
                         phone: lm.g.remoteJid.replace(/^ig:/, ''),
                         // IGSIDs are anonymous identifiers, not phone numbers.
                         isAnonymous: true,
-                        lastMessage: previewText || '',
+                        lastMessage: prettifyContent(previewText),
                         lastFromMe: isFromMe,
                         lastMessageAt: lm.last.createdAt,
                         messageCount: lm.g._count._all,
@@ -286,28 +296,43 @@ export class InboxController {
             const remoteJid = req.query.remoteJid as string;
             if (!accountId || !remoteJid) return res.status(400).json({ success: false, message: 'accountId and remoteJid required' });
 
+            // Paginate: return the newest `limit` rows older than `before`
+            // (ISO timestamp). The chat UI loads more by passing the
+            // oldest currently-loaded timestamp as `before`.
+            const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+            const beforeRaw = req.query.before as string | undefined;
+            const before = beforeRaw ? new Date(beforeRaw) : null;
+
             // Ownership check via either account type
             const owns = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } })
                 || await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
             if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
 
+            // To paginate across two tables (logs + raw messages) without
+            // double-counting, we over-fetch `limit` newest rows from
+            // each, merge, dedupe, take the newest `limit` from the
+            // merged result, then expose `hasMore` if either source still
+            // had earlier rows.
             const logs = await prisma.aiConversationLog.findMany({
-                where: { instanceId: accountId, remoteJid },
-                orderBy: { createdAt: 'asc' }
+                where: {
+                    instanceId: accountId, remoteJid,
+                    ...(before ? { createdAt: { lt: before } } : {}),
+                },
+                orderBy: { createdAt: 'desc' },
+                take: limit + 1, // +1 to detect hasMore from this source
             });
 
-            // Pull raw WhatsApp messages from the Message table (history sync
-            // + live capture). For Instagram there is no Message table use.
             const isIg = remoteJid.startsWith('ig:');
             const rawMessages = isIg ? [] : await prisma.message.findMany({
-                where: { instanceId: accountId, remoteJid },
-                orderBy: { timestamp: 'asc' }
+                where: {
+                    instanceId: accountId, remoteJid,
+                    ...(before ? { timestamp: { lt: before } } : {}),
+                },
+                orderBy: { timestamp: 'desc' },
+                take: limit + 1,
             });
 
-            // Project Message rows into the same shape the UI uses for
-            // aiConversationLog rows: incoming as userMessage, outgoing as
-            // agentReply. Drop rows whose content already appears in a log
-            // entry (cheap dedupe by exact match within the same chat).
+            // Project Message rows into the aiConversationLog shape.
             const logTexts = new Set<string>();
             for (const l of logs) {
                 if (l.userMessage) logTexts.add(`u:${l.userMessage}`);
@@ -320,8 +345,8 @@ export class InboxController {
                 })
                 .map(r => ({
                     id: r.id,
-                    userMessage: r.isFromMe ? '' : r.content,
-                    agentReply: r.isFromMe ? r.content : '',
+                    userMessage: r.isFromMe ? '' : prettifyContent(r.content),
+                    agentReply: r.isFromMe ? prettifyContent(r.content) : '',
                     createdAt: r.timestamp,
                     provider: 'PHONE',
                     model: '',
@@ -331,10 +356,26 @@ export class InboxController {
                     toolCalls: [],
                 }));
 
-            const merged = [...logs, ...projected]
-                .sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            const cleanedLogs = logs.map(l => ({
+                ...l,
+                userMessage: prettifyContent(l.userMessage),
+                agentReply: prettifyContent(l.agentReply),
+            }));
 
-            return res.json({ success: true, messages: merged });
+            // Combine, sort asc (oldest first — that's what the chat UI expects),
+            // then take only the newest `limit` from the combined set so we
+            // never return more than asked even when both sources are full.
+            const combinedDesc = [...cleanedLogs, ...projected]
+                .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const pageDesc = combinedDesc.slice(0, limit);
+            const page = pageDesc.slice().reverse(); // asc for the UI
+
+            // hasMore = either source still has data older than the
+            // earliest row we returned. The +1 over-fetch gives us a
+            // cheap signal; we also re-check by comparing slice sizes.
+            const hasMore = (logs.length > limit) || (rawMessages.length > limit) || (combinedDesc.length > limit);
+
+            return res.json({ success: true, messages: page, hasMore });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

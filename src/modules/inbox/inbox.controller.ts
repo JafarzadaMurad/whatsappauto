@@ -65,6 +65,10 @@ export class InboxController {
                 remoteJid: string;
                 name: string | null;
                 phone: string;
+                /** True when the JID is an anonymous WhatsApp LID — the
+                 * "phone" field is the LID, not a real phone number, so
+                 * the UI should hide the +number underneath. */
+                isAnonymous: boolean;
                 lastMessage: string;
                 lastFromMe: boolean;
                 lastMessageAt: Date;
@@ -108,13 +112,17 @@ export class InboxController {
                     if (!inst) continue;
                     const c = contactsByInstance.get(inst.id)?.get(lm.g.remoteJid);
                     const phone = lm.g.remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+                    const isAnonymous = lm.g.remoteJid.endsWith('@lid');
                     convos.push({
                         accountId: inst.id,
                         accountName: inst.name,
                         channel: 'whatsapp',
                         remoteJid: lm.g.remoteJid,
-                        name: c?.pushName || c?.name || null,
+                        // Prefer the name the user saved on their phone (Contact.name)
+                        // over the contact's own broadcast name (pushName).
+                        name: c?.name || c?.pushName || null,
                         phone,
+                        isAnonymous,
                         lastMessage: lm.last.content || '',
                         lastFromMe: lm.last.isFromMe,
                         lastMessageAt: lm.last.timestamp || new Date(0),
@@ -165,6 +173,8 @@ export class InboxController {
                         remoteJid: lm.g.remoteJid,
                         name: c?.name || c?.username || null,
                         phone: lm.g.remoteJid.replace(/^ig:/, ''),
+                        // IGSIDs are anonymous identifiers, not phone numbers.
+                        isAnonymous: true,
                         lastMessage: previewText || '',
                         lastFromMe: isFromMe,
                         lastMessageAt: lm.last.createdAt,

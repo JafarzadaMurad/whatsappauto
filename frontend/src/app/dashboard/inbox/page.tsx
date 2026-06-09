@@ -10,15 +10,25 @@ function jidToPhone(jid: string): string {
     return jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '');
 }
 
+// Identifier shown under the contact name in headers and as a fallback
+// when no name is known. For LIDs (anonymous WhatsApp identities) and
+// IGSIDs, returns a generic "Unknown contact" label instead of pretending
+// to be a phone number.
 function formatIdentifier(c: Conversation): string {
     if (c.channel === 'instagram') {
-        return '@' + (c.name || c.phone);
+        // For IG we already pre-pend @ to the username; the raw IGSID
+        // never looks like a phone, so no '+' here.
+        return c.name ? '@' + c.name : 'Instagram user';
+    }
+    if (c.isAnonymous) {
+        return 'WhatsApp contact';
     }
     return '+' + c.phone;
 }
 
 function displayName(c: Conversation): string {
     if (c.name) return c.name;
+    if (c.channel === 'whatsapp' && !c.isAnonymous) return '+' + c.phone;
     return formatIdentifier(c);
 }
 
@@ -50,6 +60,7 @@ type Conversation = {
     remoteJid: string;
     name: string | null;
     phone: string;
+    isAnonymous: boolean;
     lastMessage: string;
     lastFromMe: boolean;
     lastMessageAt: string;
@@ -245,7 +256,15 @@ export default function InboxPage() {
                                         <h2 className="font-semibold text-sm truncate">{displayName(selected)}</h2>
                                         <ChannelBadge channel={selected.channel} />
                                     </div>
-                                    <p className="text-xs text-muted-foreground truncate font-mono">{formatIdentifier(selected)} · {selected.accountName}</p>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                        {/* Show the phone (or fallback label) only when it's
+                                            actually different from the displayed name. Keeps
+                                            anonymous LIDs from showing a meaningless +digits. */}
+                                        {!selected.name && selected.channel === 'whatsapp' && !selected.isAnonymous
+                                            ? null
+                                            : <span className="font-mono">{formatIdentifier(selected)} · </span>}
+                                        {selected.accountName}
+                                    </p>
                                 </div>
                                 {agentPaused !== null && (
                                     <button onClick={togglePause} disabled={pauseBusy}

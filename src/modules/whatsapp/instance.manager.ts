@@ -100,15 +100,57 @@ export class InstanceManager {
 
             sock.ev.on('creds.update', saveCreds);
 
+            // Live contact-list updates (name changes, new contacts pulled
+            // from the phone). Baileys also fires this right after the
+            // history sync, which is where we pick up the names the user
+            // saved on their phone (as opposed to pushName / "notify"
+            // which is what each contact broadcasts about themselves).
+            sock.ev.on('contacts.upsert', async (contacts: any[]) => {
+                for (const c of contacts) {
+                    const remoteJid = c.id;
+                    if (!remoteJid) continue;
+                    const name = c.name || c.verifiedName || null;
+                    const pushName = c.notify || c.pushName || null;
+                    if (!name && !pushName) continue;
+                    await prisma.contact.upsert({
+                        where: { instanceId_remoteJid: { instanceId, remoteJid } },
+                        update: {
+                            ...(name ? { name } : {}),
+                            ...(pushName ? { pushName } : {}),
+                        },
+                        create: { instanceId, remoteJid, name, pushName },
+                    }).catch(() => {});
+                }
+            });
+
             // History sync: fires after the phone uploads its message
             // history right after pairing. Each chunk contains messages
             // and contact metadata. We persist them so the inbox UI
             // shows existing conversations alongside live ones.
             sock.ev.on('messaging-history.set', async (h: any) => {
                 try {
+                    // Phone-book contacts come in the history payload too;
+                    // these carry the names the user saved on their phone.
+                    const contactList: any[] = h.contacts || [];
+                    for (const c of contactList) {
+                        const remoteJid = c.id;
+                        if (!remoteJid) continue;
+                        const name = c.name || c.verifiedName || null;
+                        const pushName = c.notify || c.pushName || null;
+                        if (!name && !pushName) continue;
+                        await prisma.contact.upsert({
+                            where: { instanceId_remoteJid: { instanceId, remoteJid } },
+                            update: {
+                                ...(name ? { name } : {}),
+                                ...(pushName ? { pushName } : {}),
+                            },
+                            create: { instanceId, remoteJid, name, pushName },
+                        }).catch(() => {});
+                    }
+
                     const msgs: any[] = h.messages || [];
                     if (msgs.length === 0) return;
-                    logger.info(`[${instanceId}] History sync: ${msgs.length} messages, progress=${h.progress ?? '?'}, isLatest=${h.isLatest ?? '?'}`);
+                    logger.info(`[${instanceId}] History sync: ${msgs.length} messages, ${contactList.length} contacts, progress=${h.progress ?? '?'}, isLatest=${h.isLatest ?? '?'}`);
 
                     for (const msg of msgs) {
                         const remoteJid = msg.key?.remoteJid;

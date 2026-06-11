@@ -1287,6 +1287,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             <p className="text-xs text-muted-foreground mb-2">
                                                                 Each value can be a <span className="text-foreground">fixed</span> value or <span className="text-amber-400">AI-filled</span> at call time.
                                                             </p>
+                                                            <div className="text-[11px] text-muted-foreground bg-secondary/30 border border-border rounded-lg px-3 py-2 mb-3 leading-relaxed">
+                                                                <div className="font-medium text-foreground mb-1">Placeholders</div>
+                                                                Inside any URL / header / body field you can reference the current contact:
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{contact:name}}'}</code>
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{contact:phone}}'}</code>
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{contact:status}}'}</code>
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{contact:summary}}'}</code>
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{contact:tags}}'}</code>
+                                                                or a user field:
+                                                                <code className="mx-1 px-1 py-0.5 bg-background/60 rounded">{'{{field:<key>}}'}</code>
+                                                                — these are resolved from CRM at call time, so the AI doesn't have to fill them.
+                                                            </div>
                             <div className="space-y-2">
                                 {httpTools.length === 0 && (
                                     <div className="bg-secondary/30 border border-dashed border-border rounded-xl p-4 text-center text-sm text-muted-foreground">

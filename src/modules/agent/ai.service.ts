@@ -462,6 +462,52 @@ function resolveValue(spec: ValueSpec, aiVal: string | undefined): string {
     return aiVal ?? '';
 }
 
+// ─── CRM placeholders for HTTP tool templates ─────────────────────
+// HTTP tool fields can reference data from the current contact via
+//   {{contact:name|phone|status|summary|tags}}
+//   {{field:<userFieldKey>}}
+// resolved from Client + Client.customFields. Unknown / missing values
+// resolve to an empty string. Regular {{description}} AI placeholders
+// are unaffected — they only match raw-mode parser braces that don't
+// carry a `kind:` prefix.
+export type HttpCtx = { workspaceId?: string; contactPhone?: string };
+
+const CRM_PLACEHOLDER_RE = /\{\{\s*(contact|field)\s*:\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+
+async function loadCrmPlaceholderValues(ctx: HttpCtx | undefined): Promise<{ contact: Record<string, string>; field: Record<string, string> }> {
+    const contact: Record<string, string> = {};
+    const field: Record<string, string> = {};
+    if (!ctx?.workspaceId || !ctx?.contactPhone) return { contact, field };
+    const cleanPhone = ctx.contactPhone.replace(/[^0-9]/g, '') || ctx.contactPhone;
+    contact.phone = cleanPhone;
+    try {
+        const client = await prisma.client.findFirst({
+            where: { workspaceId: ctx.workspaceId, phone: cleanPhone },
+            select: { name: true, status: true, tags: true, summary: true, customFields: true },
+        });
+        if (client) {
+            if (client.name) contact.name = client.name;
+            if (client.status) contact.status = client.status;
+            if (client.summary) contact.summary = client.summary;
+            if (Array.isArray(client.tags)) contact.tags = client.tags.join(',');
+            const cf = (client.customFields as Record<string, any> | null) || {};
+            for (const [k, v] of Object.entries(cf)) {
+                if (v == null) continue;
+                field[k] = typeof v === 'string' ? v : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+            }
+        }
+    } catch { /* placeholders just resolve to empty */ }
+    return { contact, field };
+}
+
+function substituteCrmPlaceholders(text: string, values: { contact: Record<string, string>; field: Record<string, string> }): string {
+    if (!text || typeof text !== 'string') return text;
+    return text.replace(CRM_PLACEHOLDER_RE, (_, kind: string, key: string) => {
+        const map = kind === 'contact' ? values.contact : values.field;
+        return map[key] ?? '';
+    });
+}
+
 // Strip Authorization / Bearer / token-bearing headers when surfacing
 // the resolved request to the Activity log / Test tab. The user still
 // sees the URL and body that actually went out, just not the secret
@@ -480,17 +526,22 @@ function redactHeadersForDisplay(headers: Record<string, string>): Record<string
     return out;
 }
 
-export function buildTemplateExecutor(tpl: HttpToolTemplate) {
+export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
     return async (args: Record<string, any>) => {
         // We always build a `request` object describing what the executor
         // actually sent (URL, method, redacted headers, body). It's
         // returned alongside the response so the Activity / Test UIs can
         // show "agent sent X → got Y" even when the LLM args themselves
         // are empty (which is normal when every template field is fixed).
+        // CRM placeholders ({{contact:*}} / {{field:*}}) get filled in
+        // here from the current contact before AI placeholder parsing,
+        // so the LLM never has to repeat data we already know.
+        const crmValues = await loadCrmPlaceholderValues(ctx);
         try {
             // RAW MODE: parse rawRequest text, substitute placeholders, send
             if (tpl.inputMode === 'raw') {
-                const { template, placeholders } = parseRawPlaceholders(tpl.rawRequest || '');
+                const rawWithCrm = substituteCrmPlaceholders(tpl.rawRequest || '', crmValues);
+                const { template, placeholders } = parseRawPlaceholders(rawWithCrm);
                 const values: Record<string, string> = {};
                 placeholders.forEach(ph => { values[ph.key] = args[ph.key] ?? ''; });
                 const filled = applyPlaceholders(template, values);
@@ -535,7 +586,8 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
             }
 
             // URL
-            const url = tpl.url.mode === 'fixed' ? tpl.url.value : (args.url || '');
+            const rawUrl = tpl.url.mode === 'fixed' ? tpl.url.value : (args.url || '');
+            const url = substituteCrmPlaceholders(rawUrl, crmValues);
             if (!url) return { error: 'No URL provided' };
 
             // Query params
@@ -543,7 +595,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
             (tpl.queryParams || []).forEach((p, i) => {
                 if (!p.name) return;
                 const aiKey = `query_${sanitizeName(p.name, `p${i}`)}`;
-                params[p.name] = resolveValue(p.value, args[aiKey]);
+                params[p.name] = substituteCrmPlaceholders(resolveValue(p.value, args[aiKey]), crmValues);
             });
 
             // Headers
@@ -551,7 +603,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
             (tpl.headers || []).forEach((h, i) => {
                 if (!h.name) return;
                 const aiKey = `header_${sanitizeName(h.name, `h${i}`)}`;
-                headers[h.name] = resolveValue(h.value, args[aiKey]);
+                headers[h.name] = substituteCrmPlaceholders(resolveValue(h.value, args[aiKey]), crmValues);
             });
 
             // Auth
@@ -569,12 +621,13 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
                 (tpl.bodyParams || []).forEach((b, i) => {
                     if (!b.name) return;
                     const aiKey = `body_${sanitizeName(b.name, `b${i}`)}`;
-                    obj[b.name] = resolveValue(b.value, args[aiKey]);
+                    obj[b.name] = substituteCrmPlaceholders(resolveValue(b.value, args[aiKey]), crmValues);
                 });
                 data = obj;
                 if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
             } else if (tpl.bodyType === 'raw' && tpl.rawBody) {
-                data = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
+                const rawBodyResolved = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
+                data = substituteCrmPlaceholders(rawBodyResolved, crmValues);
             }
 
             const finalUrl = Object.keys(params).length
@@ -613,7 +666,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
     };
 }
 
-export function buildHttpTools(httpTools: HttpToolTemplate[] = []) {
+export function buildHttpTools(httpTools: HttpToolTemplate[] = [], ctx?: HttpCtx) {
     const tools: Record<string, any> = {};
     const usedNames = new Set<string>();
     (httpTools || []).forEach((tpl, idx) => {
@@ -626,7 +679,7 @@ export function buildHttpTools(httpTools: HttpToolTemplate[] = []) {
         tools[toolName] = makeTool(
             tpl.description || `Call ${toolName}`,
             buildTemplateSchema(tpl),
-            buildTemplateExecutor(tpl)
+            buildTemplateExecutor(tpl, ctx)
         );
     });
 
@@ -834,7 +887,8 @@ export function buildToolsForSkills(
     }
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {
-        tools = { ...tools, ...buildHttpTools(httpTools) };
+        const contactPhone = remoteJid ? (remoteJid.replace(/[^0-9]/g, '') || remoteJid) : undefined;
+        tools = { ...tools, ...buildHttpTools(httpTools, { workspaceId, contactPhone }) };
         const list = httpTools
             .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
             .join('\n');

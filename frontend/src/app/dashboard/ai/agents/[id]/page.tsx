@@ -594,11 +594,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         finally { setSaving(false); }
     };
 
+    // Suggested models per provider. These are only suggestions for the
+    // datalist autocomplete — the Model field is free-text, so any model
+    // id the provider's API accepts (new releases, fine-tunes, etc.) can
+    // be typed directly without code changes.
     const getAvailableModels = () => {
         const p = providers.find(p => p.id === providerId)?.provider;
-        if (p === 'OPENAI') return ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'];
-        if (p === 'CLAUDE') return ['claude-sonnet-4-5-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'];
-        if (p === 'GEMINI') return ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
+        if (p === 'OPENAI') return ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'];
+        if (p === 'CLAUDE') return ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5-20250514', 'claude-3-5-haiku-20241022'];
+        if (p === 'GEMINI') return ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
         return [];
     };
 
@@ -1269,11 +1273,16 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </div>
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground">Model</label>
-                                <select value={model} onChange={e => setModel(e.target.value)} disabled={!providerId}
-                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50">
-                                    <option value="" disabled>Select Model</option>
-                                    {getAvailableModels().map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
+                                <input type="text" value={model} onChange={e => setModel(e.target.value)} disabled={!providerId}
+                                    list={`agent-model-suggestions-${providerId}`}
+                                    placeholder={providerId ? "Pick from list or type any model id" : "Select a provider first"}
+                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 font-mono text-sm" />
+                                <datalist id={`agent-model-suggestions-${providerId}`}>
+                                    {getAvailableModels().map(m => <option key={m} value={m} />)}
+                                </datalist>
+                                <p className="text-[11px] text-muted-foreground mt-1">
+                                    Any model id the provider's API accepts works — type a custom one if the suggestions don't list it.
+                                </p>
                             </div>
                         </div>
 

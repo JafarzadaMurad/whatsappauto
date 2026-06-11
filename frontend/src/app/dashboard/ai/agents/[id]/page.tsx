@@ -141,7 +141,12 @@ function ValueInput({ spec, onChange, placeholder, multiline = false, inputRef }
 // placeholders the executor knows how to resolve, with a copy button
 // per entry. Used inside HTTP tool editors so users can paste a token
 // into the URL / header / body without remembering the syntax.
-function PlaceholdersPanel({ userFields, onCopy }: { userFields: { key: string; label: string }[]; onCopy: (token: string) => void }) {
+function PlaceholdersPanel({ userFields, httpTools, currentToolName, onCopy }: {
+    userFields: { key: string; label: string }[];
+    httpTools: HttpToolTemplate[];
+    currentToolName?: string;
+    onCopy: (token: string) => void;
+}) {
     const [open, setOpen] = useState(false);
     const contactTokens = [
         { token: "{{contact:name}}", label: "Contact name (Client.name)" },
@@ -150,15 +155,19 @@ function PlaceholdersPanel({ userFields, onCopy }: { userFields: { key: string; 
         { token: "{{contact:summary}}", label: "AI summary of the conversation" },
         { token: "{{contact:tags}}", label: "Comma-separated tags" },
     ];
+    // Other HTTP tools in this agent — their results are addressable
+    // via {{prev:<name>.<json.path>}} within the same agent turn.
+    const otherTools = (httpTools || []).filter(t => t.name && t.name !== currentToolName);
     const copy = async (t: string) => {
         try { await navigator.clipboard.writeText(t); onCopy(t); } catch { /* fallthrough */ }
     };
+    const totalCount = contactTokens.length + userFields.length + otherTools.length * 2;
     return (
         <div className="border border-border rounded-xl bg-secondary/20">
             <button type="button" onClick={() => setOpen(o => !o)}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-secondary/30 transition-colors">
                 {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Show available placeholders ({contactTokens.length + userFields.length})
+                Show available placeholders ({totalCount})
             </button>
             {open && (
                 <div className="border-t border-border p-3 space-y-3">
@@ -179,6 +188,37 @@ function PlaceholdersPanel({ userFields, onCopy }: { userFields: { key: string; 
                                 {userFields.map(f => (
                                     <PlaceholderRow key={f.key} token={`{{field:${f.key}}}`} label={f.label} onCopy={copy} />
                                 ))}
+                            </div>
+                        )}
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                            Previous tool results · {'{{prev:<tool>.<json.path>}}'}
+                        </div>
+                        {otherTools.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic">Add at least one other HTTP tool to reference its result here.</div>
+                        ) : (
+                            <div className="space-y-2">
+                                {otherTools.map(t => (
+                                    <div key={t.id}>
+                                        <div className="text-[11px] text-foreground font-medium mb-1">
+                                            {t.name} <span className="text-muted-foreground font-normal">{t.method} {(t.url?.mode === 'fixed' ? t.url.value : '')?.split('?')[0]}</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                                            <PlaceholderRow
+                                                token={`{{prev:${t.name}.data.result}}`}
+                                                label={`${t.name} response body → data.result (typical Bitrix id)`}
+                                                onCopy={copy} />
+                                            <PlaceholderRow
+                                                token={`{{prev:${t.name}.status}}`}
+                                                label={`${t.name} HTTP status code`}
+                                                onCopy={copy} />
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="text-[11px] text-muted-foreground italic">
+                                    Tip: any JSON path works — e.g. <code>{'{{prev:my_tool.data.items.0.id}}'}</code>.
+                                </div>
                             </div>
                         )}
                     </div>
@@ -1565,9 +1605,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                         )}
                                                     </div>
 
-                                                    {/* Placeholders helper — lists contact + user-field tokens with copy buttons */}
+                                                    {/* Placeholders helper — lists contact + user-field + cross-tool tokens with copy buttons */}
                                                     <div>
-                                                        <PlaceholdersPanel userFields={userFields} onCopy={() => { /* feedback handled in row */ }} />
+                                                        <PlaceholdersPanel
+                                                            userFields={userFields}
+                                                            httpTools={httpTools}
+                                                            currentToolName={tool.name}
+                                                            onCopy={() => { /* feedback handled in row */ }} />
                                                     </div>
                                                     </>
                                                     )}

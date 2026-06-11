@@ -508,6 +508,42 @@ function substituteCrmPlaceholders(text: string, values: { contact: Record<strin
     });
 }
 
+// ─── Cross-tool result chaining ───────────────────────────────────
+// In a single agent turn the LLM may call several HTTP tools in
+// sequence. {{prev:<tool>.<json.path>}} lets a later tool reference
+// any earlier tool's response without going through the model.
+// Example: {{prev:bitrix_create_contact.data.result}} → 14847.
+// Paths support dotted access and numeric segments for array indices.
+const PREV_PLACEHOLDER_RE = /\{\{\s*prev\s*:\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
+
+function resolvePrevPath(stepResults: Record<string, any>, path: string): string {
+    const segments = path.split('.');
+    const toolName = segments.shift();
+    if (!toolName) return '';
+    let cur: any = stepResults[toolName];
+    for (const seg of segments) {
+        if (cur == null) return '';
+        if (Array.isArray(cur) && /^\d+$/.test(seg)) {
+            cur = cur[parseInt(seg, 10)];
+        } else if (typeof cur === 'object') {
+            cur = cur[seg];
+        } else {
+            return '';
+        }
+    }
+    if (cur == null) return '';
+    return typeof cur === 'string' ? cur : (typeof cur === 'object' ? JSON.stringify(cur) : String(cur));
+}
+
+function substitutePrevPlaceholders(text: string, stepResults: Record<string, any>): string {
+    if (!text || typeof text !== 'string') return text;
+    return text.replace(PREV_PLACEHOLDER_RE, (_, path: string) => resolvePrevPath(stepResults, path));
+}
+
+function applyAllPlaceholders(text: string, crm: { contact: Record<string, string>; field: Record<string, string> }, stepResults: Record<string, any>): string {
+    return substitutePrevPlaceholders(substituteCrmPlaceholders(text, crm), stepResults);
+}
+
 // Strip Authorization / Bearer / token-bearing headers when surfacing
 // the resolved request to the Activity log / Test tab. The user still
 // sees the URL and body that actually went out, just not the secret
@@ -526,21 +562,18 @@ function redactHeadersForDisplay(headers: Record<string, string>): Record<string
     return out;
 }
 
-export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
+export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, stepResults: Record<string, any> = {}) {
     return async (args: Record<string, any>) => {
-        // We always build a `request` object describing what the executor
-        // actually sent (URL, method, redacted headers, body). It's
-        // returned alongside the response so the Activity / Test UIs can
-        // show "agent sent X → got Y" even when the LLM args themselves
-        // are empty (which is normal when every template field is fixed).
         // CRM placeholders ({{contact:*}} / {{field:*}}) get filled in
         // here from the current contact before AI placeholder parsing,
         // so the LLM never has to repeat data we already know.
+        // Cross-tool placeholders ({{prev:<tool>.<path>}}) pull from
+        // earlier HTTP tool results within the same agent turn.
         const crmValues = await loadCrmPlaceholderValues(ctx);
         try {
             // RAW MODE: parse rawRequest text, substitute placeholders, send
             if (tpl.inputMode === 'raw') {
-                const rawWithCrm = substituteCrmPlaceholders(tpl.rawRequest || '', crmValues);
+                const rawWithCrm = applyAllPlaceholders(tpl.rawRequest || '', crmValues, stepResults);
                 const { template, placeholders } = parseRawPlaceholders(rawWithCrm);
                 const values: Record<string, string> = {};
                 placeholders.forEach(ph => { values[ph.key] = args[ph.key] ?? ''; });
@@ -587,7 +620,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
 
             // URL
             const rawUrl = tpl.url.mode === 'fixed' ? tpl.url.value : (args.url || '');
-            const url = substituteCrmPlaceholders(rawUrl, crmValues);
+            const url = applyAllPlaceholders(rawUrl, crmValues, stepResults);
             if (!url) return { error: 'No URL provided' };
 
             // Query params
@@ -595,7 +628,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
             (tpl.queryParams || []).forEach((p, i) => {
                 if (!p.name) return;
                 const aiKey = `query_${sanitizeName(p.name, `p${i}`)}`;
-                params[p.name] = substituteCrmPlaceholders(resolveValue(p.value, args[aiKey]), crmValues);
+                params[p.name] = applyAllPlaceholders(resolveValue(p.value, args[aiKey]), crmValues, stepResults);
             });
 
             // Headers
@@ -603,7 +636,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
             (tpl.headers || []).forEach((h, i) => {
                 if (!h.name) return;
                 const aiKey = `header_${sanitizeName(h.name, `h${i}`)}`;
-                headers[h.name] = substituteCrmPlaceholders(resolveValue(h.value, args[aiKey]), crmValues);
+                headers[h.name] = applyAllPlaceholders(resolveValue(h.value, args[aiKey]), crmValues, stepResults);
             });
 
             // Auth
@@ -621,13 +654,13 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
                 (tpl.bodyParams || []).forEach((b, i) => {
                     if (!b.name) return;
                     const aiKey = `body_${sanitizeName(b.name, `b${i}`)}`;
-                    obj[b.name] = substituteCrmPlaceholders(resolveValue(b.value, args[aiKey]), crmValues);
+                    obj[b.name] = applyAllPlaceholders(resolveValue(b.value, args[aiKey]), crmValues, stepResults);
                 });
                 data = obj;
                 if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
             } else if (tpl.bodyType === 'raw' && tpl.rawBody) {
                 const rawBodyResolved = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
-                data = substituteCrmPlaceholders(rawBodyResolved, crmValues);
+                data = applyAllPlaceholders(rawBodyResolved, crmValues, stepResults);
             }
 
             const finalUrl = Object.keys(params).length
@@ -669,6 +702,12 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx) {
 export function buildHttpTools(httpTools: HttpToolTemplate[] = [], ctx?: HttpCtx) {
     const tools: Record<string, any> = {};
     const usedNames = new Set<string>();
+    // Shared across this batch of HTTP tools — every executor reads
+    // it for {{prev:...}} substitution and writes its own result back
+    // under the (sanitized) tool name. Lives for one agent turn since
+    // buildHttpTools is called fresh per handleIncomingMessage.
+    const stepResults: Record<string, any> = {};
+
     (httpTools || []).forEach((tpl, idx) => {
         if (!tpl || !tpl.method || !tpl.url) return;
         let toolName = sanitizeName(tpl.name, `httpTool${idx + 1}`);
@@ -676,10 +715,17 @@ export function buildHttpTools(httpTools: HttpToolTemplate[] = [], ctx?: HttpCtx
         while (usedNames.has(toolName)) { toolName = `${toolName}_${suffix++}`; }
         usedNames.add(toolName);
 
+        const baseExecutor = buildTemplateExecutor(tpl, ctx, stepResults);
+        const recordingExecutor = async (args: Record<string, any>) => {
+            const result = await baseExecutor(args);
+            stepResults[toolName] = result;
+            return result;
+        };
+
         tools[toolName] = makeTool(
             tpl.description || `Call ${toolName}`,
             buildTemplateSchema(tpl),
-            buildTemplateExecutor(tpl, ctx)
+            recordingExecutor
         );
     });
 

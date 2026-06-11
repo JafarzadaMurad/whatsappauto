@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
-import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate } from './ai.service';
+import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate, AiService } from './ai.service';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 import { getWorkspaceId } from '../../lib/workspace-context';
@@ -400,6 +400,44 @@ export class AgentController {
     }
 
     // Send a manual reply into a conversation (currently Instagram only)
+    // Ephemeral test conversation. Pick a real CRM contact, run a turn
+    // as if you were them. Read-only: nothing is saved to message logs;
+    // CRM-mutating tools are stubbed (HTTP tools still fire so external
+    // integrations like Bitrix can be validated).
+    async testAsContact(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+
+            const schema = z.object({
+                contactPhone: z.string().min(3).max(50),
+                userMessage: z.string().min(1).max(4000),
+                sessionMessages: z.array(z.object({
+                    role: z.enum(['user', 'assistant']),
+                    content: z.string(),
+                })).max(100).optional().default([]),
+            });
+            const { contactPhone, userMessage, sessionMessages } = schema.parse(req.body);
+
+            const agent = await prisma.agent.findFirst({
+                where: { id, workspaceId },
+                include: { provider: true },
+            });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+            if (!agent.provider) return res.status(400).json({ success: false, message: 'Agent has no AI provider configured' });
+
+            const result = await AiService.runTestTurn({
+                agent, workspaceId,
+                contactPhone, sessionMessages, userMessage,
+            });
+
+            return res.json({ success: true, ...result });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async replyToConversation(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;

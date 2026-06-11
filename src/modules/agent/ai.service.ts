@@ -48,6 +48,34 @@ function truncateForLog(value: any, max = 5000): any {
     return value;
 }
 
+// Tool names that mutate workspace data. In agent "Test as contact"
+// mode they're swapped with stubs so the real CRM / contact record
+// isn't dirtied by exploratory testing. HTTP tools intentionally still
+// fire — verifying external integrations (Bitrix, etc.) is the whole
+// point of a test session.
+const TEST_DRY_RUN_TOOLS = new Set(['upsertClient', 'setUserField']);
+
+export function wrapToolsForDryRun(tools: Record<string, any> | undefined): Record<string, any> | undefined {
+    if (!tools) return tools;
+    const out: Record<string, any> = {};
+    for (const [name, def] of Object.entries(tools)) {
+        if (TEST_DRY_RUN_TOOLS.has(name)) {
+            out[name] = {
+                ...def,
+                execute: async (args: any) => ({
+                    dryRun: true,
+                    skippedReason: 'Test mode — write skipped. The real contact record was not modified.',
+                    wouldHaveCalled: name,
+                    wouldHaveArgs: args,
+                }),
+            };
+        } else {
+            out[name] = def;
+        }
+    }
+    return out;
+}
+
 // Pair every tool call with its result from the AI SDK steps. Returns
 // the rich shape persisted to AgentActivityLog.toolCalls.
 export function extractRichToolCalls(steps: any[]): Array<{
@@ -719,7 +747,7 @@ function resolveSkillPrompt(skillId: string, skillPrompts?: Record<string, strin
     return DEFAULT_SKILL_PROMPTS[skillId] || '';
 }
 
-function buildToolsForSkills(
+export function buildToolsForSkills(
     skills: string[],
     allowedTableIds: string[],
     userId: string,
@@ -1001,5 +1029,105 @@ export class AiService {
         } catch (error) {
             logger.error({ err: error, instanceId, remoteJid }, 'Failed to generate AI response');
         }
+    }
+
+    // Ephemeral "Test as contact" turn used by the Agent → Test tab.
+    // Reads the contact's prior real history for context, runs the
+    // same prompt/tool stack as the live handler, but writes NOTHING
+    // back to the DB. Destructive CRM tools are stubbed via
+    // wrapToolsForDryRun; HTTP tools fire for real so external
+    // integrations (Bitrix etc.) can be validated.
+    static async runTestTurn(opts: {
+        agent: any;
+        workspaceId: string;
+        contactPhone: string;
+        sessionMessages: Array<{ role: 'user' | 'assistant'; content: string }>;
+        userMessage: string;
+    }): Promise<{ reply: string; toolCalls: any[]; tokens: { prompt: number; completion: number; total: number } }> {
+        const { agent, workspaceId, contactPhone, sessionMessages, userMessage } = opts;
+        const providerInfo = agent.provider;
+
+        // Pick AI model — same switch as the live handler
+        let aiModel: any;
+        if (providerInfo.provider === 'OPENAI') {
+            aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
+        } else if (providerInfo.provider === 'CLAUDE') {
+            aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
+        } else if (providerInfo.provider === 'GEMINI') {
+            aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        } else {
+            throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
+        }
+
+        // Look up real CRM record for contact context (read-only)
+        const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+        const client = await prisma.client.findFirst({ where: { workspaceId, phone: cleanPhone } });
+        const contactName = client?.name || null;
+        const contactContext = `\n\nCurrent contact info:\n- Phone: ${cleanPhone}${contactName ? `\n- Name: ${contactName}` : ''}${client?.status ? `\n- CRM Status: ${client.status}` : ''}${client?.tags?.length ? `\n- Tags: ${client.tags.join(', ')}` : ''}${client?.summary ? `\n- Summary: ${client.summary}` : ''}\nYou already have this info — do NOT ask the customer for their phone number or name.`;
+
+        // Build tools — same as live, then wrap mutators with dry-run
+        const skills: string[] = (agent as any).skills || [];
+        const httpTools: HttpToolTemplate[] = ((agent as any).httpTools || []) as HttpToolTemplate[];
+        const skillPrompts: Record<string, string> = ((agent as any).skillPrompts || {}) as Record<string, string>;
+        const fakeRemoteJid = `${cleanPhone}@s.whatsapp.net`;
+        const { tools: liveTools, skillPrompt } = buildToolsForSkills(
+            skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
+            agent.id, fakeRemoteJid, skillPrompts
+        );
+        const tools = wrapToolsForDryRun(liveTools);
+
+        const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.')
+            + contactContext
+            + skillPrompt
+            + '\n\n[Test session — your replies and tool calls are visible to the operator. Behave normally.]';
+
+        // Read up to 8 prior REAL messages (from any instance for this
+        // workspace contact) for context. Memory-skill agents read on
+        // demand, so we keep this small.
+        let realHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+        if (client) {
+            const instances = await prisma.instance.findMany({ where: { workspaceId }, select: { id: true } });
+            const instanceIds = instances.map(i => i.id);
+            if (instanceIds.length > 0) {
+                const rows = await prisma.message.findMany({
+                    where: {
+                        instanceId: { in: instanceIds },
+                        remoteJid: { contains: cleanPhone },
+                    },
+                    orderBy: { timestamp: 'desc' },
+                    take: 8,
+                });
+                realHistory = rows.reverse().map(r => ({
+                    role: (r.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
+                    content: r.content || '[Unsupported Media]',
+                }));
+            }
+        }
+
+        const messages = [
+            ...realHistory,
+            ...sessionMessages,
+            { role: 'user' as const, content: userMessage },
+        ];
+
+        const result = await generateText({
+            model: aiModel,
+            system: systemPrompt,
+            messages: applyAnthropicCacheControl(providerInfo.provider, messages as any),
+            ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
+        } as any);
+
+        const reply = result.text || '';
+        const richToolCalls = extractRichToolCalls(result.steps as any[]);
+
+        return {
+            reply,
+            toolCalls: richToolCalls,
+            tokens: {
+                prompt: (result as any).usage?.inputTokens || 0,
+                completion: (result as any).usage?.outputTokens || 0,
+                total: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
+            },
+        };
     }
 }

@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
-type Tab = "conversations" | "usage" | "activity" | "settings";
+type Tab = "conversations" | "usage" | "activity" | "test" | "settings";
+
+type TestTurn =
+    | { id: string; role: 'user'; content: string }
+    | { id: string; role: 'assistant'; content: string; toolCalls: ActivityToolCall[]; tokens?: { prompt: number; completion: number; total: number } };
 
 type ActivityToolCall = {
     toolName: string;
@@ -174,6 +178,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [activityOnlyErrors, setActivityOnlyErrors] = useState(false);
     const [expandedActivityIds, setExpandedActivityIds] = useState<Set<string>>(new Set());
 
+    // Test tab — entirely ephemeral, lives in component state so refresh wipes it.
+    const [testContacts, setTestContacts] = useState<any[]>([]);
+    const [testContactSearch, setTestContactSearch] = useState("");
+    const [testSelectedContact, setTestSelectedContact] = useState<any | null>(null);
+    const [testContactHistory, setTestContactHistory] = useState<any[]>([]);
+    const [testLoadingContacts, setTestLoadingContacts] = useState(false);
+    const [testTurns, setTestTurns] = useState<TestTurn[]>([]);
+    const [testInput, setTestInput] = useState("");
+    const [testSending, setTestSending] = useState(false);
+    const [testError, setTestError] = useState<string | null>(null);
+    const [expandedTestToolIds, setExpandedTestToolIds] = useState<Set<string>>(new Set());
+
     // Settings form
     const [name, setName] = useState("");
     const [providerId, setProviderId] = useState("");
@@ -222,8 +238,87 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         if (tab === "conversations") loadConversations();
         if (tab === "usage") loadStats();
         if (tab === "activity") loadActivity(false);
+        if (tab === "test" && testContacts.length === 0) loadTestContacts();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab, activityOnlyErrors]);
+
+    const loadTestContacts = async () => {
+        setTestLoadingContacts(true);
+        try {
+            const r = await api.get('/clients?limit=200');
+            if (r.data?.success) setTestContacts(r.data.clients || []);
+        } catch (e) { console.error(e); }
+        finally { setTestLoadingContacts(false); }
+    };
+
+    const selectTestContact = async (c: any) => {
+        setTestSelectedContact(c);
+        setTestTurns([]);
+        setTestInput('');
+        setTestError(null);
+        setExpandedTestToolIds(new Set());
+        setTestContactHistory([]);
+        // Best-effort: pull the last messages this contact had with ANY
+        // instance in the workspace for visual context.
+        try {
+            const inst = await api.get('/instances');
+            const instances = inst.data?.instances || [];
+            if (instances.length > 0 && c?.phone) {
+                const guess = instances[0].id;
+                const r = await api.get(`/inbox/messages?accountId=${guess}&remoteJid=${encodeURIComponent(c.phone + '@s.whatsapp.net')}&limit=20`);
+                if (r.data?.success) setTestContactHistory(r.data.messages || []);
+            }
+        } catch { /* not critical */ }
+    };
+
+    const sendTestMessage = async () => {
+        if (!testSelectedContact || !testInput.trim() || testSending) return;
+        const userText = testInput.trim();
+        const userTurn: TestTurn = { id: `u-${Date.now()}`, role: 'user', content: userText };
+        setTestTurns(prev => [...prev, userTurn]);
+        setTestInput('');
+        setTestSending(true);
+        setTestError(null);
+        try {
+            const sessionMessages = testTurns.map(t => ({ role: t.role, content: t.content }));
+            const r = await api.post(`/agents/${id}/test-as-contact`, {
+                contactPhone: testSelectedContact.phone,
+                userMessage: userText,
+                sessionMessages,
+            });
+            if (r.data?.success) {
+                const asst: TestTurn = {
+                    id: `a-${Date.now()}`,
+                    role: 'assistant',
+                    content: r.data.reply || '',
+                    toolCalls: r.data.toolCalls || [],
+                    tokens: r.data.tokens,
+                };
+                setTestTurns(prev => [...prev, asst]);
+            } else {
+                setTestError(r.data?.message || 'Unknown error');
+            }
+        } catch (e: any) {
+            setTestError(e.response?.data?.message || e.message);
+        } finally {
+            setTestSending(false);
+        }
+    };
+
+    const clearTestSession = () => {
+        setTestTurns([]);
+        setTestInput('');
+        setTestError(null);
+        setExpandedTestToolIds(new Set());
+    };
+
+    const toggleTestToolExpand = (turnId: string) => {
+        setExpandedTestToolIds(prev => {
+            const next = new Set(prev);
+            if (next.has(turnId)) next.delete(turnId); else next.add(turnId);
+            return next;
+        });
+    };
 
     const loadActivity = async (loadMore: boolean) => {
         setActivityLoading(true);
@@ -400,6 +495,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const tabs: { key: Tab; label: string; icon: any }[] = [
         { key: "usage", label: "Usage", icon: BarChart3 },
         { key: "activity", label: "Activity", icon: Activity },
+        { key: "test", label: "Test", icon: FlaskConical },
         { key: "settings", label: "Settings", icon: Settings },
     ];
 
@@ -832,6 +928,185 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             )}
                         </div>
                     )}
+                </motion.div>
+            )}
+
+            {tab === "test" && (
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-card border border-border rounded-2xl overflow-hidden"
+                >
+                    <div className="grid grid-cols-1 md:grid-cols-3 min-h-[500px]">
+                        {/* Left: contact picker */}
+                        <div className="border-r border-border p-4 md:max-h-[600px] md:overflow-y-auto">
+                            <div className="flex items-center gap-2 mb-3">
+                                <FlaskConical className="w-4 h-4 text-primary" />
+                                <h3 className="font-semibold text-sm">Test as contact</h3>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mb-3">
+                                Pick a contact and chat with the agent <em>as</em> them. Nothing is saved — refresh clears everything. CRM writes are skipped; HTTP calls fire for real.
+                            </p>
+                            <input value={testContactSearch} onChange={e => setTestContactSearch(e.target.value)}
+                                placeholder="Search contacts…"
+                                className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 mb-2" />
+                            {testLoadingContacts ? (
+                                <div className="flex justify-center py-8"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+                            ) : testContacts.length === 0 ? (
+                                <div className="text-xs text-muted-foreground py-6 text-center">No contacts yet.</div>
+                            ) : (
+                                <div className="space-y-1">
+                                    {testContacts
+                                        .filter(c => {
+                                            const q = testContactSearch.trim().toLowerCase();
+                                            if (!q) return true;
+                                            return (c.name?.toLowerCase().includes(q)) || (c.phone?.includes(q));
+                                        })
+                                        .slice(0, 100)
+                                        .map(c => (
+                                            <button key={c.id} onClick={() => selectTestContact(c)}
+                                                className={`w-full text-left p-2 rounded-lg border transition-colors ${testSelectedContact?.id === c.id
+                                                    ? 'bg-primary/10 border-primary/30'
+                                                    : 'bg-secondary/20 border-border hover:bg-secondary/40'}`}>
+                                                <div className="text-sm font-medium truncate">{c.name || `+${c.phone}`}</div>
+                                                <div className="text-[11px] text-muted-foreground truncate">+{c.phone}{c.status ? ` · ${c.status}` : ''}</div>
+                                            </button>
+                                        ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: chat */}
+                        <div className="md:col-span-2 flex flex-col">
+                            {!testSelectedContact ? (
+                                <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2 p-8">
+                                    <FlaskConical className="w-10 h-10 opacity-30" />
+                                    <p className="text-sm">Pick a contact on the left to start a test session.</p>
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Header */}
+                                    <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-secondary/20">
+                                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary font-semibold flex items-center justify-center text-sm">
+                                            {(testSelectedContact.name || testSelectedContact.phone || '?').charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="font-medium text-sm truncate">{testSelectedContact.name || `+${testSelectedContact.phone}`}</div>
+                                            <div className="text-[11px] text-muted-foreground">+{testSelectedContact.phone} · test session</div>
+                                        </div>
+                                        <button onClick={clearTestSession}
+                                            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/40 transition-colors inline-flex items-center gap-1.5">
+                                            <RefreshCw className="w-3.5 h-3.5" /> Reset
+                                        </button>
+                                    </div>
+
+                                    {/* History + turns */}
+                                    <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[500px]">
+                                        {testContactHistory.length > 0 && (
+                                            <div className="space-y-2 pb-3 mb-2 border-b border-border/50">
+                                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">
+                                                    Real history (read-only)
+                                                </div>
+                                                {testContactHistory.slice(-6).map((h: any) => (
+                                                    <div key={h.id} className={`flex ${h.userMessage ? 'justify-start' : 'justify-end'}`}>
+                                                        <div className={`max-w-[75%] px-3 py-1.5 rounded-xl text-xs opacity-60 ${h.userMessage ? 'bg-secondary/40' : 'bg-primary/10 border border-primary/20'}`}>
+                                                            {h.userMessage || h.agentReply}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {testTurns.length === 0 ? (
+                                            <div className="text-center text-xs text-muted-foreground py-6">
+                                                Type a message below as {testSelectedContact.name || `+${testSelectedContact.phone}`}.
+                                            </div>
+                                        ) : testTurns.map(t => {
+                                            if (t.role === 'user') {
+                                                return (
+                                                    <div key={t.id} className="flex justify-start">
+                                                        <div className="bg-amber-500/10 border border-amber-500/30 px-3.5 py-2 rounded-2xl rounded-bl-md max-w-[75%] text-sm">
+                                                            <div className="text-[10px] uppercase tracking-wide text-amber-400 mb-0.5">As {testSelectedContact.name || testSelectedContact.phone}</div>
+                                                            <div className="whitespace-pre-wrap break-words">{t.content}</div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            const expanded = expandedTestToolIds.has(t.id);
+                                            const failed = t.toolCalls.filter(tc => !tc.ok).length;
+                                            return (
+                                                <div key={t.id} className="flex justify-end">
+                                                    <div className="bg-primary/15 border border-primary/30 px-3.5 py-2 rounded-2xl rounded-br-md max-w-[80%] text-sm">
+                                                        <div className="text-[10px] uppercase tracking-wide text-primary mb-0.5">Agent reply</div>
+                                                        <div className="whitespace-pre-wrap break-words">{t.content || <span className="italic opacity-60">(empty)</span>}</div>
+                                                        {t.toolCalls.length > 0 && (
+                                                            <button onClick={() => toggleTestToolExpand(t.id)}
+                                                                className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                                                                <Wrench className="w-3 h-3" />
+                                                                {expanded ? 'Hide' : 'Show'} {t.toolCalls.length} tool call{t.toolCalls.length === 1 ? '' : 's'}
+                                                                {failed > 0 && <span className="text-red-400">· {failed} failed</span>}
+                                                            </button>
+                                                        )}
+                                                        {expanded && (
+                                                            <div className="mt-2 space-y-2">
+                                                                {t.toolCalls.map((tc, i) => (
+                                                                    <div key={i} className={`rounded-lg border p-2 text-[11px] ${tc.ok ? 'border-border bg-background/40' : 'border-red-500/30 bg-red-500/5'}`}>
+                                                                        <div className="flex items-center gap-1.5 font-medium mb-1.5">
+                                                                            {tc.ok
+                                                                                ? <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                                                                : <XCircle className="w-3 h-3 text-red-400" />}
+                                                                            <code>{tc.toolName}</code>
+                                                                            {tc.error && <span className="text-red-400 italic truncate">— {tc.error}</span>}
+                                                                        </div>
+                                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                                            <pre className="bg-background/60 rounded-md p-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(tc.args ?? null, null, 2)}</pre>
+                                                                            <pre className="bg-background/60 rounded-md p-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(tc.result ?? null, null, 2)}</pre>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {t.tokens && (
+                                                            <div className="text-[10px] text-muted-foreground mt-1.5">
+                                                                {t.tokens.total} tok · {t.tokens.prompt} in / {t.tokens.completion} out
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+
+                                        {testSending && (
+                                            <div className="flex justify-end">
+                                                <div className="bg-primary/10 border border-primary/20 px-3 py-2 rounded-2xl rounded-br-md text-xs flex items-center gap-2">
+                                                    <Loader2 className="w-3 h-3 animate-spin" /> thinking…
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {testError && (
+                                            <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-xs">
+                                                {testError}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Input */}
+                                    <div className="border-t border-border bg-card p-3 flex gap-2">
+                                        <input value={testInput} onChange={e => setTestInput(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTestMessage(); } }}
+                                            placeholder={`Type as ${testSelectedContact.name || testSelectedContact.phone}…`}
+                                            disabled={testSending}
+                                            className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                        <button onClick={sendTestMessage} disabled={testSending || !testInput.trim()}
+                                            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50">
+                                            {testSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
                 </motion.div>
             )}
 

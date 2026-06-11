@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -93,25 +93,115 @@ const newTool = (): HttpToolTemplate => ({
 });
 
 // Value input: switchable between Fixed value and AI-described
-function ValueInput({ spec, onChange, placeholder }: { spec: ValueSpec; onChange: (v: ValueSpec) => void; placeholder?: string }) {
+function ValueInput({ spec, onChange, placeholder, multiline = false, inputRef }: {
+    spec: ValueSpec;
+    onChange: (v: ValueSpec) => void;
+    placeholder?: string;
+    multiline?: boolean;
+    inputRef?: React.Ref<HTMLTextAreaElement | HTMLInputElement>;
+}) {
+    const value = spec.mode === "fixed" ? spec.value : spec.description;
+    const handleChange = (v: string) => onChange(spec.mode === "fixed" ? { mode: "fixed", value: v } : { mode: "ai", description: v });
+    const ph = spec.mode === "ai" ? "Describe what AI should put here" : (placeholder || "");
+
     return (
-        <div className="flex gap-1.5">
+        <div className={`flex gap-1.5 ${multiline ? 'items-stretch' : ''}`}>
             <button
                 type="button"
                 onClick={() => onChange(spec.mode === "fixed" ? { mode: "ai", description: "" } : { mode: "fixed", value: "" })}
                 title={spec.mode === "fixed" ? "Switch to AI-filled" : "Switch to fixed value"}
-                className={`flex-shrink-0 flex items-center gap-1 px-2 rounded-lg border text-xs font-medium transition-colors ${spec.mode === "ai" ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-secondary/50 text-muted-foreground border-border hover:text-foreground"}`}
+                className={`flex-shrink-0 flex items-center gap-1 px-2 ${multiline ? 'py-1.5 self-start' : ''} rounded-lg border text-xs font-medium transition-colors ${spec.mode === "ai" ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-secondary/50 text-muted-foreground border-border hover:text-foreground"}`}
             >
                 {spec.mode === "ai" ? <><Sparkles className="w-3 h-3" /> AI</> : "Fixed"}
             </button>
-            <input
-                type="text"
-                value={spec.mode === "fixed" ? spec.value : spec.description}
-                onChange={e => onChange(spec.mode === "fixed" ? { mode: "fixed", value: e.target.value } : { mode: "ai", description: e.target.value })}
-                placeholder={spec.mode === "ai" ? "Describe what AI should put here" : (placeholder || "")}
-                className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
-            />
+            {multiline ? (
+                <textarea
+                    ref={inputRef as React.Ref<HTMLTextAreaElement>}
+                    value={value}
+                    onChange={e => handleChange(e.target.value)}
+                    placeholder={ph}
+                    rows={4}
+                    className="flex-1 min-h-[80px] bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono resize-y"
+                />
+            ) : (
+                <input
+                    ref={inputRef as React.Ref<HTMLInputElement>}
+                    type="text"
+                    value={value}
+                    onChange={e => handleChange(e.target.value)}
+                    placeholder={ph}
+                    className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+                />
+            )}
         </div>
+    );
+}
+
+// Drop-down panel listing all the {{contact:*}} and {{field:*}}
+// placeholders the executor knows how to resolve, with a copy button
+// per entry. Used inside HTTP tool editors so users can paste a token
+// into the URL / header / body without remembering the syntax.
+function PlaceholdersPanel({ userFields, onCopy }: { userFields: { key: string; label: string }[]; onCopy: (token: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const contactTokens = [
+        { token: "{{contact:name}}", label: "Contact name (Client.name)" },
+        { token: "{{contact:phone}}", label: "Phone digits" },
+        { token: "{{contact:status}}", label: "CRM status (NEW, LEAD, ...)" },
+        { token: "{{contact:summary}}", label: "AI summary of the conversation" },
+        { token: "{{contact:tags}}", label: "Comma-separated tags" },
+    ];
+    const copy = async (t: string) => {
+        try { await navigator.clipboard.writeText(t); onCopy(t); } catch { /* fallthrough */ }
+    };
+    return (
+        <div className="border border-border rounded-xl bg-secondary/20">
+            <button type="button" onClick={() => setOpen(o => !o)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-secondary/30 transition-colors">
+                {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Show available placeholders ({contactTokens.length + userFields.length})
+            </button>
+            {open && (
+                <div className="border-t border-border p-3 space-y-3">
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Contact</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                            {contactTokens.map(t => (
+                                <PlaceholderRow key={t.token} token={t.token} label={t.label} onCopy={copy} />
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">User fields ({userFields.length})</div>
+                        {userFields.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic">No user fields defined yet. Add them in Settings → User Fields.</div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                                {userFields.map(f => (
+                                    <PlaceholderRow key={f.key} token={`{{field:${f.key}}}`} label={f.label} onCopy={copy} />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function PlaceholderRow({ token, label, onCopy }: { token: string; label: string; onCopy: (t: string) => void }) {
+    const [copied, setCopied] = useState(false);
+    return (
+        <button type="button"
+            onClick={() => { onCopy(token); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+            className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-background/40 hover:bg-background/70 transition-colors text-left">
+            <div className="min-w-0">
+                <code className="text-[11px] text-foreground truncate block">{token}</code>
+                <div className="text-[10px] text-muted-foreground truncate">{label}</div>
+            </div>
+            {copied
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                : <Copy className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />}
+        </button>
     );
 }
 
@@ -198,6 +288,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
+    const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
     const [skillPrompts, setSkillPrompts] = useState<Record<string, string>>({});
@@ -206,11 +297,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     useEffect(() => {
         const load = async () => {
             try {
-                const [agentRes, provRes, tablesRes] = await Promise.all([
+                const [agentRes, provRes, tablesRes, fieldsRes] = await Promise.all([
                     api.get(`/agents/${id}`),
                     api.get('/ai-providers'),
-                    api.get('/tables')
+                    api.get('/tables'),
+                    api.get('/user-fields').catch(() => ({ data: { success: false } })),
                 ]);
+                if (fieldsRes.data?.success) {
+                    setUserFields((fieldsRes.data.fields || []).map((f: any) => ({ key: f.key, label: f.label || f.key })));
+                }
                 if (agentRes.data.success) {
                     const a = agentRes.data.agent;
                     setAgent(a);
@@ -1465,9 +1560,14 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                         )}
                                                         {tool.bodyType === 'raw' && (
                                                             <div className="mt-2">
-                                                                <ValueInput spec={tool.rawBody || { mode: 'fixed', value: '' }} onChange={v => update({ rawBody: v })} placeholder='{"key":"value"}' />
+                                                                <ValueInput multiline spec={tool.rawBody || { mode: 'fixed', value: '' }} onChange={v => update({ rawBody: v })} placeholder='{"key":"value"}' />
                                                             </div>
                                                         )}
+                                                    </div>
+
+                                                    {/* Placeholders helper — lists contact + user-field tokens with copy buttons */}
+                                                    <div>
+                                                        <PlaceholdersPanel userFields={userFields} onCopy={() => { /* feedback handled in row */ }} />
                                                     </div>
                                                     </>
                                                     )}

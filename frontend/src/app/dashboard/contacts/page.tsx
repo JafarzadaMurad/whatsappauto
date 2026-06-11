@@ -14,6 +14,7 @@ interface Client {
     sourceLabel: string | null;
     customFields: Record<string, any> | null;
     summary?: string | null;
+    isAnonymous?: boolean;
     createdAt: string;
     updatedAt: string;
 }
@@ -57,9 +58,13 @@ const getStatusColor = (status: string) => {
 // arrive as digits-only (e.g. 994773102993); we prefix them with "+".
 // Instagram IGSIDs are also numeric but very long — same treatment is
 // fine, the user just wanted "looks like a number, not an id".
-function formatPhone(phone: string): string {
+// For WhatsApp LIDs (anonymous identities) we drop the "+" prefix —
+// adding it would imply this 15-digit number is a real phone you can
+// call, which it isn't.
+function formatPhone(phone: string, isAnonymous?: boolean): string {
     const digits = phone.replace(/[^0-9]/g, '');
     if (!digits) return phone;
+    if (isAnonymous) return digits;
     return '+' + digits;
 }
 
@@ -295,8 +300,16 @@ function CellValue({ client: c, columnId, field }: { client: Client; columnId: C
                     {c.name ? c.name.charAt(0).toUpperCase() : <Phone className="w-3.5 h-3.5" />}
                 </div>
                 <div className="min-w-0">
-                    <div className="font-medium text-foreground truncate">{c.name || 'Unknown'}</div>
-                    <div className="text-xs text-muted-foreground font-mono truncate">{formatPhone(c.phone)}</div>
+                    <div className="font-medium text-foreground truncate flex items-center gap-1.5">
+                        {c.name || 'Unknown'}
+                        {c.isAnonymous && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                title="Anonymous WhatsApp LID — not a real phone number">
+                                LID
+                            </span>
+                        )}
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono truncate">{formatPhone(c.phone, c.isAnonymous)}</div>
                 </div>
             </div>
         );
@@ -557,8 +570,16 @@ function EditContactDrawer({ client, fields, onClose, onSaved }: {
                             {name ? name.charAt(0).toUpperCase() : <Phone className="w-4 h-4" />}
                         </div>
                         <div className="min-w-0">
-                            <h2 className="font-semibold truncate">{name || 'Unknown'}</h2>
-                            <p className="text-xs text-muted-foreground font-mono truncate">{formatPhone(client.phone)}</p>
+                            <h2 className="font-semibold truncate flex items-center gap-2">
+                                {name || 'Unknown'}
+                                {client.isAnonymous && (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                        title="Anonymous WhatsApp LID — not a real phone number">
+                                        LID
+                                    </span>
+                                )}
+                            </h2>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{formatPhone(client.phone, client.isAnonymous)}</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="text-muted-foreground hover:text-foreground">

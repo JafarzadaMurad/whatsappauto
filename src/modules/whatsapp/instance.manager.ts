@@ -14,6 +14,7 @@ import { webhookQueue } from '../webhook/webhook.dispatcher';
 import { AiService } from '../agent/ai.service';
 import { upsertCrmContact } from '../client/client.service';
 import { extractMessageContent } from './message-content';
+import { resolveJid } from './lid-resolver';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -167,9 +168,15 @@ export class InstanceManager {
                     logger.info(`[${instanceId}] History sync: ${msgs.length} messages, ${contactList.length} contacts, progress=${h.progress ?? '?'}, isLatest=${h.isLatest ?? '?'}`);
 
                     for (const msg of msgs) {
-                        const remoteJid = msg.key?.remoteJid;
-                        if (!remoteJid || remoteJid === 'status@broadcast' || isJidGroup(remoteJid)) continue;
+                        const rawJid = msg.key?.remoteJid;
+                        if (!rawJid || rawJid === 'status@broadcast' || isJidGroup(rawJid)) continue;
                         if (!msg.message) continue;
+
+                        // Same LID→phone resolution as live messages so the
+                        // history sync doesn't seed a duplicate set of LID-
+                        // keyed rows that would have to be merged later.
+                        const { effectiveJid: remoteJid, phone: resolvedPhone, isAnonymous } =
+                            await resolveJid(instanceId, rawJid, msg);
 
                         const { content, type: msgType } = extractMessageContent(msg);
                         if (!content || msgType === 'protocol') continue;
@@ -206,10 +213,11 @@ export class InstanceManager {
                                 return upsertCrmContact({
                                     userId: inst.userId,
                                     workspaceId: wsId,
-                                    phone: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+                                    phone: resolvedPhone,
                                     name: msg.pushName || null,
                                     channel: 'whatsapp',
                                     sourceLabel: inst.name,
+                                    isAnonymous,
                                 });
                             }).catch(() => {});
                         }
@@ -223,8 +231,16 @@ export class InstanceManager {
                 if (m.type !== 'notify') return;
                 for (const msg of m.messages) {
                     const isStatus = msg.key.remoteJid === 'status@broadcast';
-                    const remoteJid = msg.key.remoteJid;
-                    if (!remoteJid || isStatus || isJidGroup(remoteJid) || !msg.message) continue;
+                    const rawJid = msg.key.remoteJid;
+                    if (!rawJid || isStatus || isJidGroup(rawJid) || !msg.message) continue;
+
+                    // Translate any @lid jid to its canonical phone form
+                    // (when senderPn is in the payload, or a previous
+                    // mapping was cached). Everything below uses the
+                    // resolved JID so the inbox & CRM don't grow a
+                    // duplicate row for the same person.
+                    const { effectiveJid: remoteJid, phone: resolvedPhone, isAnonymous } =
+                        await resolveJid(instanceId, rawJid, msg);
 
                     const { content, type: msgType } = extractMessageContent(msg);
                     if (!content || msgType === 'protocol') continue;
@@ -256,7 +272,7 @@ export class InstanceManager {
                     }
 
                     // ─── Incoming message ───
-                    logger.info(`[${instanceId}] New message from ${remoteJid}`);
+                    logger.info(`[${instanceId}] New message from ${remoteJid}${isAnonymous ? ' (anonymous LID)' : ''}`);
 
                     if (msg.pushName) {
                         await prisma.contact.upsert({
@@ -288,10 +304,11 @@ export class InstanceManager {
                         return upsertCrmContact({
                             userId: inst.userId,
                             workspaceId: wsId,
-                            phone: remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+                            phone: resolvedPhone,
                             name: msg.pushName || null,
                             channel: 'whatsapp',
                             sourceLabel: inst.name,
+                            isAnonymous,
                         });
                     }).catch(() => {});
 

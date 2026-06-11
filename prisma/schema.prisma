@@ -260,6 +260,23 @@ model Contact {
   @@unique([instanceId, remoteJid])
 }
 
+// Maps a WhatsApp LID (anonymous identity like 231610725195937@lid) to
+// the real phone JID the contact also uses. WhatsApp delivers `senderPn`
+// on some messages from LID-only contacts — when we see one we cache
+// the mapping here so subsequent messages, the inbox merge step, and
+// the CRM can all route to the real phone instead of leaving two
+// duplicate conversations side by side.
+model LidMapping {
+  id         String   @id @default(uuid())
+  instanceId String
+  lid        String   // e.g. "231610725195937@lid"
+  phone      String   // digits only, e.g. "994773102993"
+  createdAt  DateTime @default(now())
+
+  @@unique([instanceId, lid])
+  @@index([instanceId, phone])
+}
+
 // Model for Baileys Auth State
 model AuthState {
   id         String   @id @default(uuid())
@@ -443,6 +460,11 @@ model Client {
   // full memory after the human un-pauses.
   agentPaused      Boolean   @default(false)
   pausedAt         DateTime?
+
+  // True when `phone` is actually a WhatsApp LID (anonymous identity)
+  // rather than a real phone number. UI uses this to render a 🔒 badge
+  // and hide the "+" prefix that would otherwise imply a phone number.
+  isAnonymous      Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -10,6 +10,10 @@ export async function upsertCrmContact(opts: {
     name?: string | null;
     channel: 'whatsapp' | 'instagram';
     sourceLabel?: string | null;
+    // True when `phone` is a WhatsApp LID rather than a real phone
+    // number. Only flips an existing record from anonymous→known if
+    // we now have a real phone (never the other way around).
+    isAnonymous?: boolean;
 }) {
     try {
         // Lookup is by (workspaceId, phone) so two members of the same
@@ -26,6 +30,7 @@ export async function upsertCrmContact(opts: {
                     ...(opts.name ? { name: opts.name } : {}),
                     channel: opts.channel,
                     ...(opts.sourceLabel ? { sourceLabel: opts.sourceLabel } : {}),
+                    ...(opts.isAnonymous === false ? { isAnonymous: false } : {}),
                 },
             });
         } else {
@@ -39,6 +44,7 @@ export async function upsertCrmContact(opts: {
                     tags: [],
                     channel: opts.channel,
                     sourceLabel: opts.sourceLabel || null,
+                    isAnonymous: !!opts.isAnonymous,
                 },
             });
         }

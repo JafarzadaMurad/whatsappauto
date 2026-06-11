@@ -462,8 +462,31 @@ function resolveValue(spec: ValueSpec, aiVal: string | undefined): string {
     return aiVal ?? '';
 }
 
+// Strip Authorization / Bearer / token-bearing headers when surfacing
+// the resolved request to the Activity log / Test tab. The user still
+// sees the URL and body that actually went out, just not the secret
+// that authorised the call.
+function redactHeadersForDisplay(headers: Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+        if (/authorization|api[_-]?key|token|secret|password/i.test(k)) {
+            out[k] = '***';
+        } else if (typeof v === 'string' && /^Bearer\s+/i.test(v)) {
+            out[k] = 'Bearer ***';
+        } else {
+            out[k] = v;
+        }
+    }
+    return out;
+}
+
 export function buildTemplateExecutor(tpl: HttpToolTemplate) {
     return async (args: Record<string, any>) => {
+        // We always build a `request` object describing what the executor
+        // actually sent (URL, method, redacted headers, body). It's
+        // returned alongside the response so the Activity / Test UIs can
+        // show "agent sent X → got Y" even when the LLM args themselves
+        // are empty (which is normal when every template field is fixed).
         try {
             // RAW MODE: parse rawRequest text, substitute placeholders, send
             if (tpl.inputMode === 'raw') {
@@ -483,6 +506,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
                         data = parsed.body;
                     }
                 }
+                const t0 = Date.now();
                 const res = await axios.request({
                     url: parsed.url,
                     method: parsed.method as any,
@@ -496,7 +520,18 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
                 if (typeof responseData === 'string' && responseData.length > 5000) {
                     responseData = responseData.slice(0, 5000) + '...[truncated]';
                 }
-                return { status: res.status, data: responseData };
+                return {
+                    request: {
+                        mode: 'raw',
+                        method: parsed.method,
+                        url: parsed.url,
+                        headers: redactHeadersForDisplay(parsed.headers),
+                        body: data ?? null,
+                    },
+                    status: res.status,
+                    data: responseData,
+                    durationMs: Date.now() - t0,
+                };
             }
 
             // URL
@@ -542,6 +577,10 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
                 data = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
             }
 
+            const finalUrl = Object.keys(params).length
+                ? `${url}${url.includes('?') ? '&' : '?'}${new URLSearchParams(params).toString()}`
+                : url;
+            const t0 = Date.now();
             const res = await axios.request({
                 url,
                 method: tpl.method,
@@ -556,7 +595,18 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate) {
             if (typeof responseData === 'string' && responseData.length > 5000) {
                 responseData = responseData.slice(0, 5000) + '...[truncated]';
             }
-            return { status: res.status, data: responseData };
+            return {
+                request: {
+                    mode: 'form',
+                    method: tpl.method,
+                    url: finalUrl,
+                    headers: redactHeadersForDisplay(headers),
+                    body: data ?? null,
+                },
+                status: res.status,
+                data: responseData,
+                durationMs: Date.now() - t0,
+            };
         } catch (err: any) {
             return { error: err.message, code: err.code };
         }

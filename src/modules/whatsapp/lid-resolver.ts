@@ -16,10 +16,35 @@ function digits(s: string): string {
     return (s || '').replace(/[^0-9]/g, '');
 }
 
+// Pull every field that has ever been seen to carry the real phone
+// number alongside a LID. Baileys spelling varies by version, so we
+// try them all and take whichever is non-empty.
+function extractPhoneFromMsg(msg: any): string | null {
+    if (!msg) return null;
+    const candidates = [
+        msg.key?.senderPn,
+        msg.key?.participantPn,
+        msg.key?.senderPnJid,
+        msg.key?.remoteJidAlt,
+        msg.senderPn,
+        msg.participantPn,
+        msg.senderPnJid,
+        msg.userJid,
+        msg.participantAlt,
+        msg.peerRecipientPn,
+    ];
+    for (const c of candidates) {
+        if (!c) continue;
+        const d = digits(String(c).replace('@s.whatsapp.net', ''));
+        if (d && d.length >= 7) return d;
+    }
+    return null;
+}
+
 // Resolve a JID + optional message to its canonical (phone-keyed) form.
 // When a fresh LID→phone mapping is learned from msg.key.senderPn /
-// participantPn, the mapping row is upserted and a merge of existing
-// LID-keyed data into the phone-keyed bucket is kicked off.
+// participantPn / friends, the mapping row is upserted and a merge of
+// existing LID-keyed data into the phone-keyed bucket is kicked off.
 export async function resolveJid(instanceId: string, rawJid: string, msg?: any): Promise<ResolvedJid> {
     if (!rawJid.endsWith('@lid')) {
         // Plain phone JID — already canonical.
@@ -27,17 +52,40 @@ export async function resolveJid(instanceId: string, rawJid: string, msg?: any):
         return { effectiveJid: rawJid, phone, isAnonymous: false };
     }
 
+    // LID branch — diagnostic dump so we can see exactly which
+    // Baileys field (if any) ships the real phone for a given message.
+    // Logged once per message; safe because LIDs aren't a hot path.
+    if (msg) {
+        try {
+            const probe = {
+                rawJid,
+                key: msg.key
+                    ? {
+                        remoteJid: msg.key.remoteJid,
+                        remoteJidAlt: (msg.key as any).remoteJidAlt,
+                        participant: (msg.key as any).participant,
+                        participantAlt: (msg.key as any).participantAlt,
+                        senderPn: (msg.key as any).senderPn,
+                        senderPnJid: (msg.key as any).senderPnJid,
+                        participantPn: (msg.key as any).participantPn,
+                        fromMe: msg.key.fromMe,
+                    }
+                    : null,
+                pushName: msg.pushName,
+                userJid: (msg as any).userJid,
+                senderPn: (msg as any).senderPn,
+                participantPn: (msg as any).participantPn,
+            };
+            logger.info(`[${instanceId}] LID probe ${JSON.stringify(probe)}`);
+        } catch { /* not critical */ }
+    }
+
     // LID branch — try the message payload first (most reliable), then
     // the cached mapping table.
-    const pnRaw =
-        msg?.key?.senderPn ||
-        msg?.key?.participantPn ||
-        msg?.senderPn ||
-        msg?.participantPn ||
-        null;
+    const pnRaw = extractPhoneFromMsg(msg);
 
     if (pnRaw) {
-        const phone = digits(String(pnRaw).replace('@s.whatsapp.net', ''));
+        const phone = pnRaw; // already digits-only from extractPhoneFromMsg
         if (phone) {
             const phoneJid = `${phone}@s.whatsapp.net`;
             try {

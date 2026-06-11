@@ -305,6 +305,47 @@ export class AgentController {
         }
     }
 
+    // Rich activity log for the Agent → Activity tab. Returns recent
+    // turns with full tool-call detail (args + redacted results).
+    // Auto-pruned to 3 days by activity-cleanup.
+    async getActivity(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+
+            const agent = await prisma.agent.findFirst({ where: { id, workspaceId } });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+            const beforeRaw = req.query.before as string | undefined;
+            const before = beforeRaw ? new Date(beforeRaw) : null;
+            const onlyToolErrors = req.query.onlyErrors === 'true';
+
+            const rows = await prisma.agentActivityLog.findMany({
+                where: {
+                    agentId: id,
+                    ...(before ? { createdAt: { lt: before } } : {}),
+                },
+                orderBy: { createdAt: 'desc' },
+                take: limit + 1,
+            });
+
+            const hasMore = rows.length > limit;
+            let page = rows.slice(0, limit);
+
+            if (onlyToolErrors) {
+                page = page.filter(r => {
+                    const calls = Array.isArray(r.toolCalls) ? (r.toolCalls as any[]) : [];
+                    return calls.some(c => c && c.ok === false);
+                });
+            }
+
+            return res.json({ success: true, items: page, hasMore });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async testHttpTool(req: Request, res: Response) {
         try {
             const schema = z.object({

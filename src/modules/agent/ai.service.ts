@@ -15,6 +15,64 @@ function makeTool(description: string, schema: z.ZodObject<any>, execute: (param
     return { description, parameters: wrapped, inputSchema: wrapped, execute };
 }
 
+// ─── Activity-log helpers ───────────────────────────────────────
+// Strip credentials out of recorded args/headers before persisting to
+// the Activity tab. The display is meant for humans inspecting agent
+// behavior, not for retaining secrets.
+const SENSITIVE_KEY_RE = /authorization|password|secret|bearer|apikey|api[_-]?key|token/i;
+
+function redactSensitive(value: any, depth = 0): any {
+    if (depth > 5 || value == null) return value;
+    if (typeof value === 'string') {
+        return /^Bearer\s+/i.test(value) ? 'Bearer ***' : value;
+    }
+    if (Array.isArray(value)) return value.map(v => redactSensitive(v, depth + 1));
+    if (typeof value === 'object') {
+        const out: any = {};
+        for (const [k, v] of Object.entries(value)) {
+            out[k] = SENSITIVE_KEY_RE.test(k) ? '***' : redactSensitive(v, depth + 1);
+        }
+        return out;
+    }
+    return value;
+}
+
+function truncateForLog(value: any, max = 5000): any {
+    if (typeof value === 'string') return value.length > max ? value.slice(0, max) + '...[truncated]' : value;
+    if (Array.isArray(value)) return value.map(v => truncateForLog(v, max));
+    if (value && typeof value === 'object') {
+        const out: any = {};
+        for (const [k, v] of Object.entries(value)) out[k] = truncateForLog(v, max);
+        return out;
+    }
+    return value;
+}
+
+// Pair every tool call with its result from the AI SDK steps. Returns
+// the rich shape persisted to AgentActivityLog.toolCalls.
+export function extractRichToolCalls(steps: any[]): Array<{
+    toolName: string; args: any; result: any; ok: boolean; error?: string;
+}> {
+    return (steps || []).flatMap((step: any) => {
+        const calls = step.toolCalls || [];
+        const results = step.toolResults || [];
+        const resultById = new Map<string, any>(results.map((r: any) => [r.toolCallId, r]));
+        return calls.map((tc: any) => {
+            const r = resultById.get(tc.toolCallId);
+            // The SDK wraps results in { result } or { output } depending on version
+            const rawResult = r ? (r.result ?? r.output ?? null) : null;
+            const hasErrorField = rawResult && typeof rawResult === 'object' && (rawResult as any).error !== undefined;
+            return {
+                toolName: tc.toolName,
+                args: truncateForLog(redactSensitive(tc.args)),
+                result: truncateForLog(rawResult),
+                ok: !hasErrorField,
+                ...(hasErrorField ? { error: String((rawResult as any).error).slice(0, 500) } : {}),
+            };
+        });
+    });
+}
+
 // ─── SKILL: Data Tables ───
 function buildTableTools(allowedTableIds: string[]) {
     return {
@@ -859,25 +917,33 @@ export class AiService {
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 
             // Generate AI response
+            const t0 = Date.now();
             const result = await generateText({
                 model: aiModel,
                 system: systemPrompt,
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
                 ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
+            const durationMs = Date.now() - t0;
 
             const text = result.text;
             if (!text) return;
 
             const cacheUsage = extractCacheUsage(providerInfo.provider, result);
 
-            // Extract tool calls
+            // Lightweight version saved to AiConversationLog (memory) — just
+            // the name + args; this is what the agent re-reads as context
+            // for future turns, so it stays small.
             const extractedToolCalls = (result.steps || []).flatMap((step: any) =>
                 (step.toolCalls || []).map((tc: any) => ({
                     toolName: tc.toolName,
                     args: tc.args,
                 }))
             );
+
+            // Rich version saved to AgentActivityLog (3-day human inspection
+            // log) — includes results, redacted args, error flags.
+            const richToolCalls = extractRichToolCalls(result.steps as any[]);
 
             if (extractedToolCalls.length > 0) {
                 logger.info({ tools: extractedToolCalls.map((tc: any) => tc.toolName) },
@@ -894,10 +960,11 @@ export class AiService {
 
             // Save conversation log
             const lastUserMsg = messages[messages.length - 1]?.content || '';
+            const userMessageStr = typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg);
             await prisma.aiConversationLog.create({
                 data: {
                     agentId: agent.id, instanceId, remoteJid,
-                    userMessage: typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg),
+                    userMessage: userMessageStr,
                     agentReply: text,
                     promptTokens: (result as any).usage?.inputTokens || 0,
                     completionTokens: (result as any).usage?.outputTokens || 0,
@@ -908,6 +975,20 @@ export class AiService {
                     toolCalls: extractedToolCalls,
                 }
             });
+
+            // 3-day human-inspection log (Activity tab on the Agent page).
+            prisma.agentActivityLog.create({
+                data: {
+                    agentId: agent.id, workspaceId: wsId,
+                    instanceId, remoteJid,
+                    contactPhone: phone, contactName,
+                    channel: 'whatsapp',
+                    userMessage: userMessageStr,
+                    agentReply: text,
+                    toolCalls: richToolCalls,
+                    durationMs,
+                }
+            }).catch(err => logger.warn({ err: err.message }, `[${instanceId}] AgentActivityLog write failed`));
 
             // Real-time emit
             io.emit(`message.new-${instanceId}`, {

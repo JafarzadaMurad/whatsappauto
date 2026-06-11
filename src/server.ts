@@ -8,6 +8,7 @@ import { startCampaignWorker } from './modules/campaign/campaign.queue';
 
 import { InstanceManager } from './modules/whatsapp/instance.manager';
 import { ensureWorkspacesForAllUsers } from './lib/workspace-migration';
+import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 
 const server = http.createServer(app);
 
@@ -45,6 +46,9 @@ server.listen(PORT, async () => {
 
     // Initialize active instances
     await InstanceManager.init();
+
+    // 3-day auto-prune for the Agent Activity tab log
+    startAgentActivityCleanup();
 });
 
 // Handle unhandled Promise rejections

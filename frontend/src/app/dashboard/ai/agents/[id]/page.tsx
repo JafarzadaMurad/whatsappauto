@@ -1,12 +1,32 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
-type Tab = "conversations" | "usage" | "settings";
+type Tab = "conversations" | "usage" | "activity" | "settings";
+
+type ActivityToolCall = {
+    toolName: string;
+    args: any;
+    result: any;
+    ok: boolean;
+    error?: string;
+};
+
+type ActivityItem = {
+    id: string;
+    createdAt: string;
+    contactPhone: string | null;
+    contactName: string | null;
+    channel: 'whatsapp' | 'instagram';
+    userMessage: string;
+    agentReply: string;
+    toolCalls: ActivityToolCall[];
+    durationMs: number;
+};
 
 // Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts
 const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
@@ -147,6 +167,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     // Stats state
     const [stats, setStats] = useState<any>(null);
 
+    // Activity tab
+    const [activity, setActivity] = useState<ActivityItem[]>([]);
+    const [activityLoading, setActivityLoading] = useState(false);
+    const [activityHasMore, setActivityHasMore] = useState(false);
+    const [activityOnlyErrors, setActivityOnlyErrors] = useState(false);
+    const [expandedActivityIds, setExpandedActivityIds] = useState<Set<string>>(new Set());
+
     // Settings form
     const [name, setName] = useState("");
     const [providerId, setProviderId] = useState("");
@@ -194,7 +221,34 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     useEffect(() => {
         if (tab === "conversations") loadConversations();
         if (tab === "usage") loadStats();
-    }, [tab]);
+        if (tab === "activity") loadActivity(false);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tab, activityOnlyErrors]);
+
+    const loadActivity = async (loadMore: boolean) => {
+        setActivityLoading(true);
+        try {
+            const params = new URLSearchParams({ limit: '50' });
+            if (activityOnlyErrors) params.set('onlyErrors', 'true');
+            if (loadMore && activity.length > 0) {
+                params.set('before', activity[activity.length - 1].createdAt);
+            }
+            const res = await api.get(`/agents/${id}/activity?${params.toString()}`);
+            if (res.data.success) {
+                setActivity(loadMore ? [...activity, ...res.data.items] : res.data.items);
+                setActivityHasMore(!!res.data.hasMore);
+            }
+        } catch (err) { console.error(err); }
+        finally { setActivityLoading(false); }
+    };
+
+    const toggleActivityExpand = (rowId: string) => {
+        setExpandedActivityIds(prev => {
+            const next = new Set(prev);
+            if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
+            return next;
+        });
+    };
 
     const loadConversations = async () => {
         try {
@@ -345,6 +399,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const tabs: { key: Tab; label: string; icon: any }[] = [
         { key: "usage", label: "Usage", icon: BarChart3 },
+        { key: "activity", label: "Activity", icon: Activity },
         { key: "settings", label: "Settings", icon: Settings },
     ];
 
@@ -623,6 +678,161 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         </>
                     )}
                 </div>
+            )}
+
+            {tab === "activity" && (
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-card border border-border rounded-2xl p-4 sm:p-6"
+                >
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                        <div>
+                            <h3 className="font-semibold flex items-center gap-2">
+                                <Activity className="w-4 h-4 text-primary" /> Recent agent activity
+                            </h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Last 3 days. Older entries are auto-deleted.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs inline-flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" className="accent-primary"
+                                    checked={activityOnlyErrors}
+                                    onChange={e => setActivityOnlyErrors(e.target.checked)} />
+                                <span>Only with tool errors</span>
+                            </label>
+                            <button onClick={() => loadActivity(false)}
+                                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/40 transition-colors">
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    {activityLoading && activity.length === 0 ? (
+                        <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                    ) : activity.length === 0 ? (
+                        <div className="text-center text-sm text-muted-foreground py-12">
+                            No activity yet.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {activity.map(item => {
+                                const expanded = expandedActivityIds.has(item.id);
+                                const failed = item.toolCalls.filter(t => !t.ok).length;
+                                const ok = item.toolCalls.length - failed;
+                                return (
+                                    <div key={item.id} className="border border-border rounded-xl overflow-hidden bg-secondary/10">
+                                        <button onClick={() => toggleActivityExpand(item.id)}
+                                            className="w-full text-left p-3 flex items-start gap-3 hover:bg-secondary/30 transition-colors">
+                                            {expanded
+                                                ? <ChevronDown className="w-4 h-4 mt-1 flex-shrink-0 text-muted-foreground" />
+                                                : <ChevronRight className="w-4 h-4 mt-1 flex-shrink-0 text-muted-foreground" />}
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                                                    <span className="font-medium text-foreground">
+                                                        {item.contactName || (item.contactPhone ? '+' + item.contactPhone : 'Unknown')}
+                                                    </span>
+                                                    <span>·</span>
+                                                    <span className={item.channel === 'instagram' ? 'text-pink-400' : 'text-emerald-400'}>
+                                                        {item.channel}
+                                                    </span>
+                                                    <span>·</span>
+                                                    <span>{new Date(item.createdAt).toLocaleString()}</span>
+                                                    <span>·</span>
+                                                    <span>{item.durationMs} ms</span>
+                                                </div>
+                                                <div className="text-sm truncate">
+                                                    <span className="text-muted-foreground">💬 </span>
+                                                    {item.userMessage || <span className="italic text-muted-foreground">(empty)</span>}
+                                                </div>
+                                                <div className="text-sm truncate mt-0.5">
+                                                    <span className="text-muted-foreground">🤖 </span>
+                                                    {item.agentReply || <span className="italic text-muted-foreground">(empty)</span>}
+                                                </div>
+                                                {item.toolCalls.length > 0 && (
+                                                    <div className="flex items-center gap-2 mt-2 text-[11px]">
+                                                        <Wrench className="w-3 h-3 text-muted-foreground" />
+                                                        {ok > 0 && (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                                <CheckCircle2 className="w-3 h-3" /> {ok} ok
+                                                            </span>
+                                                        )}
+                                                        {failed > 0 && (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20">
+                                                                <XCircle className="w-3 h-3" /> {failed} failed
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </button>
+
+                                        {expanded && (
+                                            <div className="border-t border-border bg-background/40 p-4 space-y-4">
+                                                <div>
+                                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">User message</div>
+                                                    <pre className="text-xs whitespace-pre-wrap bg-secondary/30 rounded-lg p-3 max-h-48 overflow-auto">{item.userMessage}</pre>
+                                                </div>
+                                                <div>
+                                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Agent reply</div>
+                                                    <pre className="text-xs whitespace-pre-wrap bg-secondary/30 rounded-lg p-3 max-h-48 overflow-auto">{item.agentReply}</pre>
+                                                </div>
+                                                {item.toolCalls.length > 0 && (
+                                                    <div>
+                                                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Tool calls ({item.toolCalls.length})</div>
+                                                        <div className="space-y-2">
+                                                            {item.toolCalls.map((tc, idx) => (
+                                                                <div key={idx} className={`rounded-lg border p-3 ${tc.ok ? 'border-border bg-secondary/20' : 'border-red-500/30 bg-red-500/5'}`}>
+                                                                    <div className="flex items-center gap-2 text-xs font-medium mb-2">
+                                                                        {tc.ok
+                                                                            ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                                                            : <XCircle className="w-3.5 h-3.5 text-red-400" />}
+                                                                        <code>{tc.toolName}</code>
+                                                                        {tc.error && (
+                                                                            <span className="text-red-400 italic truncate">— {tc.error}</span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                                                                        <div>
+                                                                            <div className="text-muted-foreground mb-1 flex items-center gap-1">
+                                                                                <ChevronsRight className="w-3 h-3" /> args
+                                                                            </div>
+                                                                            <pre className="bg-background/60 rounded-md p-2 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+{JSON.stringify(tc.args ?? null, null, 2)}
+                                                                            </pre>
+                                                                        </div>
+                                                                        <div>
+                                                                            <div className="text-muted-foreground mb-1 flex items-center gap-1">
+                                                                                <ChevronsRight className="w-3 h-3" /> result
+                                                                            </div>
+                                                                            <pre className="bg-background/60 rounded-md p-2 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+{JSON.stringify(tc.result ?? null, null, 2)}
+                                                                            </pre>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+
+                            {activityHasMore && (
+                                <div className="flex justify-center pt-2">
+                                    <button onClick={() => loadActivity(true)} disabled={activityLoading}
+                                        className="text-xs px-4 py-2 rounded-lg border border-border hover:bg-secondary/40 transition-colors disabled:opacity-50">
+                                        {activityLoading ? 'Loading…' : 'Load older'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </motion.div>
             )}
 
             {tab === "settings" && (

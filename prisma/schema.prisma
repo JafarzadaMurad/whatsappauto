@@ -327,6 +327,7 @@ model Agent {
 
   instances         Instance[] // Instances using this agent
   conversationLogs  AiConversationLog[]
+  activityLogs      AgentActivityLog[]
   campaigns         Campaign[]
   instagramAccounts InstagramAccount[]
 }
@@ -355,6 +356,40 @@ model AiConversationLog {
   cacheCreationTokens   Int @default(0)
 
   createdAt DateTime @default(now())
+}
+
+// Rich, human-readable activity log for the Agent "Activity" tab.
+// Distinct from AiConversationLog (which is used as the AI's long-term
+// memory) — this one only keeps the last 3 days and gets pruned by a
+// scheduled cleanup so we can store fuller payloads (tool args + results)
+// without bloating the DB.
+model AgentActivityLog {
+  id          String @id @default(uuid())
+  agentId     String
+  agent       Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  workspaceId String?
+
+  instanceId    String
+  remoteJid     String
+  contactPhone  String?
+  contactName   String?
+  channel       String  @default("whatsapp") // 'whatsapp' | 'instagram'
+
+  userMessage String  @db.Text
+  agentReply  String  @db.Text
+
+  // [{ toolName, args, result, durationMs, ok, error? }]
+  // HTTP tool results carry { status, data } with body truncated to ~5kB.
+  // Authorization headers and Bearer tokens are redacted before save.
+  toolCalls Json @default("[]")
+
+  durationMs Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId, createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([createdAt]) // used by the cleanup job
 }
 
 model CustomTable {

@@ -347,7 +347,9 @@ export class InstagramAiService {
         }
 
         const agent = account.agent;
+        const t0 = Date.now();
         const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');
+        const durationMs = Date.now() - t0;
         if (!text) return;
 
         await sendIgMessage(igUserId, senderId, text, account.accessToken);
@@ -370,6 +372,20 @@ export class InstagramAiService {
                 toolCalls: [],
             }
         });
+
+        // Activity tab log (3-day retention). IG flow doesn't currently
+        // surface tool calls, but the user message / reply / duration are
+        // still useful for inspection.
+        prisma.agentActivityLog.create({
+            data: {
+                agentId: agent.id, workspaceId: accountWorkspaceId,
+                instanceId: account.id, remoteJid: `ig:${senderId}`,
+                contactPhone: senderId, contactName: null,
+                channel: 'instagram',
+                userMessage: messageText, agentReply: text,
+                toolCalls: [], durationMs,
+            }
+        }).catch(err => logger.warn({ err: err.message }, `[IG] AgentActivityLog write failed`));
 
         logger.info(`[IG] Agent replied to DM from ${senderId}`);
     }

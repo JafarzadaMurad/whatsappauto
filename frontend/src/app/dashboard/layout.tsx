@@ -77,6 +77,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'Users', href: '/dashboard/admin/users', icon: Users },
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
                 { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },
+                { name: 'AI Models', href: '/dashboard/admin/ai-models', icon: Bot },
                 { name: 'Sign-in', href: '/dashboard/admin/auth', icon: LogIn },
                 { name: 'Email', href: '/dashboard/admin/email', icon: Mail },
             ]

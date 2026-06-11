@@ -329,6 +329,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [skills, setSkills] = useState<string[]>([]);
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
+    const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
     const [skillPrompts, setSkillPrompts] = useState<Record<string, string>>({});
@@ -337,14 +338,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     useEffect(() => {
         const load = async () => {
             try {
-                const [agentRes, provRes, tablesRes, fieldsRes] = await Promise.all([
+                const [agentRes, provRes, tablesRes, fieldsRes, modelsRes] = await Promise.all([
                     api.get(`/agents/${id}`),
                     api.get('/ai-providers'),
                     api.get('/tables'),
                     api.get('/user-fields').catch(() => ({ data: { success: false } })),
+                    api.get('/ai-providers/models').catch(() => ({ data: { success: false } })),
                 ]);
                 if (fieldsRes.data?.success) {
                     setUserFields((fieldsRes.data.fields || []).map((f: any) => ({ key: f.key, label: f.label || f.key })));
+                }
+                if (modelsRes.data?.success) {
+                    setAiModels(modelsRes.data.models || {});
                 }
                 if (agentRes.data.success) {
                     const a = agentRes.data.agent;
@@ -594,16 +599,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         finally { setSaving(false); }
     };
 
-    // Suggested models per provider. These are only suggestions for the
-    // datalist autocomplete — the Model field is free-text, so any model
-    // id the provider's API accepts (new releases, fine-tunes, etc.) can
-    // be typed directly without code changes.
-    const getAvailableModels = () => {
+    // Model catalogue is admin-managed and loaded from /ai-providers/models
+    // (see `aiModels` state below). Users only get to pick from this list —
+    // adding new model ids is a platform-admin action.
+    const getAvailableModels = (): string[] => {
         const p = providers.find(p => p.id === providerId)?.provider;
-        if (p === 'OPENAI') return ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'];
-        if (p === 'CLAUDE') return ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5-20250514', 'claude-3-5-haiku-20241022'];
-        if (p === 'GEMINI') return ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
-        return [];
+        if (!p) return [];
+        return aiModels[p] || [];
     };
 
     const toggleActive = async () => {
@@ -1273,16 +1275,17 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </div>
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground">Model</label>
-                                <input type="text" value={model} onChange={e => setModel(e.target.value)} disabled={!providerId}
-                                    list={`agent-model-suggestions-${providerId}`}
-                                    placeholder={providerId ? "Pick from list or type any model id" : "Select a provider first"}
-                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 font-mono text-sm" />
-                                <datalist id={`agent-model-suggestions-${providerId}`}>
-                                    {getAvailableModels().map(m => <option key={m} value={m} />)}
-                                </datalist>
-                                <p className="text-[11px] text-muted-foreground mt-1">
-                                    Any model id the provider's API accepts works — type a custom one if the suggestions don't list it.
-                                </p>
+                                <select value={model} onChange={e => setModel(e.target.value)} disabled={!providerId}
+                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50">
+                                    <option value="" disabled>Select Model</option>
+                                    {getAvailableModels().map(m => <option key={m} value={m}>{m}</option>)}
+                                    {/* If the agent already uses a model that's no longer on the
+                                        admin-managed list (e.g. it was retired), keep it as an
+                                        option so the dropdown still shows the current value. */}
+                                    {model && !getAvailableModels().includes(model) && (
+                                        <option value={model}>{model} (legacy)</option>
+                                    )}
+                                </select>
                             </div>
                         </div>
 

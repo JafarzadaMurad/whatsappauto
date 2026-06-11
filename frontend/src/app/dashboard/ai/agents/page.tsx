@@ -10,6 +10,7 @@ export default function AiAgentsPage() {
     const [agents, setAgents] = useState<any[]>([]);
     const [providers, setProviders] = useState<any[]>([]);
     const [tables, setTables] = useState<any[]>([]);
+    const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
     const [loading, setLoading] = useState(true);
 
     // Form modal state
@@ -31,14 +32,16 @@ export default function AiAgentsPage() {
 
     const loadData = async () => {
         try {
-            const [agentsRes, provRes, tablesRes] = await Promise.all([
+            const [agentsRes, provRes, tablesRes, modelsRes] = await Promise.all([
                 api.get('/agents'),
                 api.get('/ai-providers'),
-                api.get('/tables')
+                api.get('/tables'),
+                api.get('/ai-providers/models').catch(() => ({ data: { success: false } })),
             ]);
             if (agentsRes.data.success) setAgents(agentsRes.data.agents);
             if (provRes.data.success) setProviders(provRes.data.providers);
             if (tablesRes.data.success) setTables(tablesRes.data.tables);
+            if (modelsRes.data?.success) setAiModels(modelsRes.data.models || {});
         } catch (err) {
             console.error(err);
         } finally {
@@ -107,15 +110,13 @@ export default function AiAgentsPage() {
         setAllowedTableIds(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
     };
 
-    // Suggested models per provider — see Agent detail page for the same
-    // list. Field is free-text so future model ids work without code
-    // changes.
-    const getAvailableModels = () => {
+    // Model catalogue is admin-managed (see /dashboard/admin/ai-models).
+    // We load it from /ai-providers/models into `aiModels` and use it
+    // to populate the dropdown for whichever provider is selected.
+    const getAvailableModels = (): string[] => {
         const selectedProvider = providers.find(p => p.id === providerId)?.provider;
-        if (selectedProvider === 'OPENAI') return ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
-        if (selectedProvider === 'CLAUDE') return ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5-20250514', 'claude-3-5-haiku-20241022'];
-        if (selectedProvider === 'GEMINI') return ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'];
-        return [];
+        if (!selectedProvider) return [];
+        return aiModels[selectedProvider] || [];
     };
 
     return (
@@ -188,23 +189,22 @@ export default function AiAgentsPage() {
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-muted-foreground">Model</label>
-                                        <input
-                                            type="text"
+                                        <select
                                             value={model}
                                             onChange={e => setModel(e.target.value)}
                                             disabled={!providerId}
-                                            list={`new-agent-model-suggestions-${providerId}`}
-                                            placeholder={providerId ? "Pick from list or type any model id" : "Select a provider first"}
-                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 font-mono text-sm"
-                                        />
-                                        <datalist id={`new-agent-model-suggestions-${providerId}`}>
+                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                                        >
+                                            <option value="" disabled>Select Model</option>
                                             {getAvailableModels().map(m => (
-                                                <option key={m} value={m} />
+                                                <option key={m} value={m}>{m}</option>
                                             ))}
-                                        </datalist>
-                                        <p className="text-[11px] text-muted-foreground mt-1">
-                                            Any model id the provider's API accepts works — type a custom one if it isn't in the list.
-                                        </p>
+                                            {/* Legacy fallback so editing an old agent doesn't drop
+                                                a model the admin has since removed from the catalogue. */}
+                                            {model && !getAvailableModels().includes(model) && (
+                                                <option value={model}>{model} (legacy)</option>
+                                            )}
+                                        </select>
                                     </div>
                                 </div>
 

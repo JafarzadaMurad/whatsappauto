@@ -234,6 +234,19 @@ export class InstanceManager {
                     const rawJid = msg.key.remoteJid;
                     if (!rawJid || isStatus || isJidGroup(rawJid) || !msg.message) continue;
 
+                    // Full payload dump for debugging. Flip on with
+                    //   WHATSAPP_DEBUG=true (env var) and restart pm2.
+                    // Logs every incoming message verbatim so you can
+                    // see exactly which fields Baileys delivers (LID
+                    // shape, senderPn variants, message content type,
+                    // etc.). Off in production by default — it's
+                    // noisy and exposes message text.
+                    if (process.env.WHATSAPP_DEBUG === 'true') {
+                        try {
+                            logger.info(`[${instanceId}] MSG_DUMP ${JSON.stringify(msg)}`);
+                        } catch { /* not critical */ }
+                    }
+
                     // Translate any @lid jid to its canonical phone form
                     // (when senderPn is in the payload, or a previous
                     // mapping was cached). Everything below uses the

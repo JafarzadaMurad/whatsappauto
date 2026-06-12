@@ -89,10 +89,14 @@ export function extractRichToolCalls(steps: any[]): Array<{
             const r = resultById.get(tc.toolCallId);
             // The SDK wraps results in { result } or { output } depending on version
             const rawResult = r ? (r.result ?? r.output ?? null) : null;
+            // Args used to live on `tc.args`; newer AI SDK versions moved them
+            // to `tc.input`. Try both so the inspector always shows what the
+            // model actually passed.
+            const rawArgs = tc.args ?? tc.input ?? tc.parameters ?? null;
             const hasErrorField = rawResult && typeof rawResult === 'object' && (rawResult as any).error !== undefined;
             return {
                 toolName: tc.toolName,
-                args: truncateForLog(redactSensitive(tc.args)),
+                args: truncateForLog(redactSensitive(rawArgs)),
                 result: truncateForLog(rawResult),
                 ok: !hasErrorField,
                 ...(hasErrorField ? { error: String((rawResult as any).error).slice(0, 500) } : {}),
@@ -1115,7 +1119,7 @@ export class AiService {
             const extractedToolCalls = (result.steps || []).flatMap((step: any) =>
                 (step.toolCalls || []).map((tc: any) => ({
                     toolName: tc.toolName,
-                    args: tc.args,
+                    args: tc.args ?? tc.input ?? tc.parameters ?? null,
                 }))
             );
 

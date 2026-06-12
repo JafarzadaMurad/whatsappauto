@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
 
 const PAGE_SIZE = 50;
@@ -253,20 +253,26 @@ export default function InboxPage() {
     };
 
     return (
-        <div className="h-[calc(100vh-4rem)] flex flex-col">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-3 flex-shrink-0">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+        // Negative margins break out of <main>'s p-4 / md:p-8 padding so
+        // the inbox fills the entire content area edge-to-edge on every
+        // breakpoint. h-full flows the actual available height from main
+        // instead of guessing at viewport math.
+        <div className="h-full -m-4 md:-m-8 flex flex-col">
+            {/* Header: title + filter chips. On mobile the chips wrap to a
+                second row so a 360-px viewport doesn't push them off-screen. */}
+            <div className="px-3 sm:px-4 py-3 border-b border-border flex flex-wrap items-center gap-x-3 gap-y-2 flex-shrink-0">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
                     <Inbox className="w-4 h-4" />
                 </div>
-                <h1 className="text-xl font-bold">Inbox</h1>
-                <div className="ml-auto flex items-center gap-1.5 text-xs">
+                <h1 className="text-lg sm:text-xl font-bold">Inbox</h1>
+                <div className="sm:ml-auto flex items-center gap-1.5 text-xs overflow-x-auto -mx-1 px-1">
                     {([
                         { id: 'all', label: 'All' },
                         { id: 'whatsapp', label: 'WhatsApp', Icon: MessageSquare, color: 'text-emerald-400' },
                         { id: 'instagram', label: 'Instagram', Icon: Camera, color: 'text-pink-400' },
                     ] as const).map(f => (
                         <button key={f.id} onClick={() => setChannelFilter(f.id as ChannelFilter)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0
                                 ${channelFilter === f.id
                                     ? 'bg-primary/10 border-primary/30 text-foreground'
                                     : 'bg-card border-border text-muted-foreground hover:text-foreground'}`}>
@@ -278,8 +284,12 @@ export default function InboxPage() {
             </div>
 
             <div className="flex-1 flex min-h-0">
-                {/* ─── Conversation list ─── */}
-                <aside className="w-80 border-r border-border bg-card flex flex-col">
+                {/* ─── Conversation list ───
+                    Mobile: full width when no chat selected, hidden once a
+                    chat is open. Desktop: always shown as a fixed-width
+                    sidebar. */}
+                <aside className={`w-full md:w-80 border-r border-border bg-card flex-col
+                    ${selected ? 'hidden md:flex' : 'flex'}`}>
                     <div className="p-2 border-b border-border flex-shrink-0">
                         <div className="relative">
                             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -307,8 +317,12 @@ export default function InboxPage() {
                     </div>
                 </aside>
 
-                {/* ─── Chat panel ─── */}
-                <section className="flex-1 flex flex-col min-w-0 bg-background">
+                {/* ─── Chat panel ───
+                    Mobile: full width when a chat is open, hidden when on
+                    the conversation list. Desktop: always visible next to
+                    the list. */}
+                <section className={`flex-1 flex-col min-w-0 bg-background
+                    ${selected ? 'flex' : 'hidden md:flex'}`}>
                     {!selected ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-2">
                             <Inbox className="w-10 h-10 opacity-40" />
@@ -317,7 +331,12 @@ export default function InboxPage() {
                     ) : (
                         <>
                             {/* Chat header */}
-                            <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card flex-shrink-0">
+                            <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-border bg-card flex-shrink-0">
+                                {/* Back button on mobile — returns to the conversation list */}
+                                <button onClick={() => setSelected(null)}
+                                    className="md:hidden text-muted-foreground hover:text-foreground p-1 -ml-1 rounded-lg flex-shrink-0">
+                                    <ArrowLeft className="w-5 h-5" />
+                                </button>
                                 <Avatar conv={selected} size={40} />
                                 <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-2 min-w-0">
@@ -325,9 +344,6 @@ export default function InboxPage() {
                                         <ChannelBadge channel={selected.channel} />
                                     </div>
                                     <p className="text-xs text-muted-foreground truncate">
-                                        {/* Show the phone (or fallback label) only when it's
-                                            actually different from the displayed name. Keeps
-                                            anonymous LIDs from showing a meaningless +digits. */}
                                         {!selected.name && selected.channel === 'whatsapp' && !selected.isAnonymous
                                             ? null
                                             : <span className="font-mono">{formatIdentifier(selected)} · </span>}
@@ -336,19 +352,19 @@ export default function InboxPage() {
                                 </div>
                                 {agentPaused !== null && (
                                     <button onClick={togglePause} disabled={pauseBusy}
-                                        className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-60 ${agentPaused
+                                        className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-60 flex-shrink-0 ${agentPaused
                                             ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
                                             : 'bg-secondary/40 text-muted-foreground border-border hover:bg-secondary/70 hover:text-foreground'}`}>
                                         {pauseBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
                                             agentPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-                                        {agentPaused ? 'Resume agent' : 'Pause agent'}
+                                        <span className="hidden sm:inline">{agentPaused ? 'Resume agent' : 'Pause agent'}</span>
                                     </button>
                                 )}
                             </div>
 
                             {/* Messages */}
                             <div ref={scrollRef} onScroll={onChatScroll}
-                                className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+                                className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-4">
                                 {loadingChat ? (
                                     <div className="flex justify-center pt-12"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
                                 ) : messages.length === 0 ? (
@@ -371,15 +387,15 @@ export default function InboxPage() {
                             </div>
 
                             {/* Reply box */}
-                            <div className="border-t border-border bg-card p-3 flex-shrink-0">
+                            <div className="border-t border-border bg-card p-2 sm:p-3 flex-shrink-0">
                                 <div className="flex gap-2">
                                     <input type="text" value={replyText}
                                         onChange={e => setReplyText(e.target.value)}
                                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
                                         placeholder="Type a reply…" maxLength={950} disabled={sending}
-                                        className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                        className="flex-1 min-w-0 bg-secondary/50 border border-border rounded-xl px-3 sm:px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                                     <button onClick={sendReply} disabled={sending || !replyText.trim()}
-                                        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50">
+                                        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
                                         {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                                     </button>
                                 </div>
@@ -478,7 +494,7 @@ function MessageBubble({ msg }: { msg: Message }) {
         <div className="space-y-1.5">
             {msg.userMessage && (
                 <div className="flex justify-start">
-                    <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-3.5 py-2 max-w-[70%] text-sm">
+                    <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
                         <div className="whitespace-pre-wrap break-words">{msg.userMessage}</div>
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5">{time}</div>
                     </div>
@@ -486,7 +502,7 @@ function MessageBubble({ msg }: { msg: Message }) {
             )}
             {msg.agentReply && (
                 <div className="flex justify-end">
-                    <div className="bg-primary/15 border border-primary/20 rounded-2xl rounded-br-md px-3.5 py-2 max-w-[70%] text-sm">
+                    <div className="bg-primary/15 border border-primary/20 rounded-2xl rounded-br-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
                         <div className="whitespace-pre-wrap break-words">{msg.agentReply}</div>
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5 text-right flex items-center justify-end gap-1">
                             {msg.provider === 'MANUAL' || msg.provider === 'PHONE' ? null :

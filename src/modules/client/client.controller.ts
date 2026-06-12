@@ -119,15 +119,79 @@ export class ClientController {
 
     async deleteClient(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
+            // Purge mode wipes every trace of this contact (messages,
+            // AI conversation logs, activity logs, baileys Contact row,
+            // LID mappings) so the next inbound message starts a brand
+            // new conversation with zero memory. Default true so the
+            // contacts UI delete button does the obvious thing.
+            const purge = req.query.purge !== 'false';
 
             const existing = await prisma.client.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Client not found' });
 
+            const phone = existing.phone;
+            let counters = { messages: 0, aiLogs: 0, activityLogs: 0, contacts: 0, lidMappings: 0 };
+
+            if (purge) {
+                // 1. Find every instance in this workspace — message rows
+                //    are scoped per instance, so we only touch ours.
+                const instances = await prisma.instance.findMany({
+                    where: { workspaceId },
+                    select: { id: true },
+                });
+                const instanceIds = instances.map(i => i.id);
+
+                // 2. Build the full list of JIDs that could have carried
+                //    this contact's traffic: the phone JID, the raw "phone"
+                //    string as a LID-shaped JID (just in case), plus every
+                //    LID that's already been mapped to this phone.
+                const lidRows = instanceIds.length > 0
+                    ? await prisma.lidMapping.findMany({
+                        where: { instanceId: { in: instanceIds }, phone },
+                        select: { lid: true },
+                    })
+                    : [];
+                const jids = new Set<string>([
+                    `${phone}@s.whatsapp.net`,
+                    `${phone}@lid`,
+                    `ig:${phone}`,
+                    ...lidRows.map(r => r.lid),
+                ]);
+                const jidList = Array.from(jids);
+
+                if (instanceIds.length > 0 && jidList.length > 0) {
+                    const [msgRes, aiRes, actRes, contactRes] = await Promise.all([
+                        prisma.message.deleteMany({
+                            where: { instanceId: { in: instanceIds }, remoteJid: { in: jidList } },
+                        }),
+                        prisma.aiConversationLog.deleteMany({
+                            where: { instanceId: { in: instanceIds }, remoteJid: { in: jidList } },
+                        }),
+                        prisma.agentActivityLog.deleteMany({
+                            where: { instanceId: { in: instanceIds }, remoteJid: { in: jidList } },
+                        }),
+                        prisma.contact.deleteMany({
+                            where: { instanceId: { in: instanceIds }, remoteJid: { in: jidList } },
+                        }),
+                    ]);
+                    counters.messages = msgRes.count;
+                    counters.aiLogs = aiRes.count;
+                    counters.activityLogs = actRes.count;
+                    counters.contacts = contactRes.count;
+                }
+
+                if (instanceIds.length > 0) {
+                    const lidRes = await prisma.lidMapping.deleteMany({
+                        where: { instanceId: { in: instanceIds }, phone },
+                    });
+                    counters.lidMappings = lidRes.count;
+                }
+            }
+
             await prisma.client.delete({ where: { id } });
-            return res.json({ success: true, message: 'Client deleted' });
+            return res.json({ success: true, purged: purge, counters });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

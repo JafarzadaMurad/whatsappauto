@@ -285,6 +285,10 @@ export default function ContactsPage() {
                         setClients(cs => cs.map(c => c.id === updated.id ? updated : c));
                         setEditingClient(null);
                     }}
+                    onDeleted={(deletedId) => {
+                        setClients(cs => cs.filter(c => c.id !== deletedId));
+                        setEditingClient(null);
+                    }}
                 />
             )}
         </div>
@@ -526,11 +530,12 @@ function ManageFieldsModal({ fields, onClose, onChange }: { fields: UserField[];
 }
 
 // ─── Edit Contact drawer ───
-function EditContactDrawer({ client, fields, onClose, onSaved }: {
+function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
     client: Client;
     fields: UserField[];
     onClose: () => void;
     onSaved: (c: Client) => void;
+    onDeleted: (id: string) => void;
 }) {
     const [name, setName] = useState(client.name || '');
     const [status, setStatus] = useState(client.status);
@@ -538,6 +543,28 @@ function EditContactDrawer({ client, fields, onClose, onSaved }: {
     const [tagInput, setTagInput] = useState('');
     const [custom, setCustom] = useState<Record<string, any>>(client.customFields || {});
     const [saving, setSaving] = useState(false);
+    const [purging, setPurging] = useState(false);
+
+    const purgeContact = async () => {
+        const label = client.name || '+' + client.phone;
+        if (!confirm(
+            `Delete ${label} and ERASE the full conversation history?\n\n` +
+            `This removes the contact, all WhatsApp messages, AI memory, ` +
+            `activity logs and LID mappings. Cannot be undone. The next ` +
+            `incoming message will start a brand new chat.`
+        )) return;
+        setPurging(true);
+        try {
+            const r = await api.delete(`/clients/${client.id}`);
+            if (r.data.success) {
+                onDeleted(client.id);
+            } else {
+                alert(r.data.message || 'Delete failed');
+            }
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        } finally { setPurging(false); }
+    };
 
     const addTag = () => {
         const t = tagInput.trim();
@@ -635,10 +662,16 @@ function EditContactDrawer({ client, fields, onClose, onSaved }: {
                 </div>
 
                 <div className="border-t border-border p-4 flex gap-2">
+                    <button onClick={purgeContact} disabled={saving || purging}
+                        title="Delete this contact and erase the entire conversation history. Next message starts a new chat."
+                        className="border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-2 disabled:opacity-50">
+                        {purging ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        Delete + reset chat
+                    </button>
                     <button onClick={onClose} className="flex-1 border border-border bg-secondary/40 hover:bg-secondary/70 rounded-lg py-2 text-sm">
                         Cancel
                     </button>
-                    <button onClick={save} disabled={saving}
+                    <button onClick={save} disabled={saving || purging}
                         className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg py-2 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60">
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         Save

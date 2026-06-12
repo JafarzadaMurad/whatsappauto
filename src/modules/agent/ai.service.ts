@@ -277,15 +277,47 @@ function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: 
             }),
             async ({ key, value }) => {
                 const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                // Reject keys with anything other than [a-zA-Z0-9_] so the
+                // raw jsonb_set path can't be abused for SQL injection.
+                if (!/^[A-Za-z0-9_]+$/.test(key)) {
+                    return { success: false, error: 'Invalid field key. Use letters, digits and underscores only.' };
+                }
+
+                // Ensure a Client row exists; capture its id.
                 const existing = await prisma.client.findFirst({
                     where: { workspaceId, phone: cleanPhone },
-                    select: { id: true, customFields: true },
+                    select: { id: true },
                 });
-                const merged: Record<string, any> = { ...((existing?.customFields as any) || {}), [key]: value };
-                const client = existing
-                    ? await prisma.client.update({ where: { id: existing.id }, data: { customFields: merged } })
-                    : await prisma.client.create({ data: { userId, workspaceId, phone: cleanPhone, status: 'NEW', tags: [], customFields: merged } });
-                return { success: true, key, value, clientId: client.id };
+                let clientId: string;
+                if (existing) {
+                    clientId = existing.id;
+                } else {
+                    const created = await prisma.client.create({
+                        data: { userId, workspaceId, phone: cleanPhone, status: 'NEW', tags: [], customFields: {} },
+                    });
+                    clientId = created.id;
+                }
+
+                // Atomic per-key update. With multiple parallel setUserField
+                // calls in the same agent turn the previous read-merge-write
+                // pattern raced — each call read the same starting object,
+                // merged its key, and wrote back; the last writer won and
+                // earlier keys silently disappeared. jsonb_set on a single
+                // sub-path is atomic in Postgres, so concurrent calls each
+                // touch their own key without clobbering siblings.
+                await prisma.$executeRaw`
+                    UPDATE "Client"
+                    SET "customFields" = jsonb_set(
+                        COALESCE("customFields", '{}'::jsonb),
+                        ARRAY[${key}]::text[],
+                        ${JSON.stringify(value)}::jsonb,
+                        true
+                    ),
+                    "updatedAt" = NOW()
+                    WHERE id = ${clientId}
+                `;
+
+                return { success: true, key, value, clientId };
             }
         ),
         searchContactsByField: makeTool(

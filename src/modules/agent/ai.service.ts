@@ -576,8 +576,88 @@ function substitutePrevPlaceholders(text: string, stepResults: Record<string, an
     return text.replace(PREV_PLACEHOLDER_RE, (_, path: string) => resolvePrevPath(stepResults, path));
 }
 
-function applyAllPlaceholders(text: string, crm: { contact: Record<string, string>; field: Record<string, string> }, stepResults: Record<string, any>): string {
-    return substitutePrevPlaceholders(substituteCrmPlaceholders(text, crm), stepResults);
+// ─── Distribution helpers (random + round-robin) ──────────────────
+// Use cases: round-robining HTTP tool fields like Bitrix
+// ASSIGNED_BY_ID between several sales managers without involving
+// the LLM (LLMs are bad at uniform sampling) and without per-template
+// configuration. Syntax:
+//   {{random:7,9}}          → picks one of the listed values uniformly
+//   {{random:foo,bar,baz}}  → strings work too (whitespace trimmed)
+//   {{rotate:7,9}}          → cycles through values, sticky per workspace
+const RANDOM_PLACEHOLDER_RE = /\{\{\s*random\s*:\s*([^}]+?)\s*\}\}/g;
+const ROTATE_PLACEHOLDER_RE = /\{\{\s*rotate\s*:\s*([^}]+?)\s*\}\}/g;
+
+function splitListValues(list: string): string[] {
+    return list.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function substituteRandomPlaceholders(text: string): string {
+    if (!text || typeof text !== 'string') return text;
+    return text.replace(RANDOM_PLACEHOLDER_RE, (_, list: string) => {
+        const values = splitListValues(list);
+        if (values.length === 0) return '';
+        return values[Math.floor(Math.random() * values.length)];
+    });
+}
+
+// Round-robin state lives in SystemConfig keyed by
+// `rotate:<workspaceId>:<comma-joined-values>`. The value is the
+// index (as a decimal string) of the NEXT slot to pick. Two callers
+// racing on the same key may briefly hand out the same value, but
+// over time the distribution evens out and we avoid an extra table
+// just for this counter.
+async function substituteRotatePlaceholders(text: string, workspaceId?: string): Promise<string> {
+    if (!text || typeof text !== 'string') return text;
+    // Snapshot every match first because we replace asynchronously.
+    const re = new RegExp(ROTATE_PLACEHOLDER_RE.source, 'g');
+    const matches: Array<{ full: string; values: string[] }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+        const values = splitListValues(m[1]);
+        if (values.length > 0) matches.push({ full: m[0], values });
+    }
+    if (matches.length === 0) return text;
+
+    let out = text;
+    for (const match of matches) {
+        let pick = match.values[0];
+        if (workspaceId) {
+            const key = `rotate:${workspaceId}:${match.values.join(',')}`;
+            try {
+                const row = await prisma.systemConfig.findUnique({ where: { key } });
+                const idx = row ? (parseInt(row.value, 10) || 0) % match.values.length : 0;
+                pick = match.values[idx];
+                const nextIdx = (idx + 1) % match.values.length;
+                await prisma.systemConfig.upsert({
+                    where: { key },
+                    update: { value: String(nextIdx) },
+                    create: { key, value: String(nextIdx) },
+                });
+            } catch {
+                // If state read/write fails fall back to the first value
+                // — better to pick deterministically than blow up the
+                // request.
+            }
+        }
+        // Only replace the FIRST occurrence so independent placeholders
+        // in the same text each get their own rotation step. We re-search
+        // because the index shifts as we replace.
+        out = out.replace(match.full, pick);
+    }
+    return out;
+}
+
+async function applyAllPlaceholders(
+    text: string,
+    crm: { contact: Record<string, string>; field: Record<string, string> },
+    stepResults: Record<string, any>,
+    ctx?: HttpCtx,
+): Promise<string> {
+    let t = substituteCrmPlaceholders(text, crm);
+    t = substitutePrevPlaceholders(t, stepResults);
+    t = substituteRandomPlaceholders(t);
+    t = await substituteRotatePlaceholders(t, ctx?.workspaceId);
+    return t;
 }
 
 // Strip Authorization / Bearer / token-bearing headers when surfacing
@@ -609,7 +689,7 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
         try {
             // RAW MODE: parse rawRequest text, substitute placeholders, send
             if (tpl.inputMode === 'raw') {
-                const rawWithCrm = applyAllPlaceholders(tpl.rawRequest || '', crmValues, stepResults);
+                const rawWithCrm = await applyAllPlaceholders(tpl.rawRequest || '', crmValues, stepResults, ctx);
                 const { template, placeholders } = parseRawPlaceholders(rawWithCrm);
                 const values: Record<string, string> = {};
                 placeholders.forEach(ph => { values[ph.key] = args[ph.key] ?? ''; });
@@ -656,24 +736,26 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
 
             // URL
             const rawUrl = tpl.url.mode === 'fixed' ? tpl.url.value : (args.url || '');
-            const url = applyAllPlaceholders(rawUrl, crmValues, stepResults);
+            const url = await applyAllPlaceholders(rawUrl, crmValues, stepResults, ctx);
             if (!url) return { error: 'No URL provided' };
 
             // Query params
             const params: Record<string, string> = {};
-            (tpl.queryParams || []).forEach((p, i) => {
-                if (!p.name) return;
+            for (let i = 0; i < (tpl.queryParams || []).length; i++) {
+                const p = tpl.queryParams![i];
+                if (!p.name) continue;
                 const aiKey = `query_${sanitizeName(p.name, `p${i}`)}`;
-                params[p.name] = applyAllPlaceholders(resolveValue(p.value, args[aiKey]), crmValues, stepResults);
-            });
+                params[p.name] = await applyAllPlaceholders(resolveValue(p.value, args[aiKey]), crmValues, stepResults, ctx);
+            }
 
             // Headers
             const headers: Record<string, string> = {};
-            (tpl.headers || []).forEach((h, i) => {
-                if (!h.name) return;
+            for (let i = 0; i < (tpl.headers || []).length; i++) {
+                const h = tpl.headers![i];
+                if (!h.name) continue;
                 const aiKey = `header_${sanitizeName(h.name, `h${i}`)}`;
-                headers[h.name] = applyAllPlaceholders(resolveValue(h.value, args[aiKey]), crmValues, stepResults);
-            });
+                headers[h.name] = await applyAllPlaceholders(resolveValue(h.value, args[aiKey]), crmValues, stepResults, ctx);
+            }
 
             // Auth
             if (tpl.auth?.type === 'bearer' && tpl.auth.token) {
@@ -687,16 +769,17 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
             let data: any = undefined;
             if (tpl.bodyType === 'json') {
                 const obj: Record<string, any> = {};
-                (tpl.bodyParams || []).forEach((b, i) => {
-                    if (!b.name) return;
+                for (let i = 0; i < (tpl.bodyParams || []).length; i++) {
+                    const b = tpl.bodyParams![i];
+                    if (!b.name) continue;
                     const aiKey = `body_${sanitizeName(b.name, `b${i}`)}`;
-                    obj[b.name] = applyAllPlaceholders(resolveValue(b.value, args[aiKey]), crmValues, stepResults);
-                });
+                    obj[b.name] = await applyAllPlaceholders(resolveValue(b.value, args[aiKey]), crmValues, stepResults, ctx);
+                }
                 data = obj;
                 if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
             } else if (tpl.bodyType === 'raw' && tpl.rawBody) {
                 const rawBodyResolved = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
-                data = applyAllPlaceholders(rawBodyResolved, crmValues, stepResults);
+                data = await applyAllPlaceholders(rawBodyResolved, crmValues, stepResults, ctx);
             }
 
             const finalUrl = Object.keys(params).length

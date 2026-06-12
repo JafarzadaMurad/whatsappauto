@@ -222,6 +222,26 @@ function PlaceholdersPanel({ userFields, httpTools, currentToolName, onCopy }: {
                             </div>
                         )}
                     </div>
+
+                    {/* Distribution helpers — server-side random + round-robin */}
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                            Distribution · pick a value at call time
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                            <PlaceholderRow
+                                token={'{{random:7,9}}'}
+                                label="Pick a value uniformly at random (good for Bitrix ASSIGNED_BY_ID rotation)"
+                                onCopy={copy} />
+                            <PlaceholderRow
+                                token={'{{rotate:7,9}}'}
+                                label="Round-robin between values, sticky across calls (per-workspace counter)"
+                                onCopy={copy} />
+                        </div>
+                        <div className="text-[11px] text-muted-foreground italic mt-1.5">
+                            Both accept any comma-separated list (numbers or strings). The LLM never sees these — the server picks at call time.
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

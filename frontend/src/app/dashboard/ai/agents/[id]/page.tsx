@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -354,6 +354,11 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
     const [skillPrompts, setSkillPrompts] = useState<Record<string, string>>({});
+    // Which enabled skill cards have their config panel visible. A
+    // skill toggling ON auto-expands; toggling OFF removes it. Manually
+    // collapsing keeps the skill enabled but hides the long panel so
+    // the Skills section stays scannable.
+    const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -645,6 +650,28 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
         if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
         return n.toString();
+    };
+
+    // Skill toggle handlers — switching a skill on auto-expands its panel,
+    // switching off removes it from the expanded set. The chevron in the
+    // card header collapses/expands without touching the enable flag.
+    const toggleSkill = (id: string) => {
+        setSkills(prev => {
+            const enabled = prev.includes(id);
+            if (enabled) {
+                setExpandedSkills(s => { const n = new Set(s); n.delete(id); return n; });
+                return prev.filter(s => s !== id);
+            }
+            setExpandedSkills(s => new Set(s).add(id));
+            return [...prev, id];
+        });
+    };
+    const toggleSkillExpand = (id: string) => {
+        setExpandedSkills(s => {
+            const n = new Set(s);
+            if (n.has(id)) n.delete(id); else n.add(id);
+            return n;
+        });
     };
 
     if (loading) return (
@@ -1318,23 +1345,32 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}
                         <div className={`rounded-xl border ${skills.includes('memory') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
-                            <label className="flex items-center gap-3 p-3 cursor-pointer">
+                            <div className="flex items-center gap-3 p-3">
                                 <input
                                     type="checkbox"
                                     checked={skills.includes('memory')}
-                                    onChange={() => setSkills(prev => prev.includes('memory') ? prev.filter(s => s !== 'memory') : [...prev, 'memory'])}
-                                    className="w-4 h-4 accent-primary rounded"
+                                    onChange={() => toggleSkill('memory')}
+                                    className="w-4 h-4 accent-primary rounded cursor-pointer"
                                 />
-                                <div className="flex-1">
+                                <button type="button"
+                                    onClick={() => skills.includes('memory') && toggleSkillExpand('memory')}
+                                    className={`flex-1 text-left ${skills.includes('memory') ? 'cursor-pointer' : 'cursor-default'}`}
+                                    disabled={!skills.includes('memory')}>
                                     <div className="font-medium text-sm flex items-center gap-2">
                                         <MessageSquare className="w-4 h-4 text-muted-foreground" /> Memory
                                     </div>
                                     <div className="text-xs text-muted-foreground">
-                                        Agent looks back through prior messages on demand (search, range, stats). Default history shrinks to 3 turns and the model fetches older context only when needed — big token savings on long chats.
+                                        Agent looks back through prior messages on demand (search, range, stats). Default history shrinks to 3 turns; older context fetched only when needed.
                                     </div>
-                                </div>
-                            </label>
-                            {skills.includes('memory') && (
+                                </button>
+                                {skills.includes('memory') && (
+                                    <button type="button" onClick={() => toggleSkillExpand('memory')}
+                                        className="text-muted-foreground hover:text-foreground p-1 rounded">
+                                        {expandedSkills.has('memory') ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                    </button>
+                                )}
+                            </div>
+                            {skills.includes('memory') && expandedSkills.has('memory') && (
                                 <div className="border-t border-border p-4">
                                     <div className="flex items-center justify-between mb-1">
                                         <label className="text-xs font-medium text-muted-foreground">Memory Prompt</label>
@@ -1359,6 +1395,58 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             )}
                         </div>
 
+                        {/* Self-pause — sits directly under Memory per request */}
+                        <div className={`rounded-xl border ${skills.includes('self_pause') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
+                            <div className="flex items-center gap-3 p-3">
+                                <input
+                                    type="checkbox"
+                                    checked={skills.includes('self_pause')}
+                                    onChange={() => toggleSkill('self_pause')}
+                                    className="w-4 h-4 accent-primary rounded cursor-pointer"
+                                />
+                                <button type="button"
+                                    onClick={() => skills.includes('self_pause') && toggleSkillExpand('self_pause')}
+                                    className={`flex-1 text-left ${skills.includes('self_pause') ? 'cursor-pointer' : 'cursor-default'}`}
+                                    disabled={!skills.includes('self_pause')}>
+                                    <div className="font-medium text-sm flex items-center gap-2">
+                                        <Pause className="w-4 h-4 text-muted-foreground" /> Self-pause
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Lets the agent stop auto-replying to the current contact (handoff to manager, customer asked for a person, etc). Only a human operator can resume from the inbox.
+                                    </div>
+                                </button>
+                                {skills.includes('self_pause') && (
+                                    <button type="button" onClick={() => toggleSkillExpand('self_pause')}
+                                        className="text-muted-foreground hover:text-foreground p-1 rounded">
+                                        {expandedSkills.has('self_pause') ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                    </button>
+                                )}
+                            </div>
+                            {skills.includes('self_pause') && expandedSkills.has('self_pause') && (
+                                <div className="border-t border-border p-4">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="text-xs font-medium text-muted-foreground">Self-pause Prompt</label>
+                                        {(skillPrompts['self_pause'] || '').trim().length > 0 && (
+                                            <button type="button"
+                                                onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n['self_pause']; return n; })}
+                                                className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+                                                Reset to default
+                                            </button>
+                                        )}
+                                    </div>
+                                    <textarea
+                                        value={skillPrompts['self_pause'] ?? ''}
+                                        onChange={e => setSkillPrompts(prev => ({ ...prev, self_pause: e.target.value }))}
+                                        rows={5}
+                                        placeholder={DEFAULT_SKILL_PROMPTS.self_pause}
+                                        className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                    {!(skillPrompts['self_pause'] || '').trim() && (
+                                        <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         {/* Skills — each card hosts its checkbox AND (when checked) its own panel */}
                         <div>
                             <h3 className="font-semibold flex items-center gap-2 mb-2">
@@ -1371,23 +1459,44 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'user_fields', name: 'User Fields', desc: 'Read and write custom fields you defined on the Contacts page (age, city, purpose, …)' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
-                                    { id: 'self_pause', name: 'Self-pause', desc: 'Lets the agent stop auto-replying to the current contact (e.g. after handing off to a manager). Only a human operator can resume.' },
                                 ].map(skill => {
                                     const enabled = skills.includes(skill.id);
+                                    const expanded = expandedSkills.has(skill.id);
                                     const promptVal = skillPrompts[skill.id] ?? '';
                                     const isOverridden = promptVal.trim().length > 0;
+                                    // Per-skill collapsed-state summary chips.
+                                    const summaryChip =
+                                        skill.id === 'tables' ? `${allowedTableIds.length} table${allowedTableIds.length === 1 ? '' : 's'}` :
+                                        skill.id === 'http'   ? `${httpTools.length} tool${httpTools.length === 1 ? '' : 's'}` :
+                                        isOverridden ? 'custom prompt' : null;
                                     return (
                                         <div key={skill.id} className={`rounded-xl border overflow-hidden ${enabled ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
-                                            <label className="flex items-center gap-3 p-3 cursor-pointer">
+                                            <div className="flex items-center gap-3 p-3">
                                                 <input type="checkbox" checked={enabled}
-                                                    onChange={() => setSkills(prev => prev.includes(skill.id) ? prev.filter(s => s !== skill.id) : [...prev, skill.id])}
-                                                    className="w-4 h-4 accent-primary rounded" />
-                                                <div className="flex-1">
-                                                    <div className="font-medium text-sm">{skill.name}</div>
+                                                    onChange={() => toggleSkill(skill.id)}
+                                                    className="w-4 h-4 accent-primary rounded cursor-pointer" />
+                                                <button type="button"
+                                                    onClick={() => enabled && toggleSkillExpand(skill.id)}
+                                                    className={`flex-1 text-left ${enabled ? 'cursor-pointer' : 'cursor-default'}`}
+                                                    disabled={!enabled}>
+                                                    <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                                        {skill.name}
+                                                        {enabled && summaryChip && (
+                                                            <span className="text-[10px] font-normal bg-secondary/60 text-muted-foreground border border-border rounded-md px-1.5 py-0.5">
+                                                                {summaryChip}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <div className="text-xs text-muted-foreground">{skill.desc}</div>
-                                                </div>
-                                            </label>
-                                            {enabled && (
+                                                </button>
+                                                {enabled && (
+                                                    <button type="button" onClick={() => toggleSkillExpand(skill.id)}
+                                                        className="text-muted-foreground hover:text-foreground p-1 rounded">
+                                                        {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {enabled && expanded && (
                                                 <div className="border-t border-border p-4 space-y-4">
                                                     {/* Skill prompt override */}
                                                     <div>

@@ -241,6 +241,57 @@ function buildCrmTools(workspaceId: string, userId: string) {
 // Lets the agent read and write user-defined custom fields on the contact
 // currently being chatted with. The contact phone is bound at runtime
 // inside the chat handler (the agent doesn't have to discover it).
+// ─── SKILL: Self-pause ─────────────────────────────────────────
+// Lets the agent flip Client.agentPaused = true on the current
+// contact when it decides the conversation should be handed over
+// to a human (customer became angry, asked for a manager, lead was
+// already qualified and sent to CRM, etc). The existing per-contact
+// pause check in handleIncomingMessage already honours this flag,
+// so paused contacts stop receiving auto-replies until the
+// operator unpauses them from the inbox UI.
+function buildSelfPauseTool(workspaceId: string, userId: string, contactPhone: string) {
+    return {
+        pauseAgent: makeTool(
+            'Pause yourself for the CURRENT contact. After calling this you will no longer auto-reply to their messages — a human operator will take over. Only call when handover is appropriate (handoff to manager done, customer explicitly asked for a human, customer is angry, off-topic spam). Cannot be undone by the agent; only a human un-pauses.',
+            z.object({
+                reason: z.string().describe('Short reason for the pause, in English. Saved for the operator. Example: "Lead qualified and sent to Bitrix" / "Customer asked to speak with a person" / "Customer is frustrated".'),
+            }),
+            async ({ reason }) => {
+                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                const existing = await prisma.client.findFirst({
+                    where: { workspaceId, phone: cleanPhone },
+                    select: { id: true, summary: true },
+                });
+                const pauseNote = `[paused by agent: ${reason.slice(0, 200)}]`;
+                if (existing) {
+                    await prisma.client.update({
+                        where: { id: existing.id },
+                        data: {
+                            agentPaused: true,
+                            pausedAt: new Date(),
+                            // Append a short audit trail to the summary so the
+                            // operator opening the inbox sees why the agent
+                            // stepped back.
+                            summary: existing.summary ? `${existing.summary}\n${pauseNote}` : pauseNote,
+                        },
+                    });
+                    return { success: true, paused: true, clientId: existing.id };
+                }
+                const created = await prisma.client.create({
+                    data: {
+                        userId, workspaceId, phone: cleanPhone,
+                        status: 'NEW', tags: [],
+                        agentPaused: true,
+                        pausedAt: new Date(),
+                        summary: pauseNote,
+                    },
+                });
+                return { success: true, paused: true, clientId: created.id };
+            }
+        ),
+    };
+}
+
 function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: string) {
     return {
         listUserFields: makeTool(
@@ -1007,6 +1058,7 @@ export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     user_fields: 'You can read and write user-defined custom fields on the contact you are chatting with. Use listUserFields first to learn what fields exist (key + type), then setUserField to save things you learn from the conversation (age, city, purpose, budget, etc.) and getUserField when you need to recall a stored value. Use searchContactsByField when the human asks for filtering across contacts.',
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
+    self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
 };
 
 function resolveSkillPrompt(skillId: string, skillPrompts?: Record<string, string>): string {
@@ -1049,6 +1101,12 @@ export function buildToolsForSkills(
     if (skills.includes('memory') && agentId && remoteJid) {
         tools = { ...tools, ...buildMemoryTools(agentId, remoteJid) };
         prompts.push(resolveSkillPrompt('memory', skillPrompts));
+    }
+
+    if (skills.includes('self_pause') && remoteJid) {
+        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        tools = { ...tools, ...buildSelfPauseTool(workspaceId, userId, contactPhone) };
+        prompts.push(resolveSkillPrompt('self_pause', skillPrompts));
     }
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {

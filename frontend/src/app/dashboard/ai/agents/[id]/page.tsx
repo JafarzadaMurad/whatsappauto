@@ -38,6 +38,7 @@ const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
+    self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
 };
 
 type ValueSpec =
@@ -1370,6 +1371,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'user_fields', name: 'User Fields', desc: 'Read and write custom fields you defined on the Contacts page (age, city, purpose, …)' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
+                                    { id: 'self_pause', name: 'Self-pause', desc: 'Lets the agent stop auto-replying to the current contact (e.g. after handing off to a manager). Only a human operator can resume.' },
                                 ].map(skill => {
                                     const enabled = skills.includes(skill.id);
                                     const promptVal = skillPrompts[skill.id] ?? '';

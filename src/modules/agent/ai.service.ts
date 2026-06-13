@@ -1219,12 +1219,14 @@ export class AiService {
                 model: aiModel,
                 system: systemPrompt,
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
-                ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
+                // 10-step ceiling lets a multi-tool handoff sequence
+                // (e.g. setUserField → upsertClient → bitrix_create_lead
+                // → final reply) finish without the SDK cutting the
+                // model off mid-flow. Was 5 — too tight for the 3-step
+                // Bitrix handoff plus a final reply.
+                ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
             } as any);
             const durationMs = Date.now() - t0;
-
-            const text = result.text;
-            if (!text) return;
 
             const cacheUsage = extractCacheUsage(providerInfo.provider, result);
 
@@ -1247,6 +1249,45 @@ export class AiService {
                     `[${instanceId}] AI used tools`);
             }
 
+            // Tools-only turn fallback: if the model used up its step
+            // budget on tool calls and produced no user-facing text but
+            // successfully created a Bitrix lead, the customer would
+            // otherwise be left hanging. Synthesise a short "we'll be
+            // in touch" reply so they at least get an acknowledgement.
+            let text = result.text;
+            const calledBitrixOk = richToolCalls.some((tc: any) =>
+                /bitrix.*lead/i.test(tc.toolName) && tc.ok
+            );
+            if (!text && calledBitrixOk) {
+                text = 'Готово! ✅ Передала ваши данные нашему менеджеру 🤝 Он свяжется с вами в самое ближайшее время. Спасибо за интерес! 🙌';
+                logger.warn(`[${instanceId}] AI produced no text after Bitrix handoff — using fallback reply`);
+            }
+
+            const lastUserMsg = messages[messages.length - 1]?.content || '';
+            const userMessageStr = typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg);
+
+            // Always persist the activity log so the operator can see
+            // every turn, even tools-only ones that don't produce a
+            // visible reply. Used to be gated by `if (!text) return`
+            // above, which made silent tool-only turns invisible.
+            prisma.agentActivityLog.create({
+                data: {
+                    agentId: agent.id, workspaceId: wsId,
+                    instanceId, remoteJid,
+                    contactPhone: phone, contactName,
+                    channel: 'whatsapp',
+                    userMessage: userMessageStr,
+                    agentReply: text || '(no text — tools-only turn)',
+                    toolCalls: richToolCalls,
+                    durationMs,
+                }
+            }).catch(err => logger.warn({ err: err.message }, `[${instanceId}] AgentActivityLog write failed`));
+
+            if (!text) {
+                logger.warn(`[${instanceId}] AI produced no reply text — nothing to send to ${remoteJid}`);
+                return;
+            }
+
             // Send WhatsApp message
             const sentMsg = await sock.sendMessage(remoteJid, { text });
 
@@ -1256,8 +1297,6 @@ export class AiService {
             });
 
             // Save conversation log
-            const lastUserMsg = messages[messages.length - 1]?.content || '';
-            const userMessageStr = typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg);
             await prisma.aiConversationLog.create({
                 data: {
                     agentId: agent.id, instanceId, remoteJid,
@@ -1272,20 +1311,6 @@ export class AiService {
                     toolCalls: extractedToolCalls,
                 }
             });
-
-            // 3-day human-inspection log (Activity tab on the Agent page).
-            prisma.agentActivityLog.create({
-                data: {
-                    agentId: agent.id, workspaceId: wsId,
-                    instanceId, remoteJid,
-                    contactPhone: phone, contactName,
-                    channel: 'whatsapp',
-                    userMessage: userMessageStr,
-                    agentReply: text,
-                    toolCalls: richToolCalls,
-                    durationMs,
-                }
-            }).catch(err => logger.warn({ err: err.message }, `[${instanceId}] AgentActivityLog write failed`));
 
             // Real-time emit
             io.emit(`message.new-${instanceId}`, {
@@ -1383,7 +1408,7 @@ export class AiService {
             model: aiModel,
             system: systemPrompt,
             messages: applyAnthropicCacheControl(providerInfo.provider, messages as any),
-            ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
+            ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
         } as any);
 
         const reply = result.text || '';

@@ -347,25 +347,30 @@ export class InstanceManager {
                     }).catch(() => {});
 
                     // Operator routing: if the sender's phone is in
-                    // the Operator table for some agent, route the
-                    // message to the operator service (ticket match,
-                    // dialog, or Q&A) instead of treating them as a
-                    // customer. Operators have a separate flow because
-                    // their messages either resolve open tickets or
-                    // ask the agent for context — they're never the
-                    // top of a customer funnel.
-                    const operator = await findOperatorByPhone(resolvedPhone);
-                    if (operator) {
-                        const quotedBody =
-                            (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
-                            (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
-                            null;
-                        handleOperatorMessage({
-                            instanceId, operator,
-                            body: content,
-                            quotedBody,
-                        }).catch(err => logger.error({ err, instanceId }, 'Operator handler failed'));
-                        continue;
+                    // the Operator table for the agent this instance
+                    // is wired to, route the message to the operator
+                    // service. Scoped to instance.agentId so an
+                    // operator registered for agent A doesn't get
+                    // intercepted when messaging an unrelated agent B's
+                    // WhatsApp instance.
+                    const instAgent = await prisma.instance.findUnique({
+                        where: { id: instanceId },
+                        select: { agentId: true },
+                    });
+                    if (instAgent?.agentId) {
+                        const operator = await findOperatorByPhone(resolvedPhone, instAgent.agentId);
+                        if (operator) {
+                            const quotedBody =
+                                (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
+                                (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
+                                null;
+                            handleOperatorMessage({
+                                instanceId, operator,
+                                body: content,
+                                quotedBody,
+                            }).catch(err => logger.error({ err, instanceId }, 'Operator handler failed'));
+                            continue;
+                        }
                     }
 
                     AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {

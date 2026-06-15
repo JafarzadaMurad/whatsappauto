@@ -18,14 +18,16 @@ function phoneFromJid(jid: string): string {
     return jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '');
 }
 
-// Looks up the operator (across any agent) whose phone matches this
-// incoming message's sender. Used by instance.manager to decide
-// whether the message is from a customer or an operator before any
-// AI work runs.
-export async function findOperatorByPhone(phone: string) {
-    if (!phone) return null;
+// Looks up the operator whose phone matches an incoming message's
+// sender — scoped to ONE agent so a teammate registered as operator
+// for agent A doesn't get intercepted when they happen to message
+// some unrelated agent B's WhatsApp instance. agentId comes from the
+// receiving Instance.agentId; if the instance has no agent assigned
+// the caller will skip detection entirely.
+export async function findOperatorByPhone(phone: string, agentId: string) {
+    if (!phone || !agentId) return null;
     return prisma.operator.findFirst({
-        where: { phone, isActive: true },
+        where: { phone, agentId, isActive: true },
         include: { agent: { select: { id: true, name: true } } },
     });
 }
@@ -282,6 +284,11 @@ export async function handleOperatorMessage(opts: {
 }) {
     const { instanceId, operator, body, quotedBody } = opts;
     const match = await matchOperatorReply(operator.id, body, quotedBody || undefined);
+    // Surface match kind so we can debug "operator answered but customer
+    // got nothing" cases without re-running them through code analysis.
+    logger.info(`[operator] match for ${operator.name} (${operator.phone}) on instance ${instanceId}: kind=${match.kind}` +
+        (match.kind === 'matched' ? ` ticket=${match.request.ticket} customer=${match.request.customerJid}` :
+         match.kind === 'needs-dialog' ? ` openCount=${match.requests.length}` : ''));
 
     if (match.kind === 'matched') {
         // Strip any leading [REQ-XXXX] header before persisting the answer

@@ -57,11 +57,14 @@ async function deliverToOperator(opts: {
         `👤 ${who}\n\n` +
         `${opts.question}\n\n` +
         `_Ответьте на это сообщение — система передаст ваш ответ клиенту. Если открыто несколько тикетов, начните ответ кодом *[REQ-${opts.ticket}]* или процитируйте это сообщение._`;
+    const jid = `${opts.operatorPhone}@s.whatsapp.net`;
+    logger.info(`[operator] → ${jid} ticket=${opts.ticket} (${body.length} chars)`);
     try {
-        await sock.sendMessage(`${opts.operatorPhone}@s.whatsapp.net`, { text: body });
+        const result = await sock.sendMessage(jid, { text: body });
+        logger.info(`[operator] sent ticket=${opts.ticket} msgId=${result?.key?.id || '?'} to ${jid}`);
         return true;
     } catch (e: any) {
-        logger.warn({ err: e.message }, `[operator] send to ${opts.operatorPhone} failed`);
+        logger.warn({ err: e.message, stack: e.stack }, `[operator] send to ${jid} failed`);
         return false;
     }
 }

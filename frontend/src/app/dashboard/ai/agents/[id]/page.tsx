@@ -39,6 +39,7 @@ const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
     self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
+    live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
 };
 
 type ValueSpec =
@@ -76,6 +77,18 @@ Authorization: Bearer {{API key from session}}
   "customer": "{{customer name from conversation}}",
   "quantity": {{quantity number}}
 }`;
+
+type Operator = {
+    id: string;
+    name: string;
+    phone: string;
+    systemPrompt: string | null;
+    order: number;
+    timeoutMin: number;
+    isActive: boolean;
+    // local-only flag for unsaved newly-added rows
+    _new?: boolean;
+};
 
 const newTool = (): HttpToolTemplate => ({
     id: Math.random().toString(36).slice(2),
@@ -349,6 +362,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
+    const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
@@ -394,6 +408,12 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
+                // Operators live in their own table — load alongside the
+                // agent so the Live Operators panel populates instantly.
+                try {
+                    const opsRes = await api.get(`/operators/agent/${id}`);
+                    if (opsRes.data?.success) setOperators(opsRes.data.operators || []);
+                } catch { /* not critical */ }
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
         };
@@ -672,6 +692,64 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
             if (n.has(id)) n.delete(id); else n.add(id);
             return n;
         });
+    };
+
+    // ─── Live Operators handlers ───
+    // Operators have their own backend table — we don't pack them into
+    // the agent payload like httpTools. Each CRUD action hits its own
+    // endpoint and updates local state on success.
+    const addOperator = () => {
+        setOperators(prev => [...prev, {
+            id: `tmp-${Math.random().toString(36).slice(2, 8)}`,
+            name: '', phone: '', systemPrompt: '',
+            order: prev.length, timeoutMin: 30, isActive: true,
+            _new: true,
+        }]);
+    };
+    const updateOperator = (id: string, patch: Partial<Operator>) => {
+        setOperators(prev => prev.map(o => o.id === id ? { ...o, ...patch } : o));
+    };
+    const saveOperator = async (op: Operator) => {
+        try {
+            const body = {
+                name: op.name.trim(),
+                phone: op.phone.replace(/[^0-9]/g, ''),
+                systemPrompt: (op.systemPrompt || '').trim() || null,
+                order: op.order,
+                timeoutMin: op.timeoutMin,
+                isActive: op.isActive,
+            };
+            if (!body.name || !body.phone) {
+                alert('Name and phone are required.');
+                return;
+            }
+            if (op._new) {
+                const r = await api.post(`/operators/agent/${id}`, body);
+                if (r.data?.success) {
+                    setOperators(prev => prev.map(o => o.id === op.id ? r.data.operator : o));
+                }
+            } else {
+                const r = await api.put(`/operators/${op.id}`, body);
+                if (r.data?.success) {
+                    setOperators(prev => prev.map(o => o.id === op.id ? r.data.operator : o));
+                }
+            }
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        }
+    };
+    const removeOperator = async (op: Operator) => {
+        if (op._new) {
+            setOperators(prev => prev.filter(o => o.id !== op.id));
+            return;
+        }
+        if (!confirm(`Delete operator "${op.name}"?`)) return;
+        try {
+            await api.delete(`/operators/${op.id}`);
+            setOperators(prev => prev.filter(o => o.id !== op.id));
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        }
     };
 
     if (loading) return (
@@ -1459,6 +1537,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'user_fields', name: 'User Fields', desc: 'Read and write custom fields you defined on the Contacts page (age, city, purpose, …)' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
+                                    { id: 'live_operator', name: 'Live Operators', desc: 'Agent can ask human teammates over WhatsApp for things only they know (pricing, approvals). Replies route back to the customer automatically.' },
                                 ].map(skill => {
                                     const enabled = skills.includes(skill.id);
                                     const expanded = expandedSkills.has(skill.id);
@@ -1468,6 +1547,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     const summaryChip =
                                         skill.id === 'tables' ? `${allowedTableIds.length} table${allowedTableIds.length === 1 ? '' : 's'}` :
                                         skill.id === 'http'   ? `${httpTools.length} tool${httpTools.length === 1 ? '' : 's'}` :
+                                        skill.id === 'live_operator' ? `${operators.length} operator${operators.length === 1 ? '' : 's'}` :
                                         isOverridden ? 'custom prompt' : null;
                                     return (
                                         <div key={skill.id} className={`rounded-xl border overflow-hidden ${enabled ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
@@ -1827,6 +1907,92 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     );
                                 })}
                             </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Live Operators specific: list + add/remove */}
+                                                    {skill.id === 'live_operator' && (
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                                                                    <User className="w-3.5 h-3.5" /> Team
+                                                                </div>
+                                                                <button type="button" onClick={addOperator}
+                                                                    className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors">
+                                                                    <Plus className="w-3 h-3" /> Add operator
+                                                                </button>
+                                                            </div>
+                                                            {operators.length === 0 ? (
+                                                                <div className="bg-secondary/30 border border-dashed border-border rounded-xl p-4 text-center text-xs text-muted-foreground">
+                                                                    No operators yet. Add at least one so the agent can ping a human teammate.
+                                                                </div>
+                                                            ) : (
+                                                                <div className="space-y-3">
+                                                                    {operators.map(op => (
+                                                                        <div key={op.id} className="border border-border rounded-xl p-3 bg-secondary/20 space-y-2">
+                                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                                                <div>
+                                                                                    <label className="text-[10px] text-muted-foreground">Name</label>
+                                                                                    <input type="text" value={op.name}
+                                                                                        onChange={e => updateOperator(op.id, { name: e.target.value })}
+                                                                                        placeholder="Tural"
+                                                                                        className="w-full bg-secondary/40 border border-border rounded-lg px-2 py-1 text-sm" />
+                                                                                </div>
+                                                                                <div>
+                                                                                    <label className="text-[10px] text-muted-foreground">WhatsApp phone (digits only)</label>
+                                                                                    <input type="text" value={op.phone}
+                                                                                        onChange={e => updateOperator(op.id, { phone: e.target.value })}
+                                                                                        placeholder="994551234567"
+                                                                                        className="w-full bg-secondary/40 border border-border rounded-lg px-2 py-1 text-sm font-mono" />
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className="grid grid-cols-3 gap-2">
+                                                                                <div>
+                                                                                    <label className="text-[10px] text-muted-foreground">Order</label>
+                                                                                    <input type="number" min={0} value={op.order}
+                                                                                        onChange={e => updateOperator(op.id, { order: Number(e.target.value) || 0 })}
+                                                                                        className="w-full bg-secondary/40 border border-border rounded-lg px-2 py-1 text-sm" />
+                                                                                </div>
+                                                                                <div>
+                                                                                    <label className="text-[10px] text-muted-foreground">Timeout (min)</label>
+                                                                                    <input type="number" min={1} value={op.timeoutMin}
+                                                                                        onChange={e => updateOperator(op.id, { timeoutMin: Number(e.target.value) || 30 })}
+                                                                                        className="w-full bg-secondary/40 border border-border rounded-lg px-2 py-1 text-sm" />
+                                                                                </div>
+                                                                                <div className="flex items-end">
+                                                                                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                                                                                        <input type="checkbox" checked={op.isActive}
+                                                                                            onChange={e => updateOperator(op.id, { isActive: e.target.checked })}
+                                                                                            className="w-3.5 h-3.5 accent-primary" />
+                                                                                        Active
+                                                                                    </label>
+                                                                                </div>
+                                                                            </div>
+                                                                            <div>
+                                                                                <label className="text-[10px] text-muted-foreground">Role / instructions (shown to the AI when deciding who to ask)</label>
+                                                                                <textarea value={op.systemPrompt ?? ''}
+                                                                                    onChange={e => updateOperator(op.id, { systemPrompt: e.target.value })}
+                                                                                    rows={2}
+                                                                                    placeholder="e.g. Handles pricing, discounts and stock checks for Istanbul projects."
+                                                                                    className="w-full bg-secondary/40 border border-border rounded-lg px-2 py-1 text-sm" />
+                                                                            </div>
+                                                                            <div className="flex justify-end gap-2">
+                                                                                <button type="button" onClick={() => removeOperator(op)}
+                                                                                    className="text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 inline-flex items-center gap-1">
+                                                                                    <Trash2 className="w-3 h-3" /> {op._new ? 'Discard' : 'Delete'}
+                                                                                </button>
+                                                                                <button type="button" onClick={() => saveOperator(op)}
+                                                                                    className="text-xs px-3 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90">
+                                                                                    {op._new ? 'Save' : 'Update'}
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                            <p className="text-[11px] text-muted-foreground mt-2 italic">
+                                                                Order controls who gets pinged first when the agent escalates. If the first operator doesn't reply within their timeout, the ticket is forwarded to the next one in order.
+                                                            </p>
                                                         </div>
                                                     )}
                                                 </div>

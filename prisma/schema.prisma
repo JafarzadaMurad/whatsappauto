@@ -347,6 +347,76 @@ model Agent {
   activityLogs      AgentActivityLog[]
   campaigns         Campaign[]
   instagramAccounts InstagramAccount[]
+  operators         Operator[]
+  operatorRequests  OperatorRequest[]
+}
+
+// Live operator — a human teammate the agent can ping over WhatsApp
+// when it needs domain expertise (pricing, escrow rules, special
+// approvals). The agent uses askOperator({operatorId, question}) to
+// fire a question; the operator's reply is routed back to the
+// originating customer's conversation. Ordering controls the fallback
+// queue when the first operator times out.
+model Operator {
+  id           String  @id @default(uuid())
+  agentId      String
+  agent        Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  workspaceId  String?
+
+  name         String
+  phone        String  // digits only, e.g. "994551234567"
+  systemPrompt String? @db.Text // role context (e.g. "You handle pricing and stock")
+  order        Int     @default(0) // lower = tried first when escalating
+  timeoutMin   Int     @default(30) // forward to next operator after this many minutes
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests OperatorRequest[]
+
+  @@unique([agentId, phone])
+  @@index([agentId, order])
+  @@index([phone])
+}
+
+// One pending question from the agent to an operator about a specific
+// customer. The agent embeds the 5-char ticket code in the outgoing
+// WhatsApp message; the operator's reply is matched back by ticket,
+// quoted-message scan, or "single open ticket" fallback. status
+// transitions: open → answered (delivered to customer) | timeout
+// (escalated to next operator) | cancelled.
+model OperatorRequest {
+  id          String  @id @default(uuid())
+  ticket      String  @unique // 5-char code, e.g. "A7K2X"
+  agentId     String
+  agent       Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  instanceId  String  // WhatsApp instance handling the customer
+
+  // Customer who triggered the question
+  customerJid   String
+  customerName  String?
+  customerPhone String?
+
+  // Operator currently holding the request
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  question String  @db.Text
+  answer   String? @db.Text
+
+  status         String   @default("open") // open | answered | timeout | cancelled
+  attemptedOpIds String[] @default([])    // operators that already saw + timed out
+
+  sentAt     DateTime  @default(now())
+  answeredAt DateTime?
+  timeoutAt  DateTime  // when the periodic checker should escalate
+
+  @@index([agentId, status])
+  @@index([operatorId, status])
+  @@index([timeoutAt])
+  @@index([customerJid, status])
 }
 
 model AiConversationLog {

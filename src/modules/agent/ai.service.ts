@@ -292,6 +292,58 @@ function buildSelfPauseTool(workspaceId: string, userId: string, contactPhone: s
     };
 }
 
+// ─── SKILL: Live operator ─────────────────────────────────────
+// askOperator routes a question to a human teammate via WhatsApp.
+// listOperators returns the team so the model can decide who to ask
+// (each operator has a name + role/prompt). The agent stays in
+// dialogue with the customer while the operator handles the request;
+// when the operator answers, the routing logic delivers a polished
+// reply back to the customer automatically (see operator.service +
+// AiService.composeCustomerReplyFromOperator).
+function buildLiveOperatorTools(agentId: string, instanceId: string, customerJid: string, customerName: string | null, customerPhone: string | null, workspaceId: string | null) {
+    return {
+        listOperators: makeTool(
+            'List the live operators (human teammates) available for this agent. Returns their id, name and role description. Call this before askOperator if you need to pick who to ask.',
+            z.object({}),
+            async () => {
+                const ops = await prisma.operator.findMany({
+                    where: { agentId, isActive: true },
+                    orderBy: { order: 'asc' },
+                    select: { id: true, name: true, systemPrompt: true, order: true },
+                });
+                return { operators: ops.map(o => ({ id: o.id, name: o.name, role: o.systemPrompt || '', order: o.order })) };
+            }
+        ),
+        askOperator: makeTool(
+            'Send a question to a human operator over WhatsApp and continue chatting with the customer. The operator\'s reply is automatically delivered back to the customer by the system — you do NOT wait. Use this when the customer asks something only a human can answer (current pricing, special approvals, stock checks, exceptions). After calling this, tell the customer something like "let me check and get back to you in a moment".',
+            z.object({
+                operatorId: z.string().describe('Operator id from listOperators. If unsure pick the first one (lowest order).'),
+                question: z.string().describe('Full question for the operator, in their working language. Include enough customer context that the operator can answer without asking you back.'),
+            }),
+            async ({ operatorId, question }) => {
+                const { createOperatorRequest } = await import('../operator/operator.service');
+                const result = await createOperatorRequest({
+                    agentId, workspaceId,
+                    instanceId,
+                    operatorId,
+                    customerJid,
+                    customerName,
+                    customerPhone,
+                    question,
+                });
+                if (!result.ok) return { success: false, error: result.error };
+                return {
+                    success: true,
+                    ticket: result.ticket,
+                    operatorName: result.operatorName,
+                    delivered: result.delivered,
+                    timeoutAt: result.timeoutAt,
+                };
+            }
+        ),
+    };
+}
+
 function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: string) {
     return {
         listUserFields: makeTool(
@@ -1059,6 +1111,7 @@ export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
     self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
+    live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
 };
 
 function resolveSkillPrompt(skillId: string, skillPrompts?: Record<string, string>): string {
@@ -1075,7 +1128,9 @@ export function buildToolsForSkills(
     httpTools: HttpToolTemplate[] = [],
     agentId: string = '',
     remoteJid: string = '',
-    skillPrompts: Record<string, string> = {}
+    skillPrompts: Record<string, string> = {},
+    instanceId: string = '',
+    contactName: string | null = null,
 ) {
     let tools: Record<string, any> = {};
     let prompts: string[] = [];
@@ -1107,6 +1162,12 @@ export function buildToolsForSkills(
         const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
         tools = { ...tools, ...buildSelfPauseTool(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('self_pause', skillPrompts));
+    }
+
+    if (skills.includes('live_operator') && agentId && remoteJid && instanceId) {
+        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        tools = { ...tools, ...buildLiveOperatorTools(agentId, instanceId, remoteJid, contactName, contactPhone, workspaceId) };
+        prompts.push(resolveSkillPrompt('live_operator', skillPrompts));
     }
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {
@@ -1266,7 +1327,8 @@ export class AiService {
             const skillPrompts = (((agent as any).skillPrompts) || {}) as Record<string, string>;
             const { tools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
-                agent.id, remoteJid, skillPrompts
+                agent.id, remoteJid, skillPrompts,
+                instanceId, contactName
             );
 
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
@@ -1424,7 +1486,8 @@ export class AiService {
         const fakeRemoteJid = `${cleanPhone}@s.whatsapp.net`;
         const { tools: liveTools, skillPrompt } = buildToolsForSkills(
             skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
-            agent.id, fakeRemoteJid, skillPrompts
+            agent.id, fakeRemoteJid, skillPrompts,
+            '', contactName
         );
         const tools = wrapToolsForDryRun(liveTools);
 
@@ -1481,5 +1544,139 @@ export class AiService {
                 total: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
             },
         };
+    }
+
+    // Pick the right ai-sdk model for an agent. Pulled out of the
+    // live + test paths so the operator-related entry points can
+    // reuse the same provider-resolution logic.
+    private static buildAiModel(agent: any) {
+        const providerInfo = agent.provider;
+        if (!providerInfo) throw new Error('Agent has no provider configured');
+        if (providerInfo.provider === 'OPENAI') return createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
+        if (providerInfo.provider === 'CLAUDE') return createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
+        if (providerInfo.provider === 'GEMINI') return createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
+    }
+
+    // Operator answered a question raised via askOperator → compose a
+    // polished customer-facing reply that incorporates the answer
+    // naturally and send it to the originating customer. Logs the
+    // exchange so the operator can see it in the Activity tab.
+    static async composeCustomerReplyFromOperator(opts: {
+        instanceId: string;
+        request: any; // OperatorRequest row (with customerJid, question, etc.)
+        operatorAnswer: string;
+    }) {
+        const { instanceId, request, operatorAnswer } = opts;
+        // Late imports to avoid the ai.service ⇄ instance.manager ⇄ server
+        // circular dependency at module load time.
+        const { sessions } = await import('../whatsapp/instance.manager');
+        const { io } = await import('../../server');
+        const sock = sessions.get(instanceId);
+        if (!sock) {
+            logger.warn(`[ai-operator] instance ${instanceId} not connected — cannot deliver to customer`);
+            return;
+        }
+
+        const agent = await prisma.agent.findUnique({
+            where: { id: request.agentId },
+            include: { provider: true },
+        });
+        if (!agent || !(agent as any).isActive) return;
+
+        const baseSystem = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
+        const composePrompt =
+            `${baseSystem}\n\n[Live operator handoff — internal note for you]:\n` +
+            `Earlier in this conversation the customer asked: "${request.question}".\n` +
+            `You routed that question to a human operator, told the customer you'd check, and waited.\n` +
+            `The operator just replied with: "${operatorAnswer}".\n` +
+            `Now compose ONE short, on-brand WhatsApp message to the customer that delivers this answer naturally, in the language the customer was using. Don't mention "operator", "manager" or that you consulted anyone — just answer.`;
+
+        try {
+            const aiModel = this.buildAiModel(agent);
+            const result = await generateText({
+                model: aiModel,
+                system: composePrompt,
+                messages: [{ role: 'user', content: `Operator answer: ${operatorAnswer}` }],
+            } as any);
+            const text = (result.text || operatorAnswer).trim();
+
+            await sock.sendMessage(request.customerJid, { text });
+            await prisma.message.create({
+                data: {
+                    instanceId, remoteJid: request.customerJid,
+                    isFromMe: true, messageType: 'text',
+                    content: text, timestamp: new Date(),
+                },
+            });
+            io.emit(`message.new-${instanceId}`, {
+                id: `op-${request.ticket}`, isFromMe: true, content: text,
+                remoteJid: request.customerJid, status: 'DELIVERED',
+                timestamp: new Date().toISOString(),
+            });
+            logger.info(`[ai-operator] ticket ${request.ticket} answer delivered to ${request.customerJid}`);
+        } catch (err: any) {
+            logger.error({ err: err.message, ticket: request.ticket }, '[ai-operator] composing customer reply failed');
+        }
+    }
+
+    // Operator messaged the bot freely (no matching open ticket).
+    // They might be asking about a specific customer the agent has
+    // recently chatted with, or for status of an open ticket. Reply
+    // in the operator's chat with a concise, business-tone answer.
+    static async replyToOperatorQuery(opts: {
+        instanceId: string;
+        operator: any;
+        question: string;
+    }) {
+        const { instanceId, operator, question } = opts;
+        const { sessions } = await import('../whatsapp/instance.manager');
+        const sock = sessions.get(instanceId);
+        if (!sock) return;
+
+        const agent = await prisma.agent.findUnique({
+            where: { id: operator.agentId },
+            include: { provider: true },
+        });
+        if (!agent || !(agent as any).isActive) return;
+
+        // Last 20 customer interactions on this instance for context.
+        const recent = await prisma.agentActivityLog.findMany({
+            where: { agentId: agent.id, instanceId },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+            select: { contactPhone: true, contactName: true, userMessage: true, agentReply: true, createdAt: true },
+        });
+        const recentBlob = recent.length === 0
+            ? 'No recent customer activity logged.'
+            : recent.map(r => {
+                const who = r.contactName || (r.contactPhone ? '+' + r.contactPhone : '?');
+                const t = new Date(r.createdAt).toLocaleString();
+                return `[${t}] ${who}\nClient: ${r.userMessage}\nAgent: ${r.agentReply}`;
+            }).join('\n---\n');
+
+        const opPrompt = (operator.systemPrompt || '').trim();
+        const system =
+            `You are a back-office AI assistant for the operator "${operator.name}". ` +
+            `You are NOT chatting with a customer here — this is internal staff chat. ` +
+            `Answer the operator's question briefly and accurately based on recent customer activity below.\n\n` +
+            (opPrompt ? `[Operator-specific instructions]\n${opPrompt}\n\n` : '') +
+            `[Recent customer activity, newest first]\n${recentBlob.slice(0, 6000)}`;
+
+        try {
+            const aiModel = this.buildAiModel(agent);
+            const result = await generateText({
+                model: aiModel,
+                system,
+                messages: [{ role: 'user', content: question }],
+            } as any);
+            const text = (result.text || '').trim();
+            if (!text) return;
+
+            await sock.sendMessage(`${operator.phone}@s.whatsapp.net`, { text });
+            logger.info(`[ai-operator] replied to operator ${operator.name} (${operator.phone})`);
+        } catch (err: any) {
+            logger.error({ err: err.message, operatorId: operator.id }, '[ai-operator] Q&A reply failed');
+        }
     }
 }

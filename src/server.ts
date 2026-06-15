@@ -9,6 +9,7 @@ import { startCampaignWorker } from './modules/campaign/campaign.queue';
 import { InstanceManager } from './modules/whatsapp/instance.manager';
 import { ensureWorkspacesForAllUsers } from './lib/workspace-migration';
 import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
+import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 
 const server = http.createServer(app);
 
@@ -49,6 +50,11 @@ server.listen(PORT, async () => {
 
     // 3-day auto-prune for the Agent Activity tab log
     startAgentActivityCleanup();
+
+    // Periodic check that escalates operator tickets to the next
+    // operator when the assigned one doesn't respond within the
+    // per-operator timeoutMin window.
+    startOperatorTimeoutSweeper();
 });
 
 // Handle unhandled Promise rejections

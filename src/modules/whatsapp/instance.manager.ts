@@ -15,6 +15,7 @@ import { AiService } from '../agent/ai.service';
 import { upsertCrmContact } from '../client/client.service';
 import { extractMessageContent } from './message-content';
 import { resolveJid } from './lid-resolver';
+import { findOperatorByPhone, handleOperatorMessage } from '../operator/operator.service';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -344,6 +345,28 @@ export class InstanceManager {
                         where: { remoteJid, campaign: { instanceId }, status: 'SENT' },
                         data: { status: 'REPLIED', repliedAt: new Date() },
                     }).catch(() => {});
+
+                    // Operator routing: if the sender's phone is in
+                    // the Operator table for some agent, route the
+                    // message to the operator service (ticket match,
+                    // dialog, or Q&A) instead of treating them as a
+                    // customer. Operators have a separate flow because
+                    // their messages either resolve open tickets or
+                    // ask the agent for context — they're never the
+                    // top of a customer funnel.
+                    const operator = await findOperatorByPhone(resolvedPhone);
+                    if (operator) {
+                        const quotedBody =
+                            (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
+                            (msg.message as any)?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
+                            null;
+                        handleOperatorMessage({
+                            instanceId, operator,
+                            body: content,
+                            quotedBody,
+                        }).catch(err => logger.error({ err, instanceId }, 'Operator handler failed'));
+                        continue;
+                    }
 
                     AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {
                         logger.error({ err, instanceId }, 'Error triggering AI service');

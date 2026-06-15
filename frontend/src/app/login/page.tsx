@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
@@ -12,9 +12,19 @@ function LoginInner() {
     const router = useRouter();
     const params = useSearchParams();
     const setAuth = useAuthStore((state) => state.login);
+    const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [form, setForm] = useState({ email: "", password: "" });
+
+    // If the user already has a valid session, skip the form and send
+    // them straight to the dashboard (or the `next` redirect target).
+    useEffect(() => {
+        if (isAuthenticated) {
+            const next = params.get('next');
+            router.replace(next && next.startsWith('/') ? next : '/dashboard');
+        }
+    }, [isAuthenticated, params, router]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

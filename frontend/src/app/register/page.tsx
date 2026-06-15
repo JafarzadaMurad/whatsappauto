@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
@@ -11,9 +11,15 @@ import GoogleSignIn from "@/components/GoogleSignIn";
 export default function RegisterPage() {
     const router = useRouter();
     const setAuth = useAuthStore((state) => state.login);
+    const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [form, setForm] = useState({ name: "", email: "", password: "" });
+
+    // Skip the register form for users who already have a session.
+    useEffect(() => {
+        if (isAuthenticated) router.replace('/dashboard');
+    }, [isAuthenticated, router]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

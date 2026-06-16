@@ -1850,7 +1850,8 @@ export class AiService {
             `• Do NOT greet again. You've already greeted earlier in the chat — jump straight to the answer.\n` +
             `• Do NOT mention "operator", "manager", "teammate", or that you consulted anyone.\n` +
             `• Pick up the conversation where it left off, like you just got back from checking.\n` +
-            `• Keep it brief (1–3 sentences).`;
+            `• Keep it brief (1–3 sentences).\n` +
+            `• 🛑 ANTI-HALLUCINATION: if the operator's reply does NOT actually contain the information the customer asked for (e.g. they asked a question back, they said "wait", "i'll check", or the reply is unrelated), DO NOT invent specs, prices, model names or details. Send a polite holding message in the customer's language ("Bir az gözləyin, dəqiqləşdirib qayıdacam" / "Подождите немного, уточню и вернусь") and stop. Better to make them wait than to lie.`;
 
         try {
             const aiModel = this.buildAiModel(agent);

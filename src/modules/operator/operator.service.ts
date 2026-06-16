@@ -18,6 +18,37 @@ function phoneFromJid(jid: string): string {
     return jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '');
 }
 
+// Detect when an operator's "reply" is actually a question back to
+// the agent rather than an answer to the customer. Without this check
+// the composer happily takes "Ram neçə demişdik müştəriyə?" as the
+// answer and hallucinates customer-facing video card specs out of
+// thin air. Conservative: a strong "?" at the end is the dominant
+// signal; a leading interrogative word is a fallback for messages
+// that lack punctuation.
+function looksLikeOperatorQuestion(text: string): boolean {
+    const t = (text || '').trim();
+    if (!t) return false;
+    // Bare punctuation
+    if (/[?؟？]\s*$/u.test(t)) return true;
+    // Very short messages that lead with an interrogative are
+    // almost always questions ("neçə?", "kim?", "сколько", "hangi").
+    const head = t.toLowerCase().split(/\s+/).slice(0, 4).join(' ');
+    const interrogatives = [
+        // Azerbaijani
+        'neçə', 'hansı', 'nədir', 'nə idi', 'nə dedik', 'kimə', 'harda', 'haradadır', 'kim',
+        'niyə', 'nəyə görə', 'neyləyim', 'demişdik', 'olarmı', 'varmı',
+        // Russian
+        'сколько', 'какой', 'какая', 'какое', 'кто', 'что', 'где', 'почему',
+        'когда', 'как', 'кому',
+        // Turkish
+        'kaç', 'hangi', 'kim', 'ne kadar', 'nerede', 'neden', 'ne demiştik',
+        // English
+        'how many', 'how much', 'which', 'what', 'who', 'where', 'why', 'when',
+    ];
+    if (interrogatives.some(w => head.startsWith(w + ' ') || head === w)) return true;
+    return false;
+}
+
 // Looks up the operator whose phone matches an incoming message's
 // sender — scoped to ONE agent so a teammate registered as operator
 // for agent A doesn't get intercepted when they happen to message
@@ -291,19 +322,33 @@ export async function handleOperatorMessage(opts: {
          match.kind === 'needs-dialog' ? ` openCount=${match.requests.length}` : ''));
 
     if (match.kind === 'matched') {
-        // Strip any leading [REQ-XXXX] header before persisting the answer
-        const cleaned = body.replace(TICKET_REGEX, '').trim();
-        const updated = await recordOperatorAnswer(match.request.id, cleaned || body);
+        // Strip any leading [REQ-XXXX] header so the question heuristic
+        // and the persisted answer don't include the ticket noise.
+        const cleaned = body.replace(TICKET_REGEX, '').trim() || body;
 
-        // Hand off to AiService to compose a polished customer-facing
-        // reply that incorporates the operator's answer. Imported
-        // lazily to avoid a circular import cycle between operator
-        // and agent services.
+        // If the operator quoted the ticket but actually asked a
+        // question back (instead of answering it), don't close the
+        // ticket and DON'T compose a customer reply — the composer
+        // would hallucinate facts to "deliver". Route to Q&A mode so
+        // the model can answer the operator's question using customer
+        // history; the ticket stays open for the real answer.
+        if (looksLikeOperatorQuestion(cleaned)) {
+            logger.info(`[operator] ticket ${match.request.ticket} got a follow-up question from operator ("${cleaned.slice(0, 80)}") — keeping open, routing to Q&A`);
+            const { AiService } = await import('../agent/ai.service');
+            AiService.replyToOperatorQuery({
+                instanceId, operator,
+                question: cleaned,
+                quotedBody: quotedBody || null,
+            }).catch(err => logger.error({ err: err.message, ticket: match.request.ticket }, '[operator] Q&A from question-detection failed'));
+            return;
+        }
+
+        const updated = await recordOperatorAnswer(match.request.id, cleaned);
         const { AiService } = await import('../agent/ai.service');
         AiService.composeCustomerReplyFromOperator({
             instanceId,
             request: updated,
-            operatorAnswer: cleaned || body,
+            operatorAnswer: cleaned,
         }).catch(err => logger.error({ err: err.message, ticket: match.request.ticket }, '[operator] customer-reply composition failed'));
         return;
     }

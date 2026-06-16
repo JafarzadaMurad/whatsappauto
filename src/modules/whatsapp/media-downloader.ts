@@ -59,8 +59,22 @@ export async function downloadAndSaveMedia(msg: any): Promise<MediaSaveResult | 
     else if (m.stickerMessage)  { kind = 'sticker';  media = m.stickerMessage; }
     if (!kind) return null;
 
-    const mime = media.mimetype || '';
-    const ext = EXT_BY_MIME[mime] || (mime.split('/')[1] || 'bin').toLowerCase().slice(0, 8);
+    // WhatsApp often hands us mimetypes with codec parameters
+    // (e.g. "audio/ogg; codecs=opus"). Strip the parameter list before
+    // matching, otherwise EXT_BY_MIME misses and we save with a busted
+    // extension like ".ogg; cod" that the browser refuses to play.
+    const rawMime = String(media.mimetype || '');
+    const baseMime = rawMime.split(';')[0].trim().toLowerCase();
+    let ext = EXT_BY_MIME[baseMime];
+    if (!ext) {
+        const sub = baseMime.split('/')[1] || 'bin';
+        // Keep only the safe alphanumeric prefix so a weird mime can't
+        // smuggle in path separators or whitespace.
+        ext = sub.replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
+    }
+    // Voice notes default to ogg/opus container even when the codec
+    // marker doesn't roundtrip cleanly.
+    if (kind === 'audio' && (media.ptt || !ext)) ext = ext || 'ogg';
     const fileName = `${crypto.randomBytes(12).toString('hex')}.${ext}`;
     const filePath = path.join(UPLOAD_DIR, fileName);
 
@@ -77,8 +91,10 @@ export async function downloadAndSaveMedia(msg: any): Promise<MediaSaveResult | 
 
         const base = (config.FRONTEND_URL || '').replace(/\/$/, '');
         return {
+            // Persist the cleaned base mimetype so the browser <audio>/
+            // <video> element gets a value it actually understands.
             mediaUrl: `${base}/api/uploads/files/${fileName}`,
-            mediaMime: mime || `${kind}/unknown`,
+            mediaMime: baseMime || `${kind}/unknown`,
             mediaName: media.fileName || null,
         };
     } catch (err: any) {

@@ -202,6 +202,7 @@ export class InstanceManager {
                                 messageType: msgType,
                                 content,
                                 timestamp: ts,
+                                waMsgId: msg.key?.id || null,
                             },
                         }).catch(() => null);
                         if (created && ['image', 'video', 'audio', 'document', 'sticker'].includes(msgType)) {
@@ -221,7 +222,7 @@ export class InstanceManager {
                             prisma.instance.findUnique({
                                 where: { id: instanceId },
                                 select: { userId: true, name: true, workspaceId: true }
-                            }).then(async inst => {
+                            }).then(async (inst: any) => {
                                 if (!inst) return;
                                 const wsId = inst.workspaceId
                                     || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
@@ -295,6 +296,8 @@ export class InstanceManager {
                                 messageType: msgType,
                                 content,
                                 timestamp: ts,
+                                waMsgId: msg.key?.id || null,
+                                status: 'SENT',
                                 ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                             },
                         }).catch(() => {});
@@ -329,6 +332,7 @@ export class InstanceManager {
                             messageType: msgType,
                             content,
                             timestamp: ts,
+                            waMsgId: msg.key?.id || null,
                             ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                         },
                     });
@@ -337,7 +341,7 @@ export class InstanceManager {
                     prisma.instance.findUnique({
                         where: { id: instanceId },
                         select: { userId: true, name: true, workspaceId: true },
-                    }).then(async inst => {
+                    }).then(async (inst: any) => {
                         if (!inst) return;
                         const wsId = inst.workspaceId
                             || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
@@ -403,6 +407,39 @@ export class InstanceManager {
                     AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {
                         logger.error({ err, instanceId }, 'Error triggering AI service');
                     });
+                }
+            });
+
+            // Delivery / read receipts. Baileys fires messages.update
+            // with an `update.status` integer when WhatsApp acks an
+            // outgoing message (sent → delivered → read). We persist
+            // it on the matching Message row by waMsgId and emit a
+            // realtime message.status event so the inbox can swap the
+            // tick icon without a refresh.
+            sock.ev.on('messages.update', async (updates: any[]) => {
+                for (const u of updates) {
+                    const waId = u?.key?.id;
+                    const statusCode = u?.update?.status;
+                    if (!waId || typeof statusCode !== 'number') continue;
+                    // Baileys numeric status: 1 PENDING, 2 SENT (server ack),
+                    // 3 DELIVERED, 4 READ, 5 PLAYED.
+                    const status = statusCode >= 4 ? 'READ'
+                                 : statusCode === 3 ? 'DELIVERED'
+                                 : statusCode === 2 ? 'SENT'
+                                 : 'PENDING';
+                    try {
+                        const updated = await prisma.message.updateMany({
+                            where: { instanceId, waMsgId: waId },
+                            data: { status },
+                        });
+                        if (updated.count > 0) {
+                            io.emit(`message.status-${instanceId}`, {
+                                waMsgId: waId, status, remoteJid: u?.key?.remoteJid || null,
+                            });
+                        }
+                    } catch (e: any) {
+                        logger.warn({ err: e.message, waId }, '[receipts] update failed');
+                    }
                 }
             });
 

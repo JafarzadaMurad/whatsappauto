@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
+import io, { Socket } from "socket.io-client";
 
 const PAGE_SIZE = 50;
 
@@ -67,6 +68,7 @@ type Conversation = {
     lastFromMe: boolean;
     lastMessageAt: string;
     messageCount: number;
+    unreadCount?: number;
     profilePic?: string | null;
 };
 
@@ -84,6 +86,8 @@ type Message = {
     mediaUrl?: string | null;
     mediaMime?: string | null;
     mediaName?: string | null;
+    waMsgId?: string | null;
+    deliveryStatus?: 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' | string;
 };
 
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram';
@@ -157,6 +161,15 @@ export default function InboxPage() {
         stickToBottomRef.current = true;
         refreshPauseStatus(c.remoteJid);
         setLoadingChat(true);
+
+        // Eagerly zero the unread badge in local state; the server-side
+        // clear happens via /mark-read so the next /unified call agrees.
+        setConversations(prev => prev.map(x =>
+            x.accountId === c.accountId && x.remoteJid === c.remoteJid
+                ? { ...x, unreadCount: 0 }
+                : x));
+        api.post('/inbox/mark-read', { accountId: c.accountId, remoteJid: c.remoteJid }).catch(() => {});
+
         try {
             const r = await api.get(
                 `/inbox/messages?accountId=${c.accountId}&remoteJid=${encodeURIComponent(c.remoteJid)}&limit=${PAGE_SIZE}`
@@ -168,6 +181,87 @@ export default function InboxPage() {
         } catch (e) { console.error(e); }
         finally { setLoadingChat(false); }
     };
+
+    // ─── Realtime: WhatsApp instance message stream ──────────────
+    // Subscribe to every WhatsApp account in the inbox. For the
+    // currently-open conversation we append directly to `messages`;
+    // for every other one we bump the unread counter and refresh the
+    // last-message preview. Delivery / read receipts come in on
+    // message.status-* and rewrite the matching bubble's tick.
+    const selectedRef = useRef<Conversation | null>(null);
+    useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+    useEffect(() => {
+        const waAccounts = conversations
+            .filter(c => c.channel === 'whatsapp')
+            .map(c => c.accountId);
+        const unique = Array.from(new Set(waAccounts));
+        if (unique.length === 0) return;
+
+        const baseUrl = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/api\/?$/, '') || window.location.origin;
+        const socket: Socket = io(baseUrl, { transports: ['websocket'] });
+
+        const onMsgNew = (accountId: string) => (payload: any) => {
+            const cur = selectedRef.current;
+            const isOpenChat = !!cur && cur.accountId === accountId && cur.remoteJid === payload.remoteJid;
+
+            if (isOpenChat) {
+                stickToBottomRef.current = true;
+                setMessages(prev => {
+                    // Naive dedupe — Socket race may briefly double up
+                    // a row we already wrote optimistically on send.
+                    if (payload.id && prev.some(m => m.id === payload.id)) return prev;
+                    return [...prev, {
+                        id: payload.id || `live-${Date.now()}`,
+                        userMessage: payload.isFromMe ? '' : payload.content,
+                        agentReply: payload.isFromMe ? payload.content : '',
+                        createdAt: payload.timestamp,
+                        provider: payload.isFromMe ? 'PHONE' : undefined,
+                        messageType: payload.messageType,
+                        mediaUrl: payload.mediaUrl || null,
+                        mediaMime: payload.mediaMime || null,
+                        mediaName: payload.mediaName || null,
+                        waMsgId: payload.waMsgId || payload.id,
+                        deliveryStatus: payload.isFromMe ? (payload.status || 'SENT') : undefined,
+                    }];
+                });
+                if (!payload.isFromMe) {
+                    api.post('/inbox/mark-read', { accountId, remoteJid: payload.remoteJid }).catch(() => {});
+                }
+            }
+
+            setConversations(prev => {
+                const idx = prev.findIndex(x => x.accountId === accountId && x.remoteJid === payload.remoteJid);
+                if (idx < 0) return prev;
+                const next = [...prev];
+                const incomingBump = !payload.isFromMe && !isOpenChat ? 1 : 0;
+                next[idx] = {
+                    ...next[idx],
+                    lastMessage: payload.content || (payload.mediaUrl ? '📎 Media' : next[idx].lastMessage),
+                    lastFromMe: !!payload.isFromMe,
+                    lastMessageAt: payload.timestamp || new Date().toISOString(),
+                    unreadCount: incomingBump ? (next[idx].unreadCount || 0) + 1 : (isOpenChat ? 0 : next[idx].unreadCount),
+                };
+                return next.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+            });
+        };
+
+        const onMsgStatus = (accountId: string) => (payload: any) => {
+            const cur = selectedRef.current;
+            if (!cur || cur.accountId !== accountId || cur.remoteJid !== payload.remoteJid) return;
+            setMessages(prev => prev.map(m =>
+                m.waMsgId === payload.waMsgId
+                    ? { ...m, deliveryStatus: payload.status }
+                    : m
+            ));
+        };
+
+        for (const id of unique) {
+            socket.on(`message.new-${id}`, onMsgNew(id));
+            socket.on(`message.status-${id}`, onMsgStatus(id));
+        }
+        return () => { socket.disconnect(); };
+    }, [conversations.map(c => c.accountId).join(',')]);
 
     const loadMoreMessages = useCallback(async () => {
         if (!selected || loadingMore || !hasMore || messages.length === 0) return;
@@ -416,21 +510,31 @@ export default function InboxPage() {
 
 // ─── Sub-components ───────────────────────────────────────────
 function ConvoRow({ convo, active, onClick }: { convo: Conversation; active: boolean; onClick: () => void }) {
+    const unread = !active && (convo.unreadCount || 0) > 0;
     return (
         <button onClick={onClick}
             className={`w-full text-left flex items-center gap-3 px-3 py-2.5 border-b border-border/30 hover:bg-secondary/30 transition-colors ${active ? 'bg-secondary/60' : ''}`}>
             <Avatar conv={convo} size={42} />
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-sm truncate flex-1">{displayName(convo)}</span>
-                    <span className="text-[10px] text-muted-foreground flex-shrink-0">{formatRelative(convo.lastMessageAt)}</span>
+                    <span className={`text-sm truncate flex-1 ${unread ? 'font-semibold text-foreground' : 'font-medium'}`}>
+                        {displayName(convo)}
+                    </span>
+                    <span className={`text-[10px] flex-shrink-0 ${unread ? 'text-emerald-400 font-medium' : 'text-muted-foreground'}`}>
+                        {formatRelative(convo.lastMessageAt)}
+                    </span>
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                     <ChannelBadge channel={convo.channel} mini />
-                    <p className="text-xs text-muted-foreground truncate flex-1">
+                    <p className={`text-xs truncate flex-1 ${unread ? 'text-foreground' : 'text-muted-foreground'}`}>
                         {convo.lastFromMe && <span className="opacity-60">You: </span>}
                         {convo.lastMessage || '—'}
                     </p>
+                    {unread && (
+                        <span className="ml-auto flex-shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
+                            {convo.unreadCount! > 99 ? '99+' : convo.unreadCount}
+                        </span>
+                    )}
                 </div>
             </div>
         </button>
@@ -494,14 +598,33 @@ function MessageList({ messages }: { messages: Message[] }) {
     return <>{elements}</>;
 }
 
+// "🖼️ Photo" / "🎤 Voice message" / etc come from extractMessageContent
+// when there's no caption. With the actual blob rendered above the
+// text we don't also want the placeholder underneath.
+const PLACEHOLDER_CAPTIONS = new Set([
+    '🖼️ Photo', '🎬 Video', '🎤 Voice message', '🎵 Audio',
+    '🎟️ Sticker', '📍 Location', '👁️ View-once media', '[Unsupported message]',
+    '📎 Media',
+]);
+function captionIsPlaceholder(text?: string): boolean {
+    if (!text) return true;
+    const t = text.trim();
+    if (PLACEHOLDER_CAPTIONS.has(t)) return true;
+    // "📄 invoice.pdf" / "👤 John Doe" — emoji-led labels without a real caption
+    return /^(📄|👤|👥) [^\s]/.test(t) && t.length < 50;
+}
+
+function DeliveryTick({ status }: { status?: string }) {
+    if (status === 'READ') return <CheckCheck className="w-3.5 h-3.5 text-sky-400" />;
+    if (status === 'DELIVERED') return <CheckCheck className="w-3.5 h-3.5 text-muted-foreground/70" />;
+    if (status === 'SENT' || status === 'PENDING' || !status) return <Check className="w-3.5 h-3.5 text-muted-foreground/70" />;
+    return <Check className="w-3.5 h-3.5 text-muted-foreground/70" />;
+}
+
 function MessageBubble({ msg }: { msg: Message }) {
     const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // If we have a downloaded media URL, render it inline. The text
-    // content (when present) is used as the caption beneath the
-    // attachment. Without media we fall back to the existing
-    // text-only bubble.
-    const renderMedia = (caption?: string) => {
+    const renderMedia = () => {
         if (!msg.mediaUrl) return null;
         const mime = (msg.mediaMime || '').toLowerCase();
         const kind = msg.messageType || (
@@ -515,81 +638,83 @@ function MessageBubble({ msg }: { msg: Message }) {
             return (
                 <a href={msg.mediaUrl} target="_blank" rel="noreferrer" className="block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.mediaUrl} alt={msg.mediaName || ''}
+                    <img src={msg.mediaUrl} alt=""
                         className="rounded-xl max-h-[300px] w-auto object-contain bg-black/20" />
                 </a>
             );
         }
         if (kind === 'video') {
             return (
-                <video controls src={msg.mediaUrl}
+                <video controls preload="metadata" src={msg.mediaUrl}
                     className="rounded-xl max-h-[300px] w-auto bg-black/20">
-                    Your browser does not support the video tag.
+                    Your browser does not support video playback.
                 </video>
             );
         }
         if (kind === 'audio') {
+            // Explicit <source> with the cleaned mime so the browser
+            // can pick the right decoder for ogg/opus voice notes.
             return (
-                <audio controls src={msg.mediaUrl} className="w-full min-w-[220px]">
-                    Your browser does not support audio.
+                <audio controls preload="metadata" className="w-full min-w-[220px] max-w-[300px]">
+                    <source src={msg.mediaUrl} type={mime || 'audio/ogg'} />
+                    <source src={msg.mediaUrl} />
+                    Your browser does not support audio playback.
                 </audio>
             );
         }
-        // document / fallback — show name + size + open link
+        // document / fallback — file name + open link (no mime label)
         return (
             <a href={msg.mediaUrl} target="_blank" rel="noreferrer"
                 className="flex items-center gap-2 bg-secondary/40 border border-border rounded-xl px-3 py-2 hover:bg-secondary/70 transition-colors">
-                <div className="w-8 h-8 rounded-md bg-primary/15 text-primary flex items-center justify-center text-xs font-bold">
-                    {(msg.mediaName || 'FILE').split('.').pop()?.slice(0, 4).toUpperCase()}
+                <div className="w-8 h-8 rounded-md bg-primary/15 text-primary flex items-center justify-center text-[10px] font-bold">
+                    {(msg.mediaName || 'FILE').split('.').pop()?.slice(0, 4).toUpperCase() || 'FILE'}
                 </div>
-                <div className="min-w-0">
-                    <div className="text-xs font-medium truncate">{msg.mediaName || 'Document'}</div>
-                    <div className="text-[10px] text-muted-foreground">{mime || 'file'}</div>
+                <div className="min-w-0 text-xs font-medium truncate">
+                    {msg.mediaName || 'Document'}
                 </div>
             </a>
         );
     };
 
-    const incomingText = msg.userMessage;
-    const outgoingText = msg.agentReply;
     const hasMedia = !!msg.mediaUrl;
+    // Drop the auto-generated "🖼️ Photo" / "🎤 Voice message" text when
+    // we have the real attachment rendered above it. Keep real captions.
+    const incomingText = msg.userMessage && !(hasMedia && captionIsPlaceholder(msg.userMessage)) ? msg.userMessage : '';
+    const outgoingText = msg.agentReply && !(hasMedia && captionIsPlaceholder(msg.agentReply)) ? msg.agentReply : '';
+
+    const showIncomingBubble = !!incomingText || (hasMedia && !msg.agentReply);
+    const showOutgoingBubble = !!outgoingText || (hasMedia && msg.agentReply !== undefined && msg.agentReply !== '' && captionIsPlaceholder(msg.agentReply));
 
     return (
         <div className="space-y-1.5">
-            {(incomingText || (hasMedia && !msg.userMessage && !msg.agentReply)) && incomingText !== undefined && incomingText !== '' && (
+            {showIncomingBubble && (
                 <div className="flex justify-start">
                     <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
-                        {hasMedia && !outgoingText && (
-                            <div className="mb-1">{renderMedia()}</div>
+                        {hasMedia && !msg.agentReply && (
+                            <div className={incomingText ? 'mb-1' : ''}>{renderMedia()}</div>
                         )}
-                        <div className="whitespace-pre-wrap break-words">{incomingText}</div>
+                        {incomingText && (
+                            <div className="whitespace-pre-wrap break-words">{incomingText}</div>
+                        )}
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5">{time}</div>
                     </div>
                 </div>
             )}
-            {outgoingText && (
+            {showOutgoingBubble && (
                 <div className="flex justify-end">
                     <div className="bg-primary/15 border border-primary/20 rounded-2xl rounded-br-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
                         {hasMedia && (
-                            <div className="mb-1">{renderMedia()}</div>
+                            <div className={outgoingText ? 'mb-1' : ''}>{renderMedia()}</div>
                         )}
-                        <div className="whitespace-pre-wrap break-words">{outgoingText}</div>
+                        {outgoingText && (
+                            <div className="whitespace-pre-wrap break-words">{outgoingText}</div>
+                        )}
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5 text-right flex items-center justify-end gap-1">
                             {msg.provider === 'MANUAL' || msg.provider === 'PHONE' ? null :
                                 msg.provider && <span className="opacity-70">AI</span>}
                             {time}
-                            <CheckCheck className="w-3 h-3 opacity-60" />
+                            <DeliveryTick status={msg.deliveryStatus} />
                         </div>
-                    </div>
-                </div>
-            )}
-            {/* Media-only inbound (no caption / placeholder text): render
-                a bare bubble so voice notes / silent photos still show up. */}
-            {hasMedia && !incomingText && !outgoingText && (
-                <div className="flex justify-start">
-                    <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-2 py-2 max-w-[85%] sm:max-w-[70%]">
-                        {renderMedia()}
-                        <div className="text-[10px] text-muted-foreground/70 mt-1">{time}</div>
                     </div>
                 </div>
             )}

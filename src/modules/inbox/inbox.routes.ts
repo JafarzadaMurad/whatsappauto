@@ -12,5 +12,6 @@ router.get('/unified', controller.getUnified.bind(controller));
 router.get('/conversations', controller.getConversations.bind(controller));
 router.get('/messages', controller.getMessages.bind(controller));
 router.post('/reply', controller.reply.bind(controller));
+router.post('/mark-read', controller.markRead.bind(controller));
 
 export default router;

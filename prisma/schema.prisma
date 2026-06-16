@@ -248,8 +248,19 @@ model Message {
 
   status String @default("SENT") // PENDING, SENT, DELIVERED, READ
 
+  // WhatsApp message id (from Baileys msg.key.id). Used to match
+  // delivery / read receipts to the original row.
+  waMsgId String?
+
+  // When the operator opened the conversation and we marked inbound
+  // messages as read. Null while still unread.
+  readAt DateTime?
+
   timestamp DateTime
   createdAt DateTime @default(now())
+
+  @@index([instanceId, remoteJid, readAt])
+  @@index([instanceId, waMsgId])
 }
 
 model Contact {

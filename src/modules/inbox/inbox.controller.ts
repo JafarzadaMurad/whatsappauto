@@ -83,6 +83,7 @@ export class InboxController {
                 lastFromMe: boolean;
                 lastMessageAt: Date;
                 messageCount: number;
+                unreadCount?: number;
                 profilePic?: string | null;
             };
 
@@ -107,6 +108,25 @@ export class InboxController {
                     });
                     return { g, last };
                 }));
+
+                // Unread inbound count per (instance, jid) — used for the
+                // green badge on each conversation row. "Unread" means
+                // isFromMe=false AND readAt is null.
+                const unreadGrouped = await prisma.message.groupBy({
+                    by: ['instanceId', 'remoteJid'],
+                    where: {
+                        instanceId: { in: instanceIds },
+                        isFromMe: false,
+                        readAt: null,
+                    },
+                    _count: { _all: true },
+                });
+                const unreadKey = (iid: string, jid: string) => `${iid}${jid}`;
+                const unreadMap = new Map<string, number>();
+                for (const u of unreadGrouped) {
+                    if (!u.remoteJid) continue;
+                    unreadMap.set(unreadKey(u.instanceId, u.remoteJid), u._count._all);
+                }
 
                 const contactsByInstance = new Map<string, Map<string, any>>();
                 for (const inst of instances) {
@@ -137,6 +157,7 @@ export class InboxController {
                         lastFromMe: lm.last.isFromMe,
                         lastMessageAt: lm.last.timestamp || new Date(0),
                         messageCount: lm.g._count._all,
+                        unreadCount: unreadMap.get(unreadKey(lm.g.instanceId, lm.g.remoteJid)) || 0,
                     });
                 }
             }
@@ -361,6 +382,8 @@ export class InboxController {
                     mediaUrl: r.mediaUrl,
                     mediaMime: r.mediaMime,
                     mediaName: r.mediaName,
+                    waMsgId: r.waMsgId,
+                    deliveryStatus: r.status, // SENT | DELIVERED | READ
                 }));
 
             const cleanedLogs = logs.map(l => ({
@@ -389,6 +412,34 @@ export class InboxController {
     }
 
     // Manual reply — supports WhatsApp and Instagram.
+    // Mark all inbound messages in a conversation as read. Called by
+    // the inbox when the operator opens a chat so the unread badge
+    // clears and (for WhatsApp) we can optionally ship a read receipt
+    // upstream later.
+    async markRead(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const schema = z.object({
+                accountId: z.string().min(1),
+                remoteJid: z.string().min(1),
+            });
+            const { accountId, remoteJid } = schema.parse(req.body);
+
+            const owns = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } })
+                || await prisma.instagramAccount.findFirst({ where: { id: accountId, workspaceId } });
+            if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            const result = await prisma.message.updateMany({
+                where: { instanceId: accountId, remoteJid, isFromMe: false, readAt: null },
+                data: { readAt: new Date() },
+            });
+            return res.json({ success: true, markedRead: result.count });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async reply(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);

@@ -1823,20 +1823,48 @@ export class AiService {
         });
         if (!agent || !(agent as any).isActive) return;
 
+        // Pull recent chat history so the composer knows the customer
+        // has already been greeted, what context was set up, and the
+        // tone used. Without this the model treats every operator
+        // handoff as a fresh dialog and re-greets ("Salam! …") on
+        // every relayed answer.
+        const recentHistory = await prisma.message.findMany({
+            where: { instanceId, remoteJid: request.customerJid },
+            orderBy: { timestamp: 'desc' },
+            take: 10,
+            select: { isFromMe: true, content: true },
+        });
+        recentHistory.reverse();
+        const historyMessages = recentHistory.map(m => ({
+            role: (m.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
+            content: m.content || '',
+        }));
+
         const baseSystem = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
         const composePrompt =
-            `${baseSystem}\n\n[Live operator handoff — internal note for you]:\n` +
-            `Earlier in this conversation the customer asked: "${request.question}".\n` +
-            `You routed that question to a human operator, told the customer you'd check, and waited.\n` +
-            `The operator just replied with: "${operatorAnswer}".\n` +
-            `Now compose ONE short, on-brand WhatsApp message to the customer that delivers this answer naturally, in the language the customer was using. Don't mention "operator", "manager" or that you consulted anyone — just answer.`;
+            `${baseSystem}\n\n[Live operator handoff — internal note]:\n` +
+            `Earlier in this same chat the customer asked: "${request.question}".\n` +
+            `You told them you'd check and that you'd get back to them.\n` +
+            `A human teammate has now confirmed the answer: "${operatorAnswer}".\n\n` +
+            `Write ONE short follow-up message to the customer that delivers the answer naturally, in the SAME language and tone they were using. Rules:\n` +
+            `• Do NOT greet again. You've already greeted earlier in the chat — jump straight to the answer.\n` +
+            `• Do NOT mention "operator", "manager", "teammate", or that you consulted anyone.\n` +
+            `• Pick up the conversation where it left off, like you just got back from checking.\n` +
+            `• Keep it brief (1–3 sentences).`;
 
         try {
             const aiModel = this.buildAiModel(agent);
             const result = await generateText({
                 model: aiModel,
                 system: composePrompt,
-                messages: [{ role: 'user', content: `Operator answer: ${operatorAnswer}` }],
+                // Give the model the actual recent dialog so it can see
+                // that greetings already happened and can match tone.
+                // The final synthetic turn ("you just confirmed X") is
+                // what we want it to react to.
+                messages: [
+                    ...historyMessages,
+                    { role: 'user', content: `[internal note] You just got the answer back: ${operatorAnswer}\nReply now, no greeting.` },
+                ],
             } as any);
             const text = (result.text || operatorAnswer).trim();
 

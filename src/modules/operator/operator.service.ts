@@ -18,36 +18,6 @@ function phoneFromJid(jid: string): string {
     return jid.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '');
 }
 
-// Detect when an operator's "reply" is actually a question back to
-// the agent rather than an answer to the customer. Without this check
-// the composer happily takes "Ram neçə demişdik müştəriyə?" as the
-// answer and hallucinates customer-facing video card specs out of
-// thin air. Conservative: a strong "?" at the end is the dominant
-// signal; a leading interrogative word is a fallback for messages
-// that lack punctuation.
-function looksLikeOperatorQuestion(text: string): boolean {
-    const t = (text || '').trim();
-    if (!t) return false;
-    // Bare punctuation
-    if (/[?؟？]\s*$/u.test(t)) return true;
-    // Very short messages that lead with an interrogative are
-    // almost always questions ("neçə?", "kim?", "сколько", "hangi").
-    const head = t.toLowerCase().split(/\s+/).slice(0, 4).join(' ');
-    const interrogatives = [
-        // Azerbaijani
-        'neçə', 'hansı', 'nədir', 'nə idi', 'nə dedik', 'kimə', 'harda', 'haradadır', 'kim',
-        'niyə', 'nəyə görə', 'neyləyim', 'demişdik', 'olarmı', 'varmı',
-        // Russian
-        'сколько', 'какой', 'какая', 'какое', 'кто', 'что', 'где', 'почему',
-        'когда', 'как', 'кому',
-        // Turkish
-        'kaç', 'hangi', 'kim', 'ne kadar', 'nerede', 'neden', 'ne demiştik',
-        // English
-        'how many', 'how much', 'which', 'what', 'who', 'where', 'why', 'when',
-    ];
-    if (interrogatives.some(w => head.startsWith(w + ' ') || head === w)) return true;
-    return false;
-}
 
 // Looks up the operator whose phone matches an incoming message's
 // sender — scoped to ONE agent so a teammate registered as operator
@@ -314,61 +284,30 @@ export async function handleOperatorMessage(opts: {
     quotedBody?: string | null;
 }) {
     const { instanceId, operator, body, quotedBody } = opts;
-    const match = await matchOperatorReply(operator.id, body, quotedBody || undefined);
-    // Surface match kind so we can debug "operator answered but customer
-    // got nothing" cases without re-running them through code analysis.
-    logger.info(`[operator] match for ${operator.name} (${operator.phone}) on instance ${instanceId}: kind=${match.kind}` +
-        (match.kind === 'matched' ? ` ticket=${match.request.ticket} customer=${match.request.customerJid}` :
-         match.kind === 'needs-dialog' ? ` openCount=${match.requests.length}` : ''));
 
-    if (match.kind === 'matched') {
-        // Strip any leading [REQ-XXXX] header so the question heuristic
-        // and the persisted answer don't include the ticket noise.
-        const cleaned = body.replace(TICKET_REGEX, '').trim() || body;
+    // Strip the [REQ-XXXX] header if present — the model sees the
+    // ticket context separately (via listOpenTickets + the quoted
+    // body) so it doesn't need the ticket prefix in the question
+    // itself.
+    const cleaned = body.replace(TICKET_REGEX, '').trim() || body;
 
-        // If the operator quoted the ticket but actually asked a
-        // question back (instead of answering it), don't close the
-        // ticket and DON'T compose a customer reply — the composer
-        // would hallucinate facts to "deliver". Route to Q&A mode so
-        // the model can answer the operator's question using customer
-        // history; the ticket stays open for the real answer.
-        if (looksLikeOperatorQuestion(cleaned)) {
-            logger.info(`[operator] ticket ${match.request.ticket} got a follow-up question from operator ("${cleaned.slice(0, 80)}") — keeping open, routing to Q&A`);
-            const { AiService } = await import('../agent/ai.service');
-            AiService.replyToOperatorQuery({
-                instanceId, operator,
-                question: cleaned,
-                quotedBody: quotedBody || null,
-            }).catch(err => logger.error({ err: err.message, ticket: match.request.ticket }, '[operator] Q&A from question-detection failed'));
-            return;
-        }
+    logger.info(`[operator] message from ${operator.name} (${operator.phone}) on instance ${instanceId} — routing to AI` +
+        (quotedBody ? ' (with quoted message)' : ''));
 
-        const updated = await recordOperatorAnswer(match.request.id, cleaned);
-        const { AiService } = await import('../agent/ai.service');
-        AiService.composeCustomerReplyFromOperator({
-            instanceId,
-            request: updated,
-            operatorAnswer: cleaned,
-        }).catch(err => logger.error({ err: err.message, ticket: match.request.ticket }, '[operator] customer-reply composition failed'));
-        return;
-    }
-
-    if (match.kind === 'needs-dialog') {
-        await askOperatorWhichTicket(instanceId, operator.phone, match.requests);
-        return;
-    }
-
-    // no-open → operator is chatting with the agent freely (asking
-    // about a customer, requesting a forward, asking for stats). Pass
-    // the quoted message through so the AI can derive context when
-    // the operator quotes a customer thread.
+    // Everything goes through the AI now. It has chat history with the
+    // operator, the list of open tickets, the quoted message (if any),
+    // and the full tool kit (listOpenTickets / answerTicket /
+    // sendToCustomer / lookup tools). The model decides whether the
+    // incoming message answers a ticket, asks a clarifying question,
+    // requests an action on a customer, or wants analytics — and acts
+    // accordingly.
     const { AiService } = await import('../agent/ai.service');
     AiService.replyToOperatorQuery({
         instanceId,
         operator,
-        question: body,
+        question: cleaned,
         quotedBody: quotedBody || null,
-    }).catch(err => logger.error({ err: err.message }, '[operator] Q&A reply failed'));
+    }).catch(err => logger.error({ err: err.message, operatorId: operator.id }, '[operator] AI reply failed'));
 }
 
 export function startOperatorTimeoutSweeper() {

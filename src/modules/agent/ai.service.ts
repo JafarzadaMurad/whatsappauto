@@ -262,9 +262,93 @@ function buildOperatorAgentTools(opts: {
     instanceId: string;
     operatorId: string;
 }) {
-    const { agentId, workspaceId, instanceId } = opts;
+    const { agentId, workspaceId, instanceId, operatorId } = opts;
 
     return {
+        listOpenTickets: makeTool(
+            'List THIS operator\'s currently open tickets — the questions the agent has routed to them and is waiting on. Each entry has the 5-char ticket code, the customer (name + JID + phone), the original question, and how long it has been open. Call this before answering so you know which open ticket the operator\'s reply belongs to.',
+            z.object({}),
+            async () => {
+                const open = await prisma.operatorRequest.findMany({
+                    where: { operatorId, status: 'open' },
+                    orderBy: { sentAt: 'desc' },
+                    take: 20,
+                    select: { ticket: true, customerJid: true, customerName: true, customerPhone: true, question: true, sentAt: true },
+                });
+                return {
+                    openCount: open.length,
+                    tickets: open.map(t => ({
+                        ticket: t.ticket,
+                        customerJid: t.customerJid,
+                        customerName: t.customerName,
+                        customerPhone: t.customerPhone,
+                        question: t.question,
+                        openedAt: t.sentAt,
+                    })),
+                };
+            }
+        ),
+
+        answerTicket: makeTool(
+            'Mark an open ticket as answered and deliver the answer to the originating customer in their language. Use this when the operator has actually provided the information the customer was waiting for. The "answerForCustomer" you pass is the literal text the customer will receive (polish it on-brand, no greeting, pick up from where the conversation left off). The ticket goes from "open" to "answered". Do NOT use this if the operator asked a clarifying question instead of answering — in that case just reply to the operator with the clarification they need.',
+            z.object({
+                ticket: z.string().describe('5-char ticket code (e.g. "GNJH5"). Get it from listOpenTickets if unsure.'),
+                answerForCustomer: z.string().describe('The polished customer-facing message in the customer\'s own language. No greetings, no mention of "operator"/"manager".'),
+            }),
+            async ({ ticket, answerForCustomer }) => {
+                const code = ticket.toUpperCase().replace(/^\[?REQ-/, '').replace(/\]$/, '');
+                const req = await prisma.operatorRequest.findUnique({ where: { ticket: code } });
+                if (!req) return { success: false, error: `No ticket found for code "${code}".` };
+                if (req.operatorId !== operatorId) return { success: false, error: 'This ticket belongs to a different operator.' };
+                if (req.status !== 'open') return { success: false, error: `Ticket ${code} is already ${req.status}.` };
+
+                // Persist the answer text the operator effectively gave
+                // (the model's polished version, in this case).
+                const updated = await prisma.operatorRequest.update({
+                    where: { id: req.id },
+                    data: { answer: answerForCustomer, status: 'answered', answeredAt: new Date() },
+                });
+
+                try {
+                    const { sessions } = await import('../whatsapp/instance.manager');
+                    const { io } = await import('../../server');
+                    const sock = sessions.get(req.instanceId);
+                    if (!sock) return { success: false, error: 'Customer\'s instance is not connected.' };
+
+                    await sock.sendMessage(req.customerJid, { text: answerForCustomer });
+                    const saved = await prisma.message.create({
+                        data: {
+                            instanceId: req.instanceId,
+                            remoteJid: req.customerJid,
+                            isFromMe: true, messageType: 'text',
+                            content: answerForCustomer, timestamp: new Date(),
+                        },
+                    });
+                    await prisma.aiConversationLog.create({
+                        data: {
+                            agentId, instanceId: req.instanceId, remoteJid: req.customerJid,
+                            userMessage: '', agentReply: answerForCustomer,
+                            promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                            provider: 'OPERATOR', model: 'manual',
+                            toolCalls: [],
+                        },
+                    }).catch(() => {});
+                    io.emit(`message.new-${req.instanceId}`, {
+                        id: saved.id, isFromMe: true, content: answerForCustomer,
+                        remoteJid: req.customerJid, status: 'DELIVERED',
+                        timestamp: new Date().toISOString(),
+                    });
+                    return {
+                        success: true, ticket: code,
+                        customer: { jid: req.customerJid, name: updated.customerName, phone: updated.customerPhone },
+                        sentLength: answerForCustomer.length,
+                    };
+                } catch (e: any) {
+                    return { success: false, error: e.message };
+                }
+            }
+        ),
+
         sendToCustomer: makeTool(
             'Send a polished WhatsApp message to a specific customer. Use whenever the operator instructs you to message someone ("send X to client", "tell Cəfərzadə that…", or quotes a customer message). The message you pass is what the customer literally receives — polish it on-brand and in the customer\'s own language. The customer must be someone we already have history with on this instance (anti-spam guard).',
             z.object({
@@ -1888,13 +1972,12 @@ export class AiService {
         }
     }
 
-    // Operator messaged the bot freely (no matching open ticket).
-    // The model is given a tool kit (sendToCustomer, listRecentCustomers,
-    // search/history/stats) so it can act on operator instructions
-    // ("send X to client Y", "what did Murad ask?", "how many leads
-    // tagged hot today") instead of merely chatting back. quotedBody
-    // is surfaced in the system prompt so when the operator quotes a
-    // ticket the model knows which customer it concerns.
+    // The operator chat is its own full conversation with the agent —
+    // the model has chat history with the operator, the list of open
+    // tickets, all the lookup tools, and answerTicket / sendToCustomer
+    // for outbound action. It decides itself whether an incoming
+    // operator message is an answer to a ticket, a question back, an
+    // analytics request, or a request to message a customer.
     static async replyToOperatorQuery(opts: {
         instanceId: string;
         operator: any;
@@ -1910,10 +1993,11 @@ export class AiService {
             where: { id: operator.agentId },
             include: { provider: true },
         });
-        if (!agent || !(agent as any).isActive) return;
+        if (!agent || !(agent as any).isActive) {
+            logger.warn(`[ai-operator] agent ${operator.agentId} is missing or inactive — operator ${operator.name} got no reply`);
+            return;
+        }
 
-        // Build operator-mode tools so the model can act (send to
-        // customers, look up history/stats) — not just chat.
         const opTools = buildOperatorAgentTools({
             agentId: agent.id,
             workspaceId: (agent as any).workspaceId || null,
@@ -1921,84 +2005,92 @@ export class AiService {
             operatorId: operator.id,
         });
 
-        // Who has this operator helped recently? The model should
-        // default to those customers when the operator says "tell them
-        // …" without naming anyone explicitly.
-        const recentTickets = await prisma.operatorRequest.findMany({
-            where: { operatorId: operator.id, status: { in: ['answered', 'open'] } },
-            orderBy: { sentAt: 'desc' },
-            take: 5,
-            select: { ticket: true, customerJid: true, customerName: true, customerPhone: true, status: true, question: true, sentAt: true },
+        // 1. Conversation history with THIS operator on this instance —
+        //    so the model has multi-turn context (operator might have
+        //    asked something earlier and the new message refers to it).
+        const opJid = `${operator.phone}@s.whatsapp.net`;
+        const opHistoryRows = await prisma.message.findMany({
+            where: { instanceId, remoteJid: opJid },
+            orderBy: { timestamp: 'desc' },
+            take: 20,
+            select: { isFromMe: true, content: true },
         });
-        const recentTicketsBlob = recentTickets.length === 0
-            ? 'No recent tickets handled by this operator.'
-            : recentTickets.map(r => {
-                const who = r.customerName || (r.customerPhone ? '+' + r.customerPhone : '?');
-                return `[REQ-${r.ticket}] ${r.status} · ${who} (${r.customerJid}) · "${r.question.slice(0, 80)}"`;
-            }).join('\n');
+        opHistoryRows.reverse();
+        // Drop the most recent inbound message because it's the same
+        // "question" we're about to feed in as the current turn.
+        const lastInboundIdx = (() => {
+            for (let i = opHistoryRows.length - 1; i >= 0; i--) {
+                if (!opHistoryRows[i].isFromMe) return i;
+            }
+            return -1;
+        })();
+        const historyMessages = opHistoryRows
+            .filter((_, i) => i !== lastInboundIdx)
+            .map(r => ({
+                role: (r.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
+                content: r.content || '',
+            }));
 
-        // Lightweight recent activity context — kept short to leave
-        // room for tool reasoning. Heavier lookups are tools the
-        // model can call when needed.
-        const recent = await prisma.agentActivityLog.findMany({
-            where: { agentId: agent.id, instanceId },
-            orderBy: { createdAt: 'desc' },
-            take: 8,
-            select: { contactPhone: true, contactName: true, userMessage: true, agentReply: true, createdAt: true },
+        // 2. Open tickets — exact same shape the answerTicket tool
+        //    accepts, so the model can see what's outstanding and
+        //    pick a ticket if the operator's reply answers one.
+        const openTickets = await prisma.operatorRequest.findMany({
+            where: { operatorId: operator.id, status: 'open' },
+            orderBy: { sentAt: 'desc' },
+            take: 15,
+            select: { ticket: true, customerJid: true, customerName: true, customerPhone: true, question: true, sentAt: true },
         });
-        const recentBlob = recent.length === 0
-            ? 'No recent customer activity logged.'
-            : recent.map(r => {
-                const who = r.contactName || (r.contactPhone ? '+' + r.contactPhone : '?');
-                const t = new Date(r.createdAt).toLocaleString();
-                return `[${t}] ${who}\nClient: ${(r.userMessage || '').slice(0, 120)}\nAgent: ${(r.agentReply || '').slice(0, 120)}`;
-            }).join('\n---\n');
+        const openTicketsBlob = openTickets.length === 0
+            ? '(No tickets currently waiting on this operator.)'
+            : openTickets.map(t => {
+                const who = t.customerName || (t.customerPhone ? '+' + t.customerPhone : '?');
+                return `• [REQ-${t.ticket}] ${who} (${t.customerJid}) asked: "${t.question.slice(0, 120)}"`;
+            }).join('\n');
 
         const opPrompt = (operator.systemPrompt || '').trim();
         const system =
-            `You are a back-office AI assistant for operator "${operator.name}". This is INTERNAL STAFF CHAT — the person messaging you is a teammate, NOT a customer.\n\n` +
-            `🛠 Tools you have:\n` +
-            `• sendToCustomer({customerJid, message}) — forward a polished message to a customer on operator's behalf.\n` +
-            `• listRecentCustomers({hoursBack?, limit?}) — see who messaged recently.\n` +
-            `• getCustomerHistory({customerJid, limit?}) — read a specific customer's last messages.\n` +
-            `• searchCustomers({query}) — find clients by name / phone / tag.\n` +
-            `• getCustomerStats({fromDate?}) — daily aggregate stats.\n` +
-            `• getCustomersByTag({tag}) — list clients with a tag.\n\n` +
-            `📋 Behaviour rules:\n` +
-            `1. If operator asks to message a customer ("send X to Y", "tell Cəfərzadə …", or just quotes a customer thread and says "reply X") — call sendToCustomer. Polish the message into the customer's language and on-brand tone. Then reply to operator with a short confirmation like "✅ Cəfərzadə Günelə yazdım: ‹text›".\n` +
-            `2. If operator's instruction is ambiguous about WHICH customer, look at the quoted message below first, then the recent tickets list, then call listRecentCustomers / searchCustomers to find them. Never guess silently — ask back if still unclear.\n` +
-            `3. Analytics questions ("how many leads today", "who is tagged X") — use the lookup tools, give a concise numeric answer.\n` +
-            `4. Always reply to the operator in their own language. Brief, professional, no customer-facing tone here.\n\n` +
-            (opPrompt ? `[Operator-specific instructions]\n${opPrompt}\n\n` : '') +
-            (quotedBody ? `[Operator quoted this earlier message]\n${quotedBody.slice(0, 1500)}\n\n` : '') +
-            `[Recent tickets this operator has handled]\n${recentTicketsBlob}\n\n` +
-            `[Recent customer activity, newest first]\n${recentBlob.slice(0, 4000)}`;
+            `You are the AI agent's back-office assistant talking with operator "${operator.name}" over WhatsApp. This is INTERNAL STAFF CHAT, NOT a customer conversation. You and the operator are teammates working together to serve customers.\n\n` +
+            `🎯 Your job in this chat:\n` +
+            `• When the operator answers a customer question — close the matching open ticket with answerTicket so the customer actually receives the answer. Don't just chat back; the customer is waiting.\n` +
+            `• When the operator asks YOU a question (clarification, looking up context, "what did X ask?", "how many tagged hot today?") — answer it concisely in chat, using the lookup tools when needed. The customer is NOT involved in this kind of turn.\n` +
+            `• When the operator instructs you to message a customer outside an open ticket ("tell Cəfərzadə X", "ping +994…") — use sendToCustomer.\n` +
+            `• When the operator's message is ambiguous (which customer? which ticket?) — ask them back, briefly. Never guess silently and never fabricate facts.\n\n` +
+            `🛠 Tools available to you:\n` +
+            `• listOpenTickets — current open tickets owned by this operator.\n` +
+            `• answerTicket({ticket, answerForCustomer}) — closes a ticket + sends a polished message to that customer in their language. Use ONLY when the operator has truly provided the information the customer was waiting for. Strip any greeting; the customer was already greeted earlier.\n` +
+            `• sendToCustomer({customerJid, message}) — proactive message to a customer outside the ticket flow.\n` +
+            `• listRecentCustomers / getCustomerHistory / searchCustomers / getCustomersByTag / getCustomerStats — read-only lookups.\n\n` +
+            `🛑 Anti-hallucination: never invent specs, prices, model names, video card or RAM details. If you don't have the info from the operator or the tools, do not make it up. Ask back or tell the operator you need clarification.\n\n` +
+            `🌐 Language: reply to the operator in the operator's language. When you call answerTicket / sendToCustomer, write the customer-facing message in the customer's language and tone.\n\n` +
+            (opPrompt ? `[Operator-specific instructions from settings]\n${opPrompt}\n\n` : '') +
+            (quotedBody ? `[The operator quoted this earlier message in their WhatsApp reply — use it to identify which ticket or customer they mean]\n${quotedBody.slice(0, 1500)}\n\n` : '') +
+            `[Open tickets this operator is currently responsible for]\n${openTicketsBlob}`;
 
         try {
             const aiModel = this.buildAiModel(agent);
             const result = await generateText({
                 model: aiModel,
                 system,
-                messages: [{ role: 'user', content: question }],
+                messages: [
+                    ...historyMessages,
+                    { role: 'user', content: question },
+                ],
                 tools: opTools,
-                stopWhen: stepCountIs(8),
+                stopWhen: stepCountIs(10),
             } as any);
             const text = (result.text || '').trim();
 
-            // Operator-mode tool dispatch fallback — if the model
-            // performed actions (sendToCustomer) but produced no text,
-            // still acknowledge so the operator's chat doesn't stay
-            // silent.
             const calls = (result.steps || []).flatMap((s: any) => (s.toolCalls || []).map((tc: any) => tc.toolName));
-            const ack = text || (calls.length > 0
-                ? `✅ Готово (${calls.join(', ')}).`
-                : '');
+            // If the model fired an action but skipped writing back to
+            // the operator, synthesise a minimal acknowledgement so
+            // the chat doesn't go silent on them.
+            const ack = text || (calls.length > 0 ? `✅ Готово (${calls.join(', ')}).` : '');
             if (!ack) return;
 
-            await sock.sendMessage(`${operator.phone}@s.whatsapp.net`, { text: ack });
+            await sock.sendMessage(opJid, { text: ack });
             logger.info(`[ai-operator] replied to operator ${operator.name} (${operator.phone}) tools=[${calls.join(',')}]`);
         } catch (err: any) {
-            logger.error({ err: err.message, operatorId: operator.id }, '[ai-operator] Q&A reply failed');
+            logger.error({ err: err.message, operatorId: operator.id }, '[ai-operator] reply failed');
         }
     }
 }

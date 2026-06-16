@@ -16,6 +16,7 @@ import { upsertCrmContact } from '../client/client.service';
 import { extractMessageContent } from './message-content';
 import { resolveJid } from './lid-resolver';
 import { findOperatorByPhone, handleOperatorMessage } from '../operator/operator.service';
+import { downloadAndSaveMedia } from './media-downloader';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -190,7 +191,10 @@ export class InstanceManager {
                         });
                         if (existing) continue;
 
-                        await prisma.message.create({
+                        // History sync media — download in the background
+                        // and patch the row when we have the URL. We don't
+                        // block the sync loop on each download.
+                        const created = await prisma.message.create({
                             data: {
                                 instanceId,
                                 remoteJid,
@@ -199,7 +203,17 @@ export class InstanceManager {
                                 content,
                                 timestamp: ts,
                             },
-                        }).catch(() => {});
+                        }).catch(() => null);
+                        if (created && ['image', 'video', 'audio', 'document', 'sticker'].includes(msgType)) {
+                            downloadAndSaveMedia(msg).then(saved => {
+                                if (saved) {
+                                    prisma.message.update({
+                                        where: { id: created.id },
+                                        data: { mediaUrl: saved.mediaUrl, mediaMime: saved.mediaMime, mediaName: saved.mediaName },
+                                    }).catch(() => {});
+                                }
+                            });
+                        }
 
                         // Add to CRM (workspace-scoped). Look up the instance
                         // once per chunk; cheap because Prisma caches.
@@ -263,6 +277,15 @@ export class InstanceManager {
                     // Outgoing messages — save and emit so the inbox shows
                     // them, but skip the AI / webhook / CRM machinery
                     // (those are for incoming only).
+                    // Pull media for image / video / audio / document /
+                    // sticker so the inbox can render the thumbnail or
+                    // play the clip. Awaited (small media is fast; large
+                    // media still finishes before we touch the DB so the
+                    // record has the URL immediately).
+                    const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
+                    const isMedia = mediaTypes.includes(msgType);
+                    const savedMedia = isMedia ? await downloadAndSaveMedia(msg) : null;
+
                     if (msg.key.fromMe) {
                         await prisma.message.create({
                             data: {
@@ -272,6 +295,7 @@ export class InstanceManager {
                                 messageType: msgType,
                                 content,
                                 timestamp: ts,
+                                ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                             },
                         }).catch(() => {});
                         io.emit(`message.new-${instanceId}`, {
@@ -281,6 +305,7 @@ export class InstanceManager {
                             remoteJid,
                             status: 'SENT',
                             timestamp: ts.toISOString(),
+                            ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                         });
                         continue;
                     }
@@ -304,6 +329,7 @@ export class InstanceManager {
                             messageType: msgType,
                             content,
                             timestamp: ts,
+                            ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                         },
                     });
 
@@ -339,6 +365,7 @@ export class InstanceManager {
                         remoteJid,
                         status: 'DELIVERED',
                         timestamp: ts.toISOString(),
+                        ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                     });
 
                     prisma.campaignRecipient.updateMany({

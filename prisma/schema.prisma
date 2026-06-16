@@ -239,6 +239,13 @@ model Message {
   messageType String // text, image, video, document, etc
   content     String? @db.Text
 
+  // Media attachment, downloaded from WhatsApp into the local uploads
+  // directory. mediaUrl is the path served by /api/uploads/files/...
+  // (no auth; filenames are random hex). Empty for plain text messages.
+  mediaUrl  String?
+  mediaMime String?
+  mediaName String?
+
   status String @default("SENT") // PENDING, SENT, DELIVERED, READ
 
   timestamp DateTime

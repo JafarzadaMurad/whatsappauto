@@ -354,6 +354,13 @@ export class InboxController {
                     completionTokens: 0,
                     totalTokens: 0,
                     toolCalls: [],
+                    // Surface media so the chat UI can render thumbnails /
+                    // play voice notes instead of just showing the
+                    // "🖼️ Photo" placeholder label.
+                    messageType: r.messageType,
+                    mediaUrl: r.mediaUrl,
+                    mediaMime: r.mediaMime,
+                    mediaName: r.mediaName,
                 }));
 
             const cleanedLogs = logs.map(l => ({

@@ -78,6 +78,12 @@ type Message = {
     provider?: string;
     promptTokens?: number;
     completionTokens?: number;
+    // WhatsApp media surfaced by the backend after it pulls the blob
+    // from the CDN. Empty for plain text turns / AI logs.
+    messageType?: string;
+    mediaUrl?: string | null;
+    mediaMime?: string | null;
+    mediaName?: string | null;
 };
 
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram';
@@ -490,26 +496,100 @@ function MessageList({ messages }: { messages: Message[] }) {
 
 function MessageBubble({ msg }: { msg: Message }) {
     const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // If we have a downloaded media URL, render it inline. The text
+    // content (when present) is used as the caption beneath the
+    // attachment. Without media we fall back to the existing
+    // text-only bubble.
+    const renderMedia = (caption?: string) => {
+        if (!msg.mediaUrl) return null;
+        const mime = (msg.mediaMime || '').toLowerCase();
+        const kind = msg.messageType || (
+            mime.startsWith('image/')   ? 'image' :
+            mime.startsWith('video/')   ? 'video' :
+            mime.startsWith('audio/')   ? 'audio' :
+                                          'document'
+        );
+
+        if (kind === 'image' || kind === 'sticker') {
+            return (
+                <a href={msg.mediaUrl} target="_blank" rel="noreferrer" className="block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={msg.mediaUrl} alt={msg.mediaName || ''}
+                        className="rounded-xl max-h-[300px] w-auto object-contain bg-black/20" />
+                </a>
+            );
+        }
+        if (kind === 'video') {
+            return (
+                <video controls src={msg.mediaUrl}
+                    className="rounded-xl max-h-[300px] w-auto bg-black/20">
+                    Your browser does not support the video tag.
+                </video>
+            );
+        }
+        if (kind === 'audio') {
+            return (
+                <audio controls src={msg.mediaUrl} className="w-full min-w-[220px]">
+                    Your browser does not support audio.
+                </audio>
+            );
+        }
+        // document / fallback — show name + size + open link
+        return (
+            <a href={msg.mediaUrl} target="_blank" rel="noreferrer"
+                className="flex items-center gap-2 bg-secondary/40 border border-border rounded-xl px-3 py-2 hover:bg-secondary/70 transition-colors">
+                <div className="w-8 h-8 rounded-md bg-primary/15 text-primary flex items-center justify-center text-xs font-bold">
+                    {(msg.mediaName || 'FILE').split('.').pop()?.slice(0, 4).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                    <div className="text-xs font-medium truncate">{msg.mediaName || 'Document'}</div>
+                    <div className="text-[10px] text-muted-foreground">{mime || 'file'}</div>
+                </div>
+            </a>
+        );
+    };
+
+    const incomingText = msg.userMessage;
+    const outgoingText = msg.agentReply;
+    const hasMedia = !!msg.mediaUrl;
+
     return (
         <div className="space-y-1.5">
-            {msg.userMessage && (
+            {(incomingText || (hasMedia && !msg.userMessage && !msg.agentReply)) && incomingText !== undefined && incomingText !== '' && (
                 <div className="flex justify-start">
                     <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
-                        <div className="whitespace-pre-wrap break-words">{msg.userMessage}</div>
+                        {hasMedia && !outgoingText && (
+                            <div className="mb-1">{renderMedia()}</div>
+                        )}
+                        <div className="whitespace-pre-wrap break-words">{incomingText}</div>
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5">{time}</div>
                     </div>
                 </div>
             )}
-            {msg.agentReply && (
+            {outgoingText && (
                 <div className="flex justify-end">
                     <div className="bg-primary/15 border border-primary/20 rounded-2xl rounded-br-md px-3.5 py-2 max-w-[85%] sm:max-w-[70%] text-sm">
-                        <div className="whitespace-pre-wrap break-words">{msg.agentReply}</div>
+                        {hasMedia && (
+                            <div className="mb-1">{renderMedia()}</div>
+                        )}
+                        <div className="whitespace-pre-wrap break-words">{outgoingText}</div>
                         <div className="text-[10px] text-muted-foreground/70 mt-0.5 text-right flex items-center justify-end gap-1">
                             {msg.provider === 'MANUAL' || msg.provider === 'PHONE' ? null :
                                 msg.provider && <span className="opacity-70">AI</span>}
                             {time}
                             <CheckCheck className="w-3 h-3 opacity-60" />
                         </div>
+                    </div>
+                </div>
+            )}
+            {/* Media-only inbound (no caption / placeholder text): render
+                a bare bubble so voice notes / silent photos still show up. */}
+            {hasMedia && !incomingText && !outgoingText && (
+                <div className="flex justify-start">
+                    <div className="bg-secondary/50 rounded-2xl rounded-bl-md px-2 py-2 max-w-[85%] sm:max-w-[70%]">
+                        {renderMedia()}
+                        <div className="text-[10px] text-muted-foreground/70 mt-1">{time}</div>
                     </div>
                 </div>
             )}

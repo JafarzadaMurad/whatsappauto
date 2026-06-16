@@ -249,6 +249,245 @@ function buildCrmTools(workspaceId: string, userId: string) {
 // pause check in handleIncomingMessage already honours this flag,
 // so paused contacts stop receiving auto-replies until the
 // operator unpauses them from the inbox UI.
+// ─── Operator-side tools (operator ↔ agent chat) ─────────────────
+// These are NOT exposed during a normal customer conversation. They
+// are only built and handed to the model inside replyToOperatorQuery,
+// where the human on the other end is a teammate, not a buyer. The
+// model uses them to forward replies to customers, look up history,
+// or answer aggregate questions ("how many leads today?", "list
+// people tagged X").
+function buildOperatorAgentTools(opts: {
+    agentId: string;
+    workspaceId: string | null;
+    instanceId: string;
+    operatorId: string;
+}) {
+    const { agentId, workspaceId, instanceId } = opts;
+
+    return {
+        sendToCustomer: makeTool(
+            'Send a polished WhatsApp message to a specific customer. Use whenever the operator instructs you to message someone ("send X to client", "tell Cəfərzadə that…", or quotes a customer message). The message you pass is what the customer literally receives — polish it on-brand and in the customer\'s own language. The customer must be someone we already have history with on this instance (anti-spam guard).',
+            z.object({
+                customerJid: z.string().describe('Customer WhatsApp JID, e.g. "994555348024@s.whatsapp.net". Look it up via listRecentCustomers / searchCustomers if you don\'t have it.'),
+                message: z.string().describe('The polished, customer-facing text in the customer\'s language.'),
+            }),
+            async ({ customerJid, message }) => {
+                const known = await prisma.message.findFirst({
+                    where: { instanceId, remoteJid: customerJid },
+                    select: { id: true },
+                });
+                if (!known) {
+                    return { success: false, error: 'No prior conversation with this JID on this instance — refusing to message a stranger.' };
+                }
+                try {
+                    const { sessions } = await import('../whatsapp/instance.manager');
+                    const { io } = await import('../../server');
+                    const sock = sessions.get(instanceId);
+                    if (!sock) return { success: false, error: 'Instance not connected' };
+
+                    await sock.sendMessage(customerJid, { text: message });
+                    const saved = await prisma.message.create({
+                        data: {
+                            instanceId, remoteJid: customerJid,
+                            isFromMe: true, messageType: 'text',
+                            content: message, timestamp: new Date(),
+                        },
+                    });
+                    // Mirror into the agent's conversation memory so the
+                    // next customer turn knows what the bot already said.
+                    await prisma.aiConversationLog.create({
+                        data: {
+                            agentId, instanceId, remoteJid: customerJid,
+                            userMessage: '', agentReply: message,
+                            promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                            provider: 'OPERATOR', model: 'manual',
+                            toolCalls: [],
+                        },
+                    }).catch(() => {});
+                    io.emit(`message.new-${instanceId}`, {
+                        id: saved.id, isFromMe: true, content: message,
+                        remoteJid: customerJid, status: 'DELIVERED',
+                        timestamp: new Date().toISOString(),
+                    });
+                    return { success: true, sentTo: customerJid, length: message.length };
+                } catch (e: any) {
+                    return { success: false, error: e.message };
+                }
+            }
+        ),
+
+        listRecentCustomers: makeTool(
+            'List customers who exchanged messages with this instance recently. Returns name, phone, last activity timestamp, last message preview and total messages in the window.',
+            z.object({
+                hoursBack: z.number().optional().describe('How many hours back to look. Default 24.'),
+                limit: z.number().optional().describe('Max entries. Default 25, hard cap 100.'),
+            }),
+            async ({ hoursBack, limit }) => {
+                const hours = Math.max(1, Math.min(720, hoursBack ?? 24));
+                const max = Math.max(1, Math.min(100, limit ?? 25));
+                const since = new Date(Date.now() - hours * 3600 * 1000);
+                const rows = await prisma.message.findMany({
+                    where: { instanceId, timestamp: { gte: since } },
+                    orderBy: { timestamp: 'desc' },
+                    select: { remoteJid: true, timestamp: true, content: true, isFromMe: true },
+                    take: 1000,
+                });
+                const byJid = new Map<string, { lastTs: Date; lastContent: string; count: number; lastFromMe: boolean; }>();
+                for (const r of rows) {
+                    const cur = byJid.get(r.remoteJid);
+                    if (!cur) {
+                        byJid.set(r.remoteJid, { lastTs: r.timestamp, lastContent: r.content || '', count: 1, lastFromMe: r.isFromMe });
+                    } else {
+                        cur.count++;
+                    }
+                }
+                const jids = Array.from(byJid.keys()).slice(0, max);
+                const contacts = jids.length
+                    ? await prisma.contact.findMany({
+                        where: { instanceId, remoteJid: { in: jids } },
+                        select: { remoteJid: true, name: true, pushName: true },
+                    })
+                    : [];
+                const nameByJid = new Map<string, string>();
+                for (const c of contacts) nameByJid.set(c.remoteJid, c.name || c.pushName || '');
+                return {
+                    customers: jids.map(jid => {
+                        const s = byJid.get(jid)!;
+                        return {
+                            customerJid: jid,
+                            phone: jid.replace('@s.whatsapp.net', '').replace('@lid', ''),
+                            name: nameByJid.get(jid) || null,
+                            lastActivity: s.lastTs,
+                            lastMessage: s.lastContent.slice(0, 120),
+                            lastFromMe: s.lastFromMe,
+                            messages: s.count,
+                        };
+                    }),
+                };
+            }
+        ),
+
+        getCustomerHistory: makeTool(
+            'Read the last N messages of the conversation with a specific customer. Useful when the operator asks "what did X say earlier".',
+            z.object({
+                customerJid: z.string(),
+                limit: z.number().optional().describe('Default 20, hard cap 100.'),
+            }),
+            async ({ customerJid, limit }) => {
+                const max = Math.max(1, Math.min(100, limit ?? 20));
+                const rows = await prisma.message.findMany({
+                    where: { instanceId, remoteJid: customerJid },
+                    orderBy: { timestamp: 'desc' },
+                    take: max,
+                    select: { isFromMe: true, content: true, timestamp: true },
+                });
+                rows.reverse();
+                return {
+                    customerJid,
+                    messages: rows.map(r => ({
+                        from: r.isFromMe ? 'agent' : 'customer',
+                        text: r.content,
+                        at: r.timestamp,
+                    })),
+                };
+            }
+        ),
+
+        searchCustomers: makeTool(
+            'Find clients across the workspace by name fragment, phone digits or exact tag. Returns up to 30 matches.',
+            z.object({
+                query: z.string().describe('Name fragment, phone digits, or a tag name.'),
+            }),
+            async ({ query }) => {
+                if (!workspaceId) return { clients: [] };
+                const q = query.trim();
+                const digits = q.replace(/[^0-9]/g, '');
+                const clients = await prisma.client.findMany({
+                    where: {
+                        workspaceId,
+                        OR: [
+                            { name: { contains: q, mode: 'insensitive' } },
+                            ...(digits ? [{ phone: { contains: digits } }] : []),
+                            { tags: { has: q } },
+                        ],
+                    },
+                    select: { id: true, name: true, phone: true, tags: true, status: true, summary: true, isAnonymous: true, updatedAt: true },
+                    take: 30,
+                    orderBy: { updatedAt: 'desc' },
+                });
+                return {
+                    clients: clients.map(c => ({
+                        ...c,
+                        customerJid: c.isAnonymous ? `${c.phone}@lid` : `${c.phone}@s.whatsapp.net`,
+                    })),
+                };
+            }
+        ),
+
+        getCustomerStats: makeTool(
+            'Aggregate stats for the current instance + workspace: unique customers that messaged in the window, inbound vs outbound counts, clients by status, clients by tag.',
+            z.object({
+                fromDate: z.string().optional().describe('ISO date like "2026-06-16". Defaults to start of today (UTC).'),
+            }),
+            async ({ fromDate }) => {
+                const since = fromDate ? new Date(fromDate) : new Date(new Date().toISOString().slice(0, 10));
+                const grouped = await prisma.message.groupBy({
+                    by: ['remoteJid'],
+                    where: { instanceId, timestamp: { gte: since }, isFromMe: false },
+                });
+                const msgCounts = await prisma.message.groupBy({
+                    by: ['isFromMe'],
+                    where: { instanceId, timestamp: { gte: since } },
+                    _count: { _all: true },
+                });
+                const inCount = msgCounts.find(m => !m.isFromMe)?._count._all || 0;
+                const outCount = msgCounts.find(m => m.isFromMe)?._count._all || 0;
+                let byStatus: Record<string, number> = {};
+                let byTag: Record<string, number> = {};
+                if (workspaceId) {
+                    const clients = await prisma.client.findMany({
+                        where: { workspaceId, updatedAt: { gte: since } },
+                        select: { status: true, tags: true },
+                    });
+                    for (const c of clients) {
+                        byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+                        for (const t of c.tags) byTag[t] = (byTag[t] || 0) + 1;
+                    }
+                }
+                return {
+                    since,
+                    uniqueCustomersInWindow: grouped.length,
+                    messagesIn: inCount,
+                    messagesOut: outCount,
+                    clientsTouchedInWindow: Object.values(byStatus).reduce((a, b) => a + b, 0),
+                    byStatus, byTag,
+                };
+            }
+        ),
+
+        getCustomersByTag: makeTool(
+            'List clients carrying a specific tag (up to 50, newest first).',
+            z.object({ tag: z.string() }),
+            async ({ tag }) => {
+                if (!workspaceId) return { tag, count: 0, clients: [] };
+                const clients = await prisma.client.findMany({
+                    where: { workspaceId, tags: { has: tag } },
+                    select: { id: true, name: true, phone: true, status: true, tags: true, summary: true, isAnonymous: true, updatedAt: true },
+                    orderBy: { updatedAt: 'desc' },
+                    take: 50,
+                });
+                return {
+                    tag, count: clients.length,
+                    clients: clients.map(c => ({
+                        ...c,
+                        customerJid: c.isAnonymous ? `${c.phone}@lid` : `${c.phone}@s.whatsapp.net`,
+                    })),
+                };
+            }
+        ),
+    };
+}
+
 function buildSelfPauseTool(workspaceId: string, userId: string, contactPhone: string) {
     return {
         pauseAgent: makeTool(
@@ -1621,15 +1860,19 @@ export class AiService {
     }
 
     // Operator messaged the bot freely (no matching open ticket).
-    // They might be asking about a specific customer the agent has
-    // recently chatted with, or for status of an open ticket. Reply
-    // in the operator's chat with a concise, business-tone answer.
+    // The model is given a tool kit (sendToCustomer, listRecentCustomers,
+    // search/history/stats) so it can act on operator instructions
+    // ("send X to client Y", "what did Murad ask?", "how many leads
+    // tagged hot today") instead of merely chatting back. quotedBody
+    // is surfaced in the system prompt so when the operator quotes a
+    // ticket the model knows which customer it concerns.
     static async replyToOperatorQuery(opts: {
         instanceId: string;
         operator: any;
         question: string;
+        quotedBody?: string | null;
     }) {
-        const { instanceId, operator, question } = opts;
+        const { instanceId, operator, question, quotedBody } = opts;
         const { sessions } = await import('../whatsapp/instance.manager');
         const sock = sessions.get(instanceId);
         if (!sock) return;
@@ -1640,11 +1883,38 @@ export class AiService {
         });
         if (!agent || !(agent as any).isActive) return;
 
-        // Last 20 customer interactions on this instance for context.
+        // Build operator-mode tools so the model can act (send to
+        // customers, look up history/stats) — not just chat.
+        const opTools = buildOperatorAgentTools({
+            agentId: agent.id,
+            workspaceId: (agent as any).workspaceId || null,
+            instanceId,
+            operatorId: operator.id,
+        });
+
+        // Who has this operator helped recently? The model should
+        // default to those customers when the operator says "tell them
+        // …" without naming anyone explicitly.
+        const recentTickets = await prisma.operatorRequest.findMany({
+            where: { operatorId: operator.id, status: { in: ['answered', 'open'] } },
+            orderBy: { sentAt: 'desc' },
+            take: 5,
+            select: { ticket: true, customerJid: true, customerName: true, customerPhone: true, status: true, question: true, sentAt: true },
+        });
+        const recentTicketsBlob = recentTickets.length === 0
+            ? 'No recent tickets handled by this operator.'
+            : recentTickets.map(r => {
+                const who = r.customerName || (r.customerPhone ? '+' + r.customerPhone : '?');
+                return `[REQ-${r.ticket}] ${r.status} · ${who} (${r.customerJid}) · "${r.question.slice(0, 80)}"`;
+            }).join('\n');
+
+        // Lightweight recent activity context — kept short to leave
+        // room for tool reasoning. Heavier lookups are tools the
+        // model can call when needed.
         const recent = await prisma.agentActivityLog.findMany({
             where: { agentId: agent.id, instanceId },
             orderBy: { createdAt: 'desc' },
-            take: 20,
+            take: 8,
             select: { contactPhone: true, contactName: true, userMessage: true, agentReply: true, createdAt: true },
         });
         const recentBlob = recent.length === 0
@@ -1652,16 +1922,28 @@ export class AiService {
             : recent.map(r => {
                 const who = r.contactName || (r.contactPhone ? '+' + r.contactPhone : '?');
                 const t = new Date(r.createdAt).toLocaleString();
-                return `[${t}] ${who}\nClient: ${r.userMessage}\nAgent: ${r.agentReply}`;
+                return `[${t}] ${who}\nClient: ${(r.userMessage || '').slice(0, 120)}\nAgent: ${(r.agentReply || '').slice(0, 120)}`;
             }).join('\n---\n');
 
         const opPrompt = (operator.systemPrompt || '').trim();
         const system =
-            `You are a back-office AI assistant for the operator "${operator.name}". ` +
-            `You are NOT chatting with a customer here — this is internal staff chat. ` +
-            `Answer the operator's question briefly and accurately based on recent customer activity below.\n\n` +
+            `You are a back-office AI assistant for operator "${operator.name}". This is INTERNAL STAFF CHAT — the person messaging you is a teammate, NOT a customer.\n\n` +
+            `🛠 Tools you have:\n` +
+            `• sendToCustomer({customerJid, message}) — forward a polished message to a customer on operator's behalf.\n` +
+            `• listRecentCustomers({hoursBack?, limit?}) — see who messaged recently.\n` +
+            `• getCustomerHistory({customerJid, limit?}) — read a specific customer's last messages.\n` +
+            `• searchCustomers({query}) — find clients by name / phone / tag.\n` +
+            `• getCustomerStats({fromDate?}) — daily aggregate stats.\n` +
+            `• getCustomersByTag({tag}) — list clients with a tag.\n\n` +
+            `📋 Behaviour rules:\n` +
+            `1. If operator asks to message a customer ("send X to Y", "tell Cəfərzadə …", or just quotes a customer thread and says "reply X") — call sendToCustomer. Polish the message into the customer's language and on-brand tone. Then reply to operator with a short confirmation like "✅ Cəfərzadə Günelə yazdım: ‹text›".\n` +
+            `2. If operator's instruction is ambiguous about WHICH customer, look at the quoted message below first, then the recent tickets list, then call listRecentCustomers / searchCustomers to find them. Never guess silently — ask back if still unclear.\n` +
+            `3. Analytics questions ("how many leads today", "who is tagged X") — use the lookup tools, give a concise numeric answer.\n` +
+            `4. Always reply to the operator in their own language. Brief, professional, no customer-facing tone here.\n\n` +
             (opPrompt ? `[Operator-specific instructions]\n${opPrompt}\n\n` : '') +
-            `[Recent customer activity, newest first]\n${recentBlob.slice(0, 6000)}`;
+            (quotedBody ? `[Operator quoted this earlier message]\n${quotedBody.slice(0, 1500)}\n\n` : '') +
+            `[Recent tickets this operator has handled]\n${recentTicketsBlob}\n\n` +
+            `[Recent customer activity, newest first]\n${recentBlob.slice(0, 4000)}`;
 
         try {
             const aiModel = this.buildAiModel(agent);
@@ -1669,12 +1951,23 @@ export class AiService {
                 model: aiModel,
                 system,
                 messages: [{ role: 'user', content: question }],
+                tools: opTools,
+                stopWhen: stepCountIs(8),
             } as any);
             const text = (result.text || '').trim();
-            if (!text) return;
 
-            await sock.sendMessage(`${operator.phone}@s.whatsapp.net`, { text });
-            logger.info(`[ai-operator] replied to operator ${operator.name} (${operator.phone})`);
+            // Operator-mode tool dispatch fallback — if the model
+            // performed actions (sendToCustomer) but produced no text,
+            // still acknowledge so the operator's chat doesn't stay
+            // silent.
+            const calls = (result.steps || []).flatMap((s: any) => (s.toolCalls || []).map((tc: any) => tc.toolName));
+            const ack = text || (calls.length > 0
+                ? `✅ Готово (${calls.join(', ')}).`
+                : '');
+            if (!ack) return;
+
+            await sock.sendMessage(`${operator.phone}@s.whatsapp.net`, { text: ack });
+            logger.info(`[ai-operator] replied to operator ${operator.name} (${operator.phone}) tools=[${calls.join(',')}]`);
         } catch (err: any) {
             logger.error({ err: err.message, operatorId: operator.id }, '[ai-operator] Q&A reply failed');
         }

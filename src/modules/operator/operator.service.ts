@@ -314,12 +314,15 @@ export async function handleOperatorMessage(opts: {
     }
 
     // no-open → operator is chatting with the agent freely (asking
-    // about a customer, etc). Pass to AiService in operator-query mode.
+    // about a customer, requesting a forward, asking for stats). Pass
+    // the quoted message through so the AI can derive context when
+    // the operator quotes a customer thread.
     const { AiService } = await import('../agent/ai.service');
     AiService.replyToOperatorQuery({
         instanceId,
         operator,
         question: body,
+        quotedBody: quotedBody || null,
     }).catch(err => logger.error({ err: err.message }, '[operator] Q&A reply failed'));
 }
 

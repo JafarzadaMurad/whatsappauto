@@ -51,6 +51,13 @@ export class InstanceManager {
                 // the phone on the initial sync. Otherwise Baileys defaults
                 // to a small recent window.
                 syncFullHistory: !!instanceDb.syncHistory,
+                // Stay invisible to WhatsApp so the user's phone keeps
+                // showing push notifications normally. Without this,
+                // Baileys announces presence as "online" on connect and
+                // WhatsApp routes notifications to the Web/MD client
+                // instead of the phone — the most common "my phone went
+                // silent after I connected" complaint.
+                markOnlineOnConnect: false,
             });
 
             sessions.set(instanceId, sock);

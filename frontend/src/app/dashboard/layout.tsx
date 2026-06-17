@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import VerifyEmailBanner from "@/components/VerifyEmailBanner";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import api from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -19,6 +20,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
         Networks: true, 'AI Workspace': true, CRM: true
     });
+    const [oversightUnread, setOversightUnread] = useState(0);
+
+    // Lightweight poll for the oversight unread badge — every 60s while
+    // the dashboard is mounted. Backend computes the count from
+    // suggestions with readAt = null on rows the operator hasn't seen.
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const r = await api.get('/oversight/suggestions/unread');
+                if (!cancelled && r.data?.success) setOversightUnread(r.data.count || 0);
+            } catch { /* not critical */ }
+        };
+        tick();
+        const id = setInterval(tick, 60_000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, [isAuthenticated, pathname]);
 
     useEffect(() => {
         if (hasHydrated && !isAuthenticated) {
@@ -59,6 +78,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'AI Agents', href: '/dashboard/ai/agents', icon: Bot },
+                { name: 'Oversight', href: '/dashboard/oversight', icon: Brain, badge: oversightUnread },
                 { name: 'Data Tables', href: '/dashboard/ai/tables', icon: Database },
                 { name: 'AI Providers', href: '/dashboard/ai/providers', icon: Server }
             ]
@@ -149,11 +169,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                             </div>
                                             {item.children?.map(child => {
                                                 const isChildActive = pathname.startsWith(child.href);
+                                                const badge = (child as any).badge as number | undefined;
                                                 return (
                                                     <Link key={child.name} href={child.href} title={child.name}
                                                         onClick={() => setSidebarOpen(false)}
-                                                        className={`flex justify-center p-2.5 rounded-xl transition-colors ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
+                                                        className={`relative flex justify-center p-2.5 rounded-xl transition-colors ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
                                                         <child.icon className="w-4 h-4" />
+                                                        {badge && badge > 0 ? (
+                                                            <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-card" />
+                                                        ) : null}
                                                     </Link>
                                                 );
                                             })}
@@ -183,6 +207,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                 >
                                                     {item.children?.map(child => {
                                                         const isChildActive = pathname.startsWith(child.href);
+                                                        const badge = (child as any).badge as number | undefined;
                                                         return (
                                                             <Link
                                                                 key={child.name}
@@ -191,7 +216,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium text-sm ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
                                                             >
                                                                 <child.icon className="w-4 h-4 flex-shrink-0" />
-                                                                <span className="truncate">{child.name}</span>
+                                                                <span className="truncate flex-1">{child.name}</span>
+                                                                {badge && badge > 0 ? (
+                                                                    <span className="ml-auto flex-shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                                                                        {badge > 99 ? '99+' : badge}
+                                                                    </span>
+                                                                ) : null}
                                                             </Link>
                                                         )
                                                     })}

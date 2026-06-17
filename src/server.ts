@@ -10,6 +10,7 @@ import { InstanceManager } from './modules/whatsapp/instance.manager';
 import { ensureWorkspacesForAllUsers } from './lib/workspace-migration';
 import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
+import { startOversightScheduler } from './modules/oversight/oversight.service';
 
 const server = http.createServer(app);
 
@@ -55,6 +56,11 @@ server.listen(PORT, async () => {
     // operator when the assigned one doesn't respond within the
     // per-operator timeoutMin window.
     startOperatorTimeoutSweeper();
+
+    // Oversight scheduler: every 5 minutes, scan for due oversight
+    // agents and run them. Each run reviews its watched agents'
+    // recent activity and persists suggestions for the UI.
+    startOversightScheduler();
 });
 
 // Handle unhandled Promise rejections

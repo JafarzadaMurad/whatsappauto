@@ -22,6 +22,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     });
     const [oversightUnread, setOversightUnread] = useState(0);
 
+    // Restore the user's preferred sidebar width on mount, then keep
+    // localStorage in sync. Without this every reload reset collapsed to
+    // false, so two people on the same account could see different widths
+    // depending on whether they had clicked the chevron in this session.
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('sidebar:collapsed');
+            if (saved === '1') setCollapsed(true);
+            else if (saved === '0') setCollapsed(false);
+        } catch { /* localStorage may be unavailable */ }
+    }, []);
+    useEffect(() => {
+        try { localStorage.setItem('sidebar:collapsed', collapsed ? '1' : '0'); } catch {}
+    }, [collapsed]);
+
     // Lightweight poll for the oversight unread badge — every 60s while
     // the dashboard is mounted. Backend computes the count from
     // suggestions with readAt = null on rows the operator hasn't seen.
@@ -123,7 +138,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <motion.aside
                 animate={{ width: collapsed ? 72 : 256 }}
                 transition={{ duration: 0.2, ease: 'easeInOut' }}
-                className={`fixed inset-y-0 left-0 z-50 bg-card border-r border-border transform transition-transform duration-300 ease-in-out md:translate-x-0 md:static flex flex-col overflow-hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+                className={`fixed inset-y-0 left-0 z-50 bg-card border-r border-border transform transition-transform duration-300 ease-in-out sm:translate-x-0 sm:static flex flex-col flex-shrink-0 overflow-hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'}`}
             >
                 <div className="h-16 flex items-center justify-between px-4 border-b border-border min-w-0">
                     {!collapsed ? (
@@ -133,10 +148,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 alChatBot
                             </div>
                             <div className="flex items-center gap-1">
-                                <button className="hidden md:block p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(true)}>
+                                <button className="hidden sm:block p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(true)}>
                                     <PanelLeftClose className="w-4 h-4" />
                                 </button>
-                                <button className="md:hidden text-muted-foreground" onClick={() => setSidebarOpen(false)}>
+                                <button className="sm:hidden text-muted-foreground" onClick={() => setSidebarOpen(false)}>
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
@@ -293,7 +308,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                <header className="h-16 border-b border-border bg-card/50 backdrop-blur flex items-center px-4 md:hidden sticky top-0 z-30">
+                <header className="h-16 border-b border-border bg-card/50 backdrop-blur flex items-center px-4 sm:hidden sticky top-0 z-30">
                     <button onClick={() => setSidebarOpen(true)} className="p-2 text-foreground">
                         <Menu className="w-6 h-6" />
                     </button>

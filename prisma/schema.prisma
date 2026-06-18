@@ -39,6 +39,7 @@ model Workspace {
 
   members     WorkspaceMember[]
   invitations WorkspaceInvitation[]
+  roles       WorkspaceRole[]
 
   instances         Instance[]
   webhooks          WebhookConfig[]
@@ -68,11 +69,16 @@ model WorkspaceMember {
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  role        String   @default("MEMBER") // OWNER | ADMIN | MEMBER | VIEWER
+  // Legacy role string — kept for the OWNER marker and as a fallback during
+  // migration. New code reads `roleId` and resolves WorkspaceRole.permissions.
+  role        String   @default("MEMBER") // OWNER | <custom role name>
+  roleId      String?
+  customRole  WorkspaceRole? @relation(fields: [roleId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
 
   @@unique([workspaceId, userId])
   @@index([userId])
+  @@index([roleId])
 }
 
 model WorkspaceInvitation {
@@ -81,6 +87,8 @@ model WorkspaceInvitation {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   email       String
   role        String   @default("MEMBER")
+  roleId      String?
+  customRole  WorkspaceRole? @relation(fields: [roleId], references: [id], onDelete: SetNull)
   token       String   @unique
   expiresAt   DateTime
   acceptedAt  DateTime?
@@ -89,6 +97,39 @@ model WorkspaceInvitation {
 
   @@index([workspaceId])
   @@index([email])
+  @@index([roleId])
+}
+
+// Owner-defined roles for a workspace. Each row carries a JSON permission
+// matrix consumed by the auth middleware to gate every controller. The
+// workspace creator is always implicit "Owner" via Workspace.ownerId and
+// bypasses these checks; everyone else's access is the union of their
+// role's flags.
+model WorkspaceRole {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?  @db.Text
+  // Shape:
+  // {
+  //   sections: { inbox:{view,create,update,delete}, ... },
+  //   chat:     { view, write },
+  //   meta:     { manageRoles, inviteMembers, manageWorkspace }
+  // }
+  permissions Json     @default("{}")
+  // System roles are seeded automatically (Admin / Member / Viewer) and
+  // cannot be renamed or deleted, but their permissions may be edited.
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     WorkspaceMember[]
+  invitations WorkspaceInvitation[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
 }
 
 // Subscription plans (managed by admins)

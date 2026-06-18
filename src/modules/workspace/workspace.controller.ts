@@ -2,14 +2,28 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { isOwner, canMeta } from '../../lib/workspace-context';
+import { seedRolesForWorkspace } from '../../lib/role-migration';
 
 const createSchema = z.object({ name: z.string().min(1).max(60) });
 const updateSchema = z.object({ name: z.string().min(1).max(60) });
 const inviteSchema = z.object({
     email: z.string().email(),
-    role: z.enum(['ADMIN', 'MEMBER', 'VIEWER']).default('MEMBER'),
+    roleId: z.string().uuid(),
 });
-const updateMemberSchema = z.object({ role: z.enum(['ADMIN', 'MEMBER', 'VIEWER']) });
+const updateMemberSchema = z.object({ roleId: z.string().uuid() });
+
+// Helper: resolve a workspace's default role row id (used as a fallback
+// for legacy clients that still send role strings).
+async function defaultRoleId(workspaceId: string): Promise<string> {
+    const r = await prisma.workspaceRole.findFirst({
+        where: { workspaceId, name: 'Member' },
+        select: { id: true },
+    });
+    if (r) return r.id;
+    // Last-resort: seed and re-query.
+    return seedRolesForWorkspace(workspaceId);
+}
 
 export class WorkspaceController {
     // List every workspace the current user is a member of (own + others' they joined).
@@ -22,12 +36,16 @@ export class WorkspaceController {
                     workspace: {
                         select: { id: true, name: true, ownerId: true, planId: true, subscriptionStatus: true, createdAt: true },
                     },
+                    customRole: { select: { id: true, name: true, permissions: true } },
                 },
                 orderBy: { createdAt: 'asc' },
             });
             const workspaces = memberships.map(m => ({
                 ...m.workspace,
                 role: m.role,
+                roleId: m.roleId,
+                roleName: m.customRole?.name || m.role,
+                permissions: m.customRole?.permissions || null,
                 isOwner: m.workspace.ownerId === userId,
             }));
             return res.json({ success: true, workspaces });
@@ -48,6 +66,7 @@ export class WorkspaceController {
                     members: { create: { userId, role: 'OWNER' } },
                 },
             });
+            await seedRolesForWorkspace(ws.id).catch(() => {});
             return res.status(201).json({ success: true, workspace: ws });
         } catch (e: any) {
             if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
@@ -55,29 +74,43 @@ export class WorkspaceController {
         }
     }
 
-    // Workspace details + members. The caller must be a member.
+    // Workspace details + members + invitations + roles. Caller must be a member.
     async get(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
             const id = req.params.id as string;
             const membership = await prisma.workspaceMember.findUnique({
                 where: { workspaceId_userId: { workspaceId: id, userId } },
+                include: { customRole: true },
             });
             if (!membership) return res.status(404).json({ success: false, message: 'Workspace not found' });
+            await seedRolesForWorkspace(id).catch(() => {});
             const ws = await prisma.workspace.findUnique({
                 where: { id },
                 include: {
                     members: {
-                        include: { user: { select: { id: true, email: true, name: true } } },
+                        include: {
+                            user: { select: { id: true, email: true, name: true } },
+                            customRole: { select: { id: true, name: true } },
+                        },
                         orderBy: { createdAt: 'asc' },
                     },
                     invitations: {
                         where: { acceptedAt: null, expiresAt: { gt: new Date() } },
-                        select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
+                        select: {
+                            id: true, email: true, role: true, expiresAt: true, createdAt: true, roleId: true,
+                            customRole: { select: { id: true, name: true } },
+                        },
                     },
                 },
             });
-            return res.json({ success: true, workspace: ws, role: membership.role });
+            return res.json({
+                success: true,
+                workspace: ws,
+                role: membership.role,
+                roleName: membership.customRole?.name || membership.role,
+                permissions: membership.role === 'OWNER' ? null : (membership.customRole?.permissions || {}),
+            });
         } catch (e: any) {
             return res.status(500).json({ success: false, message: e.message });
         }
@@ -85,14 +118,12 @@ export class WorkspaceController {
 
     async update(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const id = req.params.id as string;
+            if (req.workspaceId !== id) return res.status(403).json({ success: false, message: 'Permission denied' });
+            if (!isOwner(req) && !canMeta(req, 'manageWorkspace')) {
+                return res.status(403).json({ success: false, message: 'Permission denied' });
+            }
             const { name } = updateSchema.parse(req.body);
-            const m = await prisma.workspaceMember.findUnique({
-                where: { workspaceId_userId: { workspaceId: id, userId } },
-            });
-            if (!m) return res.status(404).json({ success: false, message: 'Workspace not found' });
-            if (m.role !== 'OWNER' && m.role !== 'ADMIN') return res.status(403).json({ success: false, message: 'Only owner/admin can rename' });
             const ws = await prisma.workspace.update({ where: { id }, data: { name } });
             return res.json({ success: true, workspace: ws });
         } catch (e: any) {
@@ -120,22 +151,25 @@ export class WorkspaceController {
     // ─── Members ─────────────────────────────────────────────────
     async updateMember(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const id = req.params.id as string;
             const memberId = req.params.memberId as string;
-            const { role } = updateMemberSchema.parse(req.body);
-
-            const me = await prisma.workspaceMember.findUnique({
-                where: { workspaceId_userId: { workspaceId: id, userId } },
-            });
-            if (!me) return res.status(404).json({ success: false, message: 'Workspace not found' });
-            if (me.role !== 'OWNER' && me.role !== 'ADMIN') return res.status(403).json({ success: false, message: 'Only owner/admin can change roles' });
+            if (req.workspaceId !== id) return res.status(403).json({ success: false, message: 'Permission denied' });
+            if (!isOwner(req) && !canMeta(req, 'manageRoles')) {
+                return res.status(403).json({ success: false, message: 'Permission denied' });
+            }
+            const { roleId } = updateMemberSchema.parse(req.body);
+            const role = await prisma.workspaceRole.findFirst({ where: { id: roleId, workspaceId: id } });
+            if (!role) return res.status(400).json({ success: false, message: 'Invalid roleId' });
 
             const target = await prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId: id } });
             if (!target) return res.status(404).json({ success: false, message: 'Member not found' });
             if (target.role === 'OWNER') return res.status(400).json({ success: false, message: 'Cannot change the owner\'s role' });
 
-            const updated = await prisma.workspaceMember.update({ where: { id: memberId }, data: { role } });
+            const updated = await prisma.workspaceMember.update({
+                where: { id: memberId },
+                data: { roleId, role: role.name.toUpperCase() === 'ADMIN' ? 'ADMIN' : 'MEMBER' },
+                include: { customRole: { select: { id: true, name: true } } },
+            });
             return res.json({ success: true, member: updated });
         } catch (e: any) {
             if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
@@ -148,17 +182,13 @@ export class WorkspaceController {
             const userId = (req as any).user.id;
             const id = req.params.id as string;
             const memberId = req.params.memberId as string;
-            const me = await prisma.workspaceMember.findUnique({
-                where: { workspaceId_userId: { workspaceId: id, userId } },
-            });
-            if (!me) return res.status(404).json({ success: false, message: 'Workspace not found' });
+            if (req.workspaceId !== id) return res.status(403).json({ success: false, message: 'Permission denied' });
             const target = await prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId: id } });
             if (!target) return res.status(404).json({ success: false, message: 'Member not found' });
             if (target.role === 'OWNER') return res.status(400).json({ success: false, message: 'Cannot remove the owner' });
-            // Allow self-leave OR owner/admin removing others
             const isSelf = target.userId === userId;
-            const isAdmin = me.role === 'OWNER' || me.role === 'ADMIN';
-            if (!isSelf && !isAdmin) return res.status(403).json({ success: false, message: 'Forbidden' });
+            const canRemove = isOwner(req) || canMeta(req, 'manageRoles');
+            if (!isSelf && !canRemove) return res.status(403).json({ success: false, message: 'Forbidden' });
             await prisma.workspaceMember.delete({ where: { id: memberId } });
             return res.json({ success: true });
         } catch (e: any) {
@@ -171,15 +201,14 @@ export class WorkspaceController {
         try {
             const userId = (req as any).user.id;
             const id = req.params.id as string;
-            const { email, role } = inviteSchema.parse(req.body);
+            if (req.workspaceId !== id) return res.status(403).json({ success: false, message: 'Permission denied' });
+            if (!isOwner(req) && !canMeta(req, 'inviteMembers')) {
+                return res.status(403).json({ success: false, message: 'Permission denied' });
+            }
+            const { email, roleId } = inviteSchema.parse(req.body);
+            const role = await prisma.workspaceRole.findFirst({ where: { id: roleId, workspaceId: id } });
+            if (!role) return res.status(400).json({ success: false, message: 'Invalid roleId' });
 
-            const me = await prisma.workspaceMember.findUnique({
-                where: { workspaceId_userId: { workspaceId: id, userId } },
-            });
-            if (!me) return res.status(404).json({ success: false, message: 'Workspace not found' });
-            if (me.role !== 'OWNER' && me.role !== 'ADMIN') return res.status(403).json({ success: false, message: 'Only owner/admin can invite' });
-
-            // If the email already belongs to a member, don't bother creating an invite.
             const existingUser = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } });
             if (existingUser) {
                 const existingMember = await prisma.workspaceMember.findUnique({
@@ -189,16 +218,18 @@ export class WorkspaceController {
             }
 
             const token = crypto.randomBytes(32).toString('hex');
-            const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days
+            const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
             const invite = await prisma.workspaceInvitation.create({
                 data: {
                     workspaceId: id,
                     email: email.toLowerCase(),
-                    role,
+                    role: role.name.toUpperCase() === 'ADMIN' ? 'ADMIN' : 'MEMBER',
+                    roleId,
                     token,
                     expiresAt,
                     invitedById: userId,
                 },
+                include: { customRole: { select: { id: true, name: true } } },
             });
 
             return res.status(201).json({ success: true, invite, acceptUrl: `/accept-invite/${token}` });
@@ -210,14 +241,12 @@ export class WorkspaceController {
 
     async cancelInvite(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const id = req.params.id as string;
             const inviteId = req.params.inviteId as string;
-            const me = await prisma.workspaceMember.findUnique({
-                where: { workspaceId_userId: { workspaceId: id, userId } },
-            });
-            if (!me) return res.status(404).json({ success: false, message: 'Workspace not found' });
-            if (me.role !== 'OWNER' && me.role !== 'ADMIN') return res.status(403).json({ success: false, message: 'Forbidden' });
+            if (req.workspaceId !== id) return res.status(403).json({ success: false, message: 'Permission denied' });
+            if (!isOwner(req) && !canMeta(req, 'inviteMembers')) {
+                return res.status(403).json({ success: false, message: 'Permission denied' });
+            }
             await prisma.workspaceInvitation.delete({ where: { id: inviteId } });
             return res.json({ success: true });
         } catch (e: any) {
@@ -231,7 +260,10 @@ export class WorkspaceController {
             const token = req.params.token as string;
             const invite = await prisma.workspaceInvitation.findUnique({
                 where: { token },
-                include: { workspace: { select: { id: true, name: true, ownerId: true } } },
+                include: {
+                    workspace: { select: { id: true, name: true, ownerId: true } },
+                    customRole: { select: { name: true } },
+                },
             });
             if (!invite) return res.status(404).json({ success: false, message: 'Invitation not found' });
             if (invite.acceptedAt) return res.status(400).json({ success: false, message: 'Invitation already used' });
@@ -240,14 +272,13 @@ export class WorkspaceController {
                 success: true,
                 workspaceName: invite.workspace.name,
                 email: invite.email,
-                role: invite.role,
+                role: invite.customRole?.name || invite.role,
             });
         } catch (e: any) {
             return res.status(500).json({ success: false, message: e.message });
         }
     }
 
-    // Accept an invitation. Requires auth. The invitation's email should match the user's email.
     async acceptInvite(req: Request, res: Response) {
         try {
             const userId = (req as any).user.id;
@@ -260,13 +291,18 @@ export class WorkspaceController {
             if (invite.email.toLowerCase() !== (user?.email || '').toLowerCase()) {
                 return res.status(403).json({ success: false, message: 'Invitation is for a different email' });
             }
-            // Idempotent: if already a member, just mark the invite consumed.
+            const roleId = invite.roleId || await defaultRoleId(invite.workspaceId);
             const existing = await prisma.workspaceMember.findUnique({
                 where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } },
             });
             if (!existing) {
                 await prisma.workspaceMember.create({
-                    data: { workspaceId: invite.workspaceId, userId, role: invite.role },
+                    data: {
+                        workspaceId: invite.workspaceId,
+                        userId,
+                        role: invite.role,
+                        roleId,
+                    },
                 });
             }
             await prisma.workspaceInvitation.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });

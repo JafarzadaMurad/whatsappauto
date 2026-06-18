@@ -8,6 +8,7 @@ import { startCampaignWorker } from './modules/campaign/campaign.queue';
 
 import { InstanceManager } from './modules/whatsapp/instance.manager';
 import { ensureWorkspacesForAllUsers } from './lib/workspace-migration';
+import { ensureWorkspaceRoles } from './lib/role-migration';
 import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
@@ -44,6 +45,15 @@ server.listen(PORT, async () => {
         await ensureWorkspacesForAllUsers();
     } catch (e: any) {
         logger.error({ err: e.message }, '[workspace-migration] failed');
+    }
+
+    // Seed per-workspace system roles (Admin / Member / Viewer) and remap
+    // any legacy `WorkspaceMember.role` string values to a role row.
+    // Idempotent — safe to run on every boot.
+    try {
+        await ensureWorkspaceRoles();
+    } catch (e: any) {
+        logger.error({ err: e.message }, '[role-migration] failed');
     }
 
     // Initialize active instances

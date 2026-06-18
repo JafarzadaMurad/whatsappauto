@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { prisma } from '../../lib/prisma';
 import { config } from '../../config';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { requirePerm } from '../../lib/workspace-context';
 import { mcpAuth } from './mcp.auth';
 import { buildMcpServer } from './mcp.server';
 import {
@@ -58,7 +59,9 @@ router.get('/', mcpAuth, handleMcp);
 router.delete('/', mcpAuth, handleMcp);
 
 // ─── Settings API (JWT-protected; used by the dashboard) ───
-router.get('/permissions', authMiddleware, async (req: Request, res: Response) => {
+// MCP protocol endpoints above use their own bearer auth and are
+// intentionally NOT gated on the workspace permission matrix.
+router.get('/permissions', authMiddleware, requirePerm('mcp', 'view'), async (req: Request, res: Response) => {
     const workspaceId = req.workspaceId!;
     const flags = await listPermissions(workspaceId);
     res.json({
@@ -69,7 +72,7 @@ router.get('/permissions', authMiddleware, async (req: Request, res: Response) =
     });
 });
 
-router.put('/permissions', authMiddleware, async (req: Request, res: Response) => {
+router.put('/permissions', authMiddleware, requirePerm('mcp', 'update'), async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const workspaceId = req.workspaceId!;
     const flags = (req.body?.toolFlags || {}) as Record<string, boolean>;
@@ -77,7 +80,7 @@ router.put('/permissions', authMiddleware, async (req: Request, res: Response) =
     res.json({ success: true });
 });
 
-router.get('/clients', authMiddleware, async (req: Request, res: Response) => {
+router.get('/clients', authMiddleware, requirePerm('mcp', 'view'), async (req: Request, res: Response) => {
     const workspaceId = req.workspaceId!;
     const [clients, tokens] = await Promise.all([
         prisma.mcpClient.findMany({
@@ -95,7 +98,7 @@ router.get('/clients', authMiddleware, async (req: Request, res: Response) => {
     res.json({ success: true, clients, tokens });
 });
 
-router.delete('/clients/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/clients/:id', authMiddleware, requirePerm('mcp', 'delete'), async (req: Request, res: Response) => {
     const workspaceId = req.workspaceId!;
     const id = String(req.params.id || '');
     const existing = await prisma.mcpClient.findFirst({ where: { id, workspaceId } });
@@ -107,7 +110,7 @@ router.delete('/clients/:id', authMiddleware, async (req: Request, res: Response
     res.json({ success: true });
 });
 
-router.delete('/tokens/:id', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/tokens/:id', authMiddleware, requirePerm('mcp', 'delete'), async (req: Request, res: Response) => {
     const workspaceId = req.workspaceId!;
     const id = String(req.params.id || '');
     const existing = await prisma.mcpOAuthToken.findFirst({ where: { id, workspaceId } });
@@ -116,7 +119,7 @@ router.delete('/tokens/:id', authMiddleware, async (req: Request, res: Response)
     res.json({ success: true });
 });
 
-router.get('/audit', authMiddleware, async (req: Request, res: Response) => {
+router.get('/audit', authMiddleware, requirePerm('mcp', 'view'), async (req: Request, res: Response) => {
     const workspaceId = req.workspaceId!;
     const tool = req.query.tool as string | undefined;
     const status = req.query.status as string | undefined;

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
+import { useWorkspaceStore } from "@/store/workspaceStore";
 import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -67,16 +68,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         router.push('/login');
     };
 
+    // Permissions for the active workspace come down with the workspaces
+    // list — see WorkspaceSwitcher → /workspaces. Owners get null perms
+    // and bypass every gate.
+    const wsList = useWorkspaceStore(s => s.workspaces);
+    const wsActive = useWorkspaceStore(s => s.activeWorkspaceId);
+    const activeWs = wsList.find(w => w.id === wsActive);
+    const canSection = useMemo(() => {
+        return (section: string): boolean => {
+            if (!activeWs) return false;
+            if (activeWs.isOwner) return true;
+            return !!activeWs.permissions?.sections?.[section]?.view;
+        };
+    }, [activeWs]);
+
     const navLinks = [
-        { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-        { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox },
+        { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, section: 'dashboard' },
+        { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox, section: 'inbox' },
         {
             name: 'Networks',
             icon: Network,
             isGroup: true,
             children: [
-                { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare },
-                { name: 'Instagram', href: '/dashboard/instagram', icon: Camera }
+                { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare, section: 'whatsapp' },
+                { name: 'Instagram', href: '/dashboard/instagram', icon: Camera, section: 'instagram' }
             ]
         },
         {
@@ -84,7 +99,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             icon: Users,
             isGroup: true,
             children: [
-                { name: 'Contacts', href: '/dashboard/contacts', icon: Users }
+                { name: 'Contacts', href: '/dashboard/contacts', icon: Users, section: 'contacts' }
             ]
         },
         {
@@ -92,18 +107,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             icon: Bot,
             isGroup: true,
             children: [
-                { name: 'AI Agents', href: '/dashboard/ai/agents', icon: Bot },
-                { name: 'Oversight', href: '/dashboard/oversight', icon: Brain, badge: oversightUnread },
-                { name: 'Data Tables', href: '/dashboard/ai/tables', icon: Database },
-                { name: 'AI Providers', href: '/dashboard/ai/providers', icon: Server }
+                { name: 'AI Agents', href: '/dashboard/ai/agents', icon: Bot, section: 'agents' },
+                { name: 'Oversight', href: '/dashboard/oversight', icon: Brain, section: 'oversight', badge: oversightUnread },
+                { name: 'Data Tables', href: '/dashboard/ai/tables', icon: Database, section: 'tables' },
+                { name: 'AI Providers', href: '/dashboard/ai/providers', icon: Server, section: 'providers' }
             ]
         },
-        { name: 'Automations', href: '/dashboard/automations', icon: Workflow },
-        { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send },
-        { name: 'API Keys', href: '/dashboard/api-keys', icon: Key },
-        { name: 'MCP', href: '/dashboard/mcp', icon: Plug },
-        { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon },
-        { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },
+        { name: 'Automations', href: '/dashboard/automations', icon: Workflow, section: 'automations' },
+        { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send, section: 'campaigns' },
+        { name: 'API Keys', href: '/dashboard/api-keys', icon: Key, section: 'apikeys' },
+        { name: 'MCP', href: '/dashboard/mcp', icon: Plug, section: 'mcp' },
+        { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon, section: 'webhooks' },
+        { name: 'Billing', href: '/dashboard/billing', icon: CreditCard, section: 'billing' },
         ...(user?.role === 'ADMIN' ? [{
             name: 'Admin',
             icon: Shield,
@@ -169,20 +184,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 <div className="p-2 flex-1 overflow-y-auto overflow-x-hidden">
                     <nav className="space-y-1">
-                        {navLinks.map((item) => {
+                        {navLinks.map((item: any) => {
+                            // Hide leaf entries whose section the active member can't view.
+                            // Group entries are hidden when every child is hidden.
+                            // The Admin group (no section keys) is left untouched since
+                            // it's already gated on User.role === 'ADMIN'.
+                            if (!item.isGroup && item.section && !canSection(item.section)) return null;
+                            if (item.isGroup && item.children) {
+                                const visibleChildren = item.children.filter((c: any) => !c.section || canSection(c.section));
+                                if (visibleChildren.length === 0 && item.name !== 'Admin') return null;
+                                item = { ...item, children: visibleChildren };
+                            }
                             if (item.isGroup) {
                                 const expanded = expandedGroups[item.name] ?? true;
                                 const setExpanded = (v: boolean) => setExpandedGroups(p => ({ ...p, [item.name]: v }));
 
                                 if (collapsed) {
                                     // Collapsed: show only group icon
-                                    const hasActiveChild = item.children?.some(c => pathname.startsWith(c.href));
+                                    const hasActiveChild = item.children?.some((c: any) => pathname.startsWith(c.href));
                                     return (
                                         <div key={item.name} className="space-y-1">
                                             <div className={`flex justify-center p-2.5 rounded-xl ${hasActiveChild ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`} title={item.name}>
                                                 <item.icon className="w-5 h-5" />
                                             </div>
-                                            {item.children?.map(child => {
+                                            {item.children?.map((child: any) => {
                                                 const isChildActive = pathname.startsWith(child.href);
                                                 const badge = (child as any).badge as number | undefined;
                                                 return (
@@ -220,7 +245,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                     exit={{ height: 0, opacity: 0 }}
                                                     className="overflow-hidden pl-10 space-y-1"
                                                 >
-                                                    {item.children?.map(child => {
+                                                    {item.children?.map((child: any) => {
                                                         const isChildActive = pathname.startsWith(child.href);
                                                         const badge = (child as any).badge as number | undefined;
                                                         return (

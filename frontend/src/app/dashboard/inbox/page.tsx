@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
+import { usePermChatWrite } from "@/store/workspaceStore";
 
 const PAGE_SIZE = 50;
 
@@ -103,6 +104,7 @@ export default function InboxPage() {
     const [loadingChat, setLoadingChat] = useState(false);
     const [replyText, setReplyText] = useState('');
     const [sending, setSending] = useState(false);
+    const canReply = usePermChatWrite();
 
     const [agentPaused, setAgentPaused] = useState<boolean | null>(null);
     const [pauseBusy, setPauseBusy] = useState(false);
@@ -488,17 +490,23 @@ export default function InboxPage() {
 
                             {/* Reply box */}
                             <div className="border-t border-border bg-card p-2 sm:p-3 flex-shrink-0">
-                                <div className="flex gap-2">
-                                    <input type="text" value={replyText}
-                                        onChange={e => setReplyText(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-                                        placeholder="Type a reply…" maxLength={950} disabled={sending}
-                                        className="flex-1 min-w-0 bg-secondary/50 border border-border rounded-xl px-3 sm:px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                                    <button onClick={sendReply} disabled={sending || !replyText.trim()}
-                                        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
-                                        {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                    </button>
-                                </div>
+                                {canReply ? (
+                                    <div className="flex gap-2">
+                                        <input type="text" value={replyText}
+                                            onChange={e => setReplyText(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
+                                            placeholder="Type a reply…" maxLength={950} disabled={sending}
+                                            className="flex-1 min-w-0 bg-secondary/50 border border-border rounded-xl px-3 sm:px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                        <button onClick={sendReply} disabled={sending || !replyText.trim()}
+                                            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
+                                            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-muted-foreground text-center py-2">
+                                        Your role doesn't permit replying in chats.
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}

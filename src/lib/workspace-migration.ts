@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { logger } from '../utils/logger';
+import { seedRolesForWorkspace } from './role-migration';
 
 // One-time migration: for every user that doesn't yet own a personal
 // workspace, create one and backfill `workspaceId` on every scoped row
@@ -29,6 +30,7 @@ export async function ensureWorkspacesForAllUsers() {
         });
 
         const wsId = ws.id;
+        await seedRolesForWorkspace(wsId).catch(() => {});
         const filter = { userId: u.id, workspaceId: null };
 
         // Backfill every scoped table. The where clause skips rows that
@@ -74,5 +76,6 @@ export async function getOrCreatePersonalWorkspace(userId: string): Promise<stri
         },
         select: { id: true },
     });
+    await seedRolesForWorkspace(ws.id).catch(() => {});
     return ws.id;
 }

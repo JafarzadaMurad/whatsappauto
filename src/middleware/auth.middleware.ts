@@ -3,29 +3,39 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { getOrCreatePersonalWorkspace } from '../lib/workspace-migration';
+import { RolePermissions } from '../lib/permissions';
 
 declare module 'express-serve-static-core' {
     interface Request {
         workspaceId?: string;
-        workspaceRole?: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
+        workspaceRole?: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER' | string;
+        workspacePermissions?: RolePermissions | null;
     }
 }
 
-// Resolves the active workspace for the request.
+// Resolves the active workspace + permissions for the request.
 // Preference order:
 //   1. X-Workspace-Id header (if user is a member)
 //   2. The user's personal workspace (created on demand)
-// Sets req.workspaceId and req.workspaceRole.
 async function resolveWorkspace(req: Request, userId: string) {
     const requested = String(req.headers['x-workspace-id'] || '').trim();
     if (requested) {
         const member = await prisma.workspaceMember.findUnique({
             where: { workspaceId_userId: { workspaceId: requested, userId } },
-            select: { role: true, workspaceId: true },
+            select: {
+                role: true,
+                workspaceId: true,
+                customRole: { select: { permissions: true } },
+                workspace: { select: { ownerId: true } },
+            },
         });
         if (member) {
             req.workspaceId = member.workspaceId;
-            req.workspaceRole = member.role as any;
+            // Owner is determined by Workspace.ownerId — keep `role` for legacy
+            // callers but always treat the actual owner as OWNER.
+            const isOwner = member.workspace.ownerId === userId;
+            req.workspaceRole = isOwner ? 'OWNER' : (member.role as any);
+            req.workspacePermissions = isOwner ? null : ((member.customRole?.permissions as any) || {});
             return;
         }
         // Fall through — header pointed to a workspace the user isn't in.
@@ -33,6 +43,7 @@ async function resolveWorkspace(req: Request, userId: string) {
     const wsId = await getOrCreatePersonalWorkspace(userId);
     req.workspaceId = wsId;
     req.workspaceRole = 'OWNER';
+    req.workspacePermissions = null;
 }
 
 export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
@@ -61,14 +72,19 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
             });
 
             (req as any).user = apiKey.user;
-            // API keys default to the workspace they were created in.
             if (apiKey.workspaceId) {
                 req.workspaceId = apiKey.workspaceId;
                 const member = await prisma.workspaceMember.findUnique({
                     where: { workspaceId_userId: { workspaceId: apiKey.workspaceId, userId: apiKey.user.id } },
-                    select: { role: true },
+                    select: {
+                        role: true,
+                        customRole: { select: { permissions: true } },
+                        workspace: { select: { ownerId: true } },
+                    },
                 });
-                req.workspaceRole = (member?.role || 'OWNER') as any;
+                const isOwner = member?.workspace?.ownerId === apiKey.user.id;
+                req.workspaceRole = (isOwner ? 'OWNER' : (member?.role || 'OWNER')) as any;
+                req.workspacePermissions = isOwner ? null : ((member?.customRole?.permissions as any) || null);
             } else {
                 await resolveWorkspace(req, apiKey.user.id);
             }

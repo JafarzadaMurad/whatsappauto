@@ -1,15 +1,16 @@
 import { Router } from 'express';
 import { ApiKeyController } from './apikey.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { requirePerm } from '../../lib/workspace-context';
 
 const router = Router();
 const controller = new ApiKeyController();
 
-// Use middleware to ensure only logged in users can manage keys
 router.use(authMiddleware);
+router.use(requirePerm('apikeys', 'view'));
 
-router.post('/', controller.createKey.bind(controller));
+router.post('/', requirePerm('apikeys', 'create'), controller.createKey.bind(controller));
 router.get('/', controller.listKeys.bind(controller));
-router.delete('/:id', controller.deleteKey.bind(controller));
+router.delete('/:id', requirePerm('apikeys', 'delete'), controller.deleteKey.bind(controller));
 
 export default router;

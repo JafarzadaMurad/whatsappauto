@@ -21,13 +21,32 @@ const pauseSchema = z.object({
 export class ClientController {
     async getClients(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
-            const clients = await prisma.client.findMany({
-                where: { workspaceId },
-                orderBy: { updatedAt: 'desc' }
+            const page = Math.max(1, Number(req.query.page) || 1);
+            const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
+            const search = String(req.query.search || '').trim();
+
+            const where: any = { workspaceId };
+            if (search) {
+                where.OR = [
+                    { name:  { contains: search, mode: 'insensitive' } },
+                    { phone: { contains: search } },
+                ];
+            }
+            const [total, clients] = await Promise.all([
+                prisma.client.count({ where }),
+                prisma.client.findMany({
+                    where,
+                    orderBy: { updatedAt: 'desc' },
+                    skip: (page - 1) * pageSize,
+                    take: pageSize,
+                }),
+            ]);
+            return res.json({
+                success: true,
+                clients,
+                pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
             });
-            return res.json({ success: true, clients });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

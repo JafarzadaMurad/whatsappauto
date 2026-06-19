@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
 import { usePermChatWrite } from "@/store/workspaceStore";
@@ -339,6 +339,52 @@ export default function InboxPage() {
         } finally { setSending(false); }
     };
 
+    const sendMedia = async (opts: {
+        file: Blob;
+        kind: 'image' | 'video' | 'audio' | 'document';
+        fileName?: string;
+        mimetype?: string;
+        caption?: string;
+        ptt?: boolean;
+    }) => {
+        if (!selected) return;
+        setSending(true);
+        try {
+            const fd = new FormData();
+            fd.append('file', opts.file, opts.fileName || 'attachment');
+            const up = await api.post('/uploads', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+            if (!up.data?.success) throw new Error(up.data?.message || 'Upload failed');
+
+            const r = await api.post('/inbox/send-media', {
+                accountId: selected.accountId,
+                remoteJid: selected.remoteJid,
+                mediaUrl: up.data.url,
+                mediaType: opts.kind,
+                caption: opts.caption,
+                fileName: up.data.filename || opts.fileName,
+                mimetype: opts.mimetype || up.data.mimetype,
+                ptt: !!opts.ptt,
+            });
+            if (r.data?.success) {
+                const msg = r.data.message;
+                setMessages(prev => [...prev, {
+                    id: msg.id,
+                    isFromMe: true,
+                    content: msg.content,
+                    createdAt: msg.timestamp || new Date().toISOString(),
+                    messageType: msg.messageType,
+                    mediaUrl: msg.mediaUrl,
+                    mediaMime: msg.mediaMime,
+                    mediaName: msg.mediaName,
+                    waMsgId: msg.waMsgId,
+                    deliveryStatus: 'SENT',
+                }]);
+            }
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message || 'Send failed');
+        } finally { setSending(false); }
+    };
+
     const togglePause = async () => {
         if (!selected) return;
         const next = !agentPaused;
@@ -499,17 +545,15 @@ export default function InboxPage() {
                             {/* Reply box */}
                             <div className="border-t border-border bg-card p-2 sm:p-3 flex-shrink-0">
                                 {canReply ? (
-                                    <div className="flex gap-2">
-                                        <input type="text" value={replyText}
-                                            onChange={e => setReplyText(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } }}
-                                            placeholder="Type a reply…" maxLength={950} disabled={sending}
-                                            className="flex-1 min-w-0 bg-secondary/50 border border-border rounded-xl px-3 sm:px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                                        <button onClick={sendReply} disabled={sending || !replyText.trim()}
-                                            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
-                                            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                        </button>
-                                    </div>
+                                    <Composer
+                                        sending={sending}
+                                        replyText={replyText}
+                                        setReplyText={setReplyText}
+                                        onSendText={sendReply}
+                                        onSendMedia={sendMedia}
+                                        // WhatsApp doesn't accept media on LID conversations.
+                                        disabled={!selected || selected.channel !== 'whatsapp'}
+                                    />
                                 ) : (
                                     <div className="text-xs text-muted-foreground text-center py-2">
                                         Your role doesn't permit replying in chats.
@@ -761,3 +805,198 @@ function MessageBubble({ msg }: { msg: Message }) {
 
 // Silence unused import (kept for future tick icon variants)
 void Check;
+
+// ─── Composer ─────────────────────────────────────────────────
+// WhatsApp-style chat input: text, paperclip for files (image/video/
+// audio/document), and a press-and-hold mic for voice notes. Files
+// go through the existing /api/uploads endpoint, then the resulting
+// URL is sent via /api/inbox/send-media.
+function Composer(props: {
+    sending: boolean;
+    replyText: string;
+    setReplyText: (v: string) => void;
+    onSendText: () => void;
+    onSendMedia: (opts: { file: Blob; kind: 'image' | 'video' | 'audio' | 'document'; fileName?: string; mimetype?: string; caption?: string; ptt?: boolean }) => Promise<void>;
+    disabled?: boolean;
+}) {
+    const { sending, replyText, setReplyText, onSendText, onSendMedia, disabled } = props;
+    const [pending, setPending] = useState<{ file: File; kind: 'image' | 'video' | 'audio' | 'document'; previewUrl?: string } | null>(null);
+    const [caption, setCaption] = useState('');
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const pickFile = () => fileInputRef.current?.click();
+
+    const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const f = e.target.files?.[0];
+        e.target.value = '';
+        if (!f) return;
+        let kind: 'image' | 'video' | 'audio' | 'document' = 'document';
+        if (f.type.startsWith('image/')) kind = 'image';
+        else if (f.type.startsWith('video/')) kind = 'video';
+        else if (f.type.startsWith('audio/')) kind = 'audio';
+        const previewUrl = (kind === 'image' || kind === 'video') ? URL.createObjectURL(f) : undefined;
+        setPending({ file: f, kind, previewUrl });
+        setCaption('');
+    };
+
+    const cancelPending = () => {
+        if (pending?.previewUrl) URL.revokeObjectURL(pending.previewUrl);
+        setPending(null);
+        setCaption('');
+    };
+
+    const sendPending = async () => {
+        if (!pending) return;
+        const p = pending;
+        cancelPending();
+        await onSendMedia({
+            file: p.file, kind: p.kind,
+            fileName: p.file.name, mimetype: p.file.type,
+            caption: caption.trim() || undefined,
+        });
+    };
+
+    // Voice recording
+    const [recording, setRecording] = useState(false);
+    const [recordSec, setRecordSec] = useState(0);
+    const mediaRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const startedAtRef = useRef<number>(0);
+    const tickRef = useRef<any>(null);
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Prefer ogg/opus (what WhatsApp voice notes use); fall back to webm.
+            const mime = MediaRecorder.isTypeSupported('audio/ogg; codecs=opus')
+                ? 'audio/ogg; codecs=opus'
+                : MediaRecorder.isTypeSupported('audio/webm; codecs=opus')
+                    ? 'audio/webm; codecs=opus'
+                    : 'audio/webm';
+            const rec = new MediaRecorder(stream, { mimeType: mime });
+            chunksRef.current = [];
+            rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+            rec.onstop = async () => {
+                stream.getTracks().forEach(t => t.stop());
+                const blob = new Blob(chunksRef.current, { type: mime });
+                const ext = mime.startsWith('audio/ogg') ? 'ogg' : 'webm';
+                await onSendMedia({
+                    file: blob, kind: 'audio',
+                    fileName: `voice-${Date.now()}.${ext}`,
+                    mimetype: mime, ptt: true,
+                });
+            };
+            mediaRef.current = rec;
+            rec.start();
+            startedAtRef.current = Date.now();
+            setRecording(true);
+            setRecordSec(0);
+            tickRef.current = setInterval(() => setRecordSec(Math.floor((Date.now() - startedAtRef.current) / 1000)), 250);
+        } catch (e: any) {
+            alert('Microphone access denied');
+        }
+    };
+
+    const stopRecording = (sendIt: boolean) => {
+        const rec = mediaRef.current;
+        if (!rec) return;
+        if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+        setRecording(false);
+        if (!sendIt) {
+            rec.ondataavailable = null;
+            rec.onstop = () => rec.stream.getTracks().forEach(t => t.stop());
+        }
+        rec.stop();
+        mediaRef.current = null;
+    };
+
+    // Pending media preview replaces the text input until sent/cancelled.
+    if (pending) {
+        return (
+            <div className="space-y-2">
+                <div className="flex items-center gap-3 p-2 bg-secondary/40 rounded-xl">
+                    {pending.previewUrl && pending.kind === 'image' && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={pending.previewUrl} alt="" className="w-14 h-14 rounded-lg object-cover" />
+                    )}
+                    {pending.previewUrl && pending.kind === 'video' && (
+                        <video src={pending.previewUrl} className="w-14 h-14 rounded-lg object-cover" />
+                    )}
+                    {!pending.previewUrl && (
+                        <div className="w-14 h-14 rounded-lg bg-card flex items-center justify-center">
+                            <Paperclip className="w-5 h-5 text-muted-foreground" />
+                        </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{pending.file.name}</p>
+                        <p className="text-[11px] text-muted-foreground">{(pending.file.size / 1024).toFixed(0)} KB · {pending.kind}</p>
+                    </div>
+                    <button onClick={cancelPending} className="text-muted-foreground hover:text-foreground" title="Discard">
+                        <XIcon className="w-4 h-4" />
+                    </button>
+                </div>
+                {(pending.kind === 'image' || pending.kind === 'video' || pending.kind === 'document') && (
+                    <input value={caption} onChange={e => setCaption(e.target.value)}
+                        placeholder="Add a caption…" maxLength={950}
+                        className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm" />
+                )}
+                <button onClick={sendPending} disabled={sending}
+                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl py-2 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50">
+                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Send
+                </button>
+            </div>
+        );
+    }
+
+    // Recording overlay replaces the input row while the mic is open.
+    if (recording) {
+        const mm = String(Math.floor(recordSec / 60)).padStart(2, '0');
+        const ss = String(recordSec % 60).padStart(2, '0');
+        return (
+            <div className="flex items-center gap-2">
+                <button onClick={() => stopRecording(false)} title="Cancel"
+                    className="bg-secondary/60 text-foreground rounded-xl px-3 py-2 text-sm flex items-center gap-1.5">
+                    <XIcon className="w-4 h-4" /> Cancel
+                </button>
+                <div className="flex-1 flex items-center justify-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                    <span className="text-sm font-mono text-red-300">{mm}:{ss}</span>
+                </div>
+                <button onClick={() => stopRecording(true)} disabled={sending} title="Send voice note"
+                    className="bg-primary text-primary-foreground rounded-xl px-3 py-2 flex items-center gap-1.5 disabled:opacity-50">
+                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex gap-2 items-end">
+            <input ref={fileInputRef} type="file" className="hidden" onChange={onFile}
+                accept="image/*,video/*,audio/*,application/pdf,application/zip,.doc,.docx,.xls,.xlsx,.txt" />
+            <button onClick={pickFile} disabled={sending || disabled} title="Attach file"
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-xl disabled:opacity-40 flex-shrink-0">
+                <Paperclip className="w-5 h-5" />
+            </button>
+            <input type="text" value={replyText}
+                onChange={e => setReplyText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSendText(); } }}
+                placeholder="Type a reply…" maxLength={950} disabled={sending}
+                className="flex-1 min-w-0 bg-secondary/50 border border-border rounded-xl px-3 sm:px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+            {replyText.trim() ? (
+                <button onClick={onSendText} disabled={sending}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 py-2 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
+                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                </button>
+            ) : (
+                <button onClick={startRecording} disabled={sending || disabled} title="Record voice note"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl px-3 sm:px-4 py-2 flex items-center gap-2 text-sm font-medium disabled:opacity-50 flex-shrink-0">
+                    <Mic className="w-4 h-4" />
+                </button>
+            )}
+        </div>
+    );
+}
+
+void Square; void Mic;

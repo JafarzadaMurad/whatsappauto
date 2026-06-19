@@ -14,6 +14,8 @@ router.get('/unified', requireChatView, controller.getUnified.bind(controller));
 router.get('/conversations', requireChatView, controller.getConversations.bind(controller));
 router.get('/messages', requireChatView, controller.getMessages.bind(controller));
 router.post('/reply', requireChatWrite, controller.reply.bind(controller));
+router.post('/send-media', requireChatWrite, controller.sendMedia.bind(controller));
 router.post('/mark-read', requireChatView, controller.markRead.bind(controller));
+router.post('/refresh-profile-pic', requireChatView, controller.refreshProfilePic.bind(controller));
 
 export default router;

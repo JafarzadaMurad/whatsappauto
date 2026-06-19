@@ -73,6 +73,10 @@ export default function ContactsPage() {
     const [fields, setFields] = useState<UserField[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(50);
+    const [total, setTotal] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
     const [sortKey, setSortKey] = useState<ColumnId>('updatedAt');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
     const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -85,19 +89,28 @@ export default function ContactsPage() {
         setLoading(true);
         try {
             const [c, f] = await Promise.all([
-                api.get('/clients'),
+                api.get('/clients', { params: { page, pageSize, search: search.trim() || undefined } }),
                 api.get('/user-fields'),
             ]);
-            if (c.data.success) setClients(c.data.clients);
+            if (c.data.success) {
+                setClients(c.data.clients);
+                if (c.data.pagination) {
+                    setTotal(c.data.pagination.total);
+                    setTotalPages(c.data.pagination.totalPages);
+                }
+            }
             if (f.data.success) setFields(f.data.fields);
         } catch (e) {
             console.error(e);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [page, pageSize, search]);
 
     useEffect(() => { load(); }, [load]);
+
+    // Reset to page 1 when search or page size changes.
+    useEffect(() => { setPage(1); }, [search, pageSize]);
 
     // Build the full column list = base + each user field. Merge with the
     // persisted order from localStorage so the user's drag-reordering
@@ -148,10 +161,10 @@ export default function ContactsPage() {
     };
 
     const sortedFiltered = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        const filtered = clients.filter(c =>
-            !q || (c.name?.toLowerCase().includes(q)) || c.phone.includes(q)
-        );
+        // Search now runs server-side, so the local filter is just the
+        // identity for the current page. Sort still happens locally
+        // because it's purely visual on the rows the server returned.
+        const filtered = clients;
 
         const getVal = (c: Client, key: ColumnId): any => {
             if (key === 'contact') return c.name || c.phone || '';
@@ -171,7 +184,7 @@ export default function ContactsPage() {
             if (va > vb) return 1 * dir;
             return 0;
         });
-    }, [clients, search, sortKey, sortDir]);
+    }, [clients, sortKey, sortDir]);
 
     const toggleSort = (k: ColumnId) => {
         if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -265,6 +278,33 @@ export default function ContactsPage() {
                             ))}
                         </tbody>
                     </table>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-border bg-card/40 text-xs text-muted-foreground">
+                    <div>
+                        {total === 0 ? 'No contacts'
+                            : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1.5">
+                            Per page
+                            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}
+                                className="bg-secondary/40 border border-border rounded px-2 py-1 text-xs">
+                                {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                        </label>
+                        <div className="flex items-center gap-1">
+                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                                className="px-2 py-1 rounded border border-border bg-secondary/40 hover:bg-secondary/70 disabled:opacity-40">
+                                Prev
+                            </button>
+                            <span className="px-2">Page {page} / {totalPages}</span>
+                            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
+                                className="px-2 py-1 rounded border border-border bg-secondary/40 hover:bg-secondary/70 disabled:opacity-40">
+                                Next
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

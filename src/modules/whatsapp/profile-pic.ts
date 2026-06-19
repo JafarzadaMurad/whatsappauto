@@ -5,33 +5,45 @@ import { logger } from '../../utils/logger';
 const REFRESH_MS = 24 * 60 * 60 * 1000; // refresh profile pics older than 24h
 
 // Fetches the contact's WhatsApp profile picture URL via Baileys and
-// caches it on the Client row. Idempotent and best-effort — silent on
-// any error (the call returns a 401 for contacts with privacy locked
-// down, which is normal).
+// caches it on the Client row. Tries the high-res variant first and
+// falls back to the smaller 'preview' when the contact's privacy
+// blocks 'image'. Best-effort — never throws.
 export async function refreshProfilePic(opts: {
     instanceId: string;
     clientId: string;
     jid: string;
-}) {
+}): Promise<string | null> {
     const { instanceId, clientId, jid } = opts;
     const sock = sessions.get(instanceId);
-    if (!sock) return;
+    if (!sock) {
+        logger.warn({ instanceId, jid }, '[profile-pic] no live session — skipping');
+        return null;
+    }
+
+    let url: string | null = null;
+    let lastErr: string | null = null;
+    for (const variant of ['image', 'preview'] as const) {
+        try {
+            const r = await (sock as any).profilePictureUrl(jid, variant);
+            if (r) { url = r; break; }
+        } catch (e: any) {
+            lastErr = e?.message || String(e);
+        }
+    }
 
     try {
-        // 'image' returns the high-res photo, falls back internally to
-        // the low-res ('preview') if the contact disabled the big one.
-        const url = await sock.profilePictureUrl(jid, 'image').catch(() => null);
         await prisma.client.update({
             where: { id: clientId },
             data: { profilePicUrl: url || null, profilePicUpdatedAt: new Date() },
         });
+        logger.info({ instanceId, jid, hasUrl: !!url, err: url ? null : lastErr }, '[profile-pic] refresh result');
     } catch (e: any) {
-        logger.debug({ jid, err: e?.message }, '[profile-pic] refresh failed');
+        logger.warn({ instanceId, jid, err: e?.message }, '[profile-pic] db update failed');
     }
+    return url;
 }
 
-// Decides whether to refresh in the background. Doesn't await; the
-// caller stays on the hot path. Skips when the URL is already fresh.
+// Fire-and-forget refresh, skipping when the cache is fresh.
 export function maybeRefreshProfilePicAsync(opts: {
     instanceId: string;
     clientId: string;

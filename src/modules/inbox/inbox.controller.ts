@@ -226,7 +226,7 @@ export class InboxController {
             if (allPhones.length > 0) {
                 const rows = await prisma.client.findMany({
                     where: { workspaceId, phone: { in: allPhones } },
-                    select: { phone: true, profilePicUrl: true, agentPaused: true },
+                    select: { id: true, phone: true, profilePicUrl: true, profilePicUpdatedAt: true, agentPaused: true },
                 });
                 const byPhone = new Map(rows.map(r => [r.phone, r]));
                 for (const c of convos) {
@@ -234,6 +234,27 @@ export class InboxController {
                     if (!r) continue;
                     if (c.channel === 'whatsapp' && !c.profilePic) c.profilePic = r.profilePicUrl || null;
                     c.agentPaused = !!r.agentPaused;
+                }
+
+                // Backfill profile pics for WhatsApp rows that were never
+                // tried. Fires after we send the response; capped so a
+                // huge inbox doesn't queue 200 Baileys calls at once.
+                const toFetch = convos.filter(c =>
+                    c.channel === 'whatsapp' && !c.profilePic
+                    && !byPhone.get(c.phone)?.profilePicUpdatedAt
+                ).slice(0, 8);
+                if (toFetch.length > 0) {
+                    setImmediate(async () => {
+                        const { maybeRefreshProfilePicAsync } = await import('../whatsapp/profile-pic');
+                        for (const c of toFetch) {
+                            const r = byPhone.get(c.phone);
+                            if (!r) continue;
+                            maybeRefreshProfilePicAsync({
+                                instanceId: c.accountId, clientId: r.id, jid: c.remoteJid,
+                                profilePicUpdatedAt: r.profilePicUpdatedAt,
+                            });
+                        }
+                    });
                 }
             }
 
@@ -438,6 +459,28 @@ export class InboxController {
     // the inbox when the operator opens a chat so the unread badge
     // clears and (for WhatsApp) we can optionally ship a read receipt
     // upstream later.
+    // Manual profile-pic refresh — handy when the lazy fetcher hasn't
+    // run yet for a contact (e.g. backlog from before the feature
+    // shipped, or the contact's privacy initially blocked it).
+    async refreshProfilePic(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const schema = z.object({ accountId: z.string().min(1), remoteJid: z.string().min(1) });
+            const { accountId, remoteJid } = schema.parse(req.body);
+            const owns = await prisma.instance.findFirst({ where: { id: accountId, workspaceId } });
+            if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
+            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const client = await prisma.client.findFirst({ where: { workspaceId, phone }, select: { id: true } });
+            if (!client) return res.status(404).json({ success: false, message: 'Contact not found' });
+            const { refreshProfilePic } = await import('../whatsapp/profile-pic');
+            const url = await refreshProfilePic({ instanceId: accountId, clientId: client.id, jid: remoteJid });
+            return res.json({ success: true, profilePic: url });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async markRead(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);
@@ -456,6 +499,65 @@ export class InboxController {
                 data: { readAt: new Date() },
             });
             return res.json({ success: true, markedRead: result.count });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Send an attachment (image / video / audio / document / voice note)
+    // through Baileys. The frontend first uploads the file via POST
+    // /api/uploads and then calls this with the resulting URL.
+    async sendMedia(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const schema = z.object({
+                accountId: z.string().min(1),
+                remoteJid: z.string().min(1),
+                mediaUrl: z.string().url(),
+                mediaType: z.enum(['image', 'video', 'audio', 'document']),
+                caption: z.string().max(950).optional(),
+                fileName: z.string().max(120).optional(),
+                mimetype: z.string().max(120).optional(),
+                ptt: z.boolean().optional(),
+            });
+            const body = schema.parse(req.body);
+            const instance = await prisma.instance.findFirst({ where: { id: body.accountId, workspaceId } });
+            if (!instance) return res.status(404).json({ success: false, message: 'WhatsApp instance not found' });
+
+            const { sessions } = await import('../whatsapp/instance.manager');
+            const sock = sessions.get(body.accountId);
+            if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+
+            let payload: any;
+            if (body.mediaType === 'image')      payload = { image:    { url: body.mediaUrl }, caption: body.caption };
+            else if (body.mediaType === 'video') payload = { video:    { url: body.mediaUrl }, caption: body.caption };
+            else if (body.mediaType === 'audio') payload = { audio:    { url: body.mediaUrl }, mimetype: body.mimetype || 'audio/ogg; codecs=opus', ptt: !!body.ptt };
+            else                                 payload = { document: { url: body.mediaUrl }, fileName: body.fileName || 'file', mimetype: body.mimetype || 'application/octet-stream', caption: body.caption };
+
+            let sent: any;
+            try {
+                sent = await sock.sendMessage(body.remoteJid, payload);
+            } catch (e: any) {
+                return res.status(502).json({ success: false, message: e.message || 'Send failed' });
+            }
+
+            const saved = await prisma.message.create({
+                data: {
+                    instanceId: body.accountId,
+                    remoteJid: body.remoteJid,
+                    isFromMe: true,
+                    messageType: body.ptt ? 'audio' : body.mediaType,
+                    content: body.caption || '',
+                    mediaUrl: body.mediaUrl,
+                    mediaMime: body.mimetype || null,
+                    mediaName: body.fileName || null,
+                    status: 'SENT',
+                    timestamp: new Date(),
+                    waMsgId: sent?.key?.id || null,
+                },
+            });
+            return res.json({ success: true, message: saved });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });

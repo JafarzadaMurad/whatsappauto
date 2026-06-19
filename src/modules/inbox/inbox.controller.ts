@@ -402,15 +402,32 @@ export class InboxController {
                 if (l.userMessage) logTexts.add(`u:${l.userMessage}`);
                 if (l.agentReply) logTexts.add(`a:${l.agentReply}`);
             }
+            // For media rows with no real caption, emit a placeholder
+            // string so the chat bubble side-selector (which keys off
+            // empty / non-empty userMessage vs agentReply) doesn't
+            // collapse them onto the wrong side.
+            const placeholderFor = (kind: string | null | undefined, fileName?: string | null) => {
+                switch (kind) {
+                    case 'image':    return '🖼️ Photo';
+                    case 'video':    return '🎬 Video';
+                    case 'audio':    return '🎤 Voice message';
+                    case 'sticker':  return '🌠 Sticker';
+                    case 'document': return '📄 ' + (fileName || 'Document');
+                    default:         return '📎 Media';
+                }
+            };
             const projected = rawMessages
                 .filter(r => {
                     const key = r.isFromMe ? `a:${r.content}` : `u:${r.content}`;
                     return !logTexts.has(key);
                 })
-                .map(r => ({
+                .map(r => {
+                    const text = prettifyContent(r.content)
+                        || (r.mediaUrl ? placeholderFor(r.messageType, r.mediaName) : '');
+                    return {
                     id: r.id,
-                    userMessage: r.isFromMe ? '' : prettifyContent(r.content),
-                    agentReply: r.isFromMe ? prettifyContent(r.content) : '',
+                    userMessage: r.isFromMe ? '' : text,
+                    agentReply: r.isFromMe ? text : '',
                     createdAt: r.timestamp,
                     provider: 'PHONE',
                     model: '',
@@ -427,7 +444,7 @@ export class InboxController {
                     mediaName: r.mediaName,
                     waMsgId: r.waMsgId,
                     deliveryStatus: r.status, // SENT | DELIVERED | READ
-                }));
+                };});
 
             const cleanedLogs = logs.map(l => ({
                 ...l,

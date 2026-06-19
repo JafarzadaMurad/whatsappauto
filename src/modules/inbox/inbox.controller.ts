@@ -215,6 +215,23 @@ export class InboxController {
                 }
             }
 
+            // Batch-attach cached profile pictures for WhatsApp rows.
+            // Client.profilePicUrl is keyed by (workspaceId, phone) — same
+            // shape we already use for upsertCrmContact.
+            const waPhones = convos.filter(c => c.channel === 'whatsapp').map(c => c.phone);
+            if (waPhones.length > 0) {
+                const rows = await prisma.client.findMany({
+                    where: { workspaceId, phone: { in: waPhones } },
+                    select: { phone: true, profilePicUrl: true },
+                });
+                const byPhone = new Map(rows.map(r => [r.phone, r.profilePicUrl]));
+                for (const c of convos) {
+                    if (c.channel === 'whatsapp' && !c.profilePic) {
+                        c.profilePic = byPhone.get(c.phone) || null;
+                    }
+                }
+            }
+
             convos.sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
             return res.json({ success: true, conversations: convos });
         } catch (error: any) {

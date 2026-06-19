@@ -551,10 +551,17 @@ function ConvoRow({ convo, active, onClick }: { convo: Conversation; active: boo
 
 function Avatar({ conv, size }: { conv: Conversation; size: number }) {
     const initial = (conv.name || conv.phone || '?').charAt(0).toUpperCase();
-    if (conv.profilePic) {
+    // WhatsApp media URLs expire periodically — when one fails we
+    // remember it in component state and render the letter fallback
+    // instead of a broken-image placeholder.
+    const [failed, setFailed] = useState(false);
+    useEffect(() => { setFailed(false); }, [conv.profilePic]);
+    if (conv.profilePic && !failed) {
         return (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={conv.profilePic} alt="" width={size} height={size}
+                onError={() => setFailed(true)}
+                referrerPolicy="no-referrer"
                 className="rounded-full object-cover flex-shrink-0" style={{ width: size, height: size }} />
         );
     }

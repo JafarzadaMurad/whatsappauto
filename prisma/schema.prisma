@@ -709,6 +709,11 @@ model Client {
   // and hide the "+" prefix that would otherwise imply a phone number.
   isAnonymous      Boolean   @default(false)
 
+  // Cached profile-picture URL (WhatsApp media CDN). Refreshed lazily
+  // when older than 24h so we don't hammer Baileys on every message.
+  profilePicUrl       String?
+  profilePicUpdatedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

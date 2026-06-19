@@ -17,6 +17,7 @@ import { extractMessageContent } from './message-content';
 import { resolveJid } from './lid-resolver';
 import { findOperatorByPhone, handleOperatorMessage } from '../operator/operator.service';
 import { downloadAndSaveMedia } from './media-downloader';
+import { maybeRefreshProfilePicAsync } from './profile-pic';
 // We will replace useMultiFileAuthState with DB-backed later, using this for basic structure first.
 // import { usePrismaAuthState } from './auth-state'; 
 
@@ -233,7 +234,7 @@ export class InstanceManager {
                                 if (!inst) return;
                                 const wsId = inst.workspaceId
                                     || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
-                                return upsertCrmContact({
+                                const c = await upsertCrmContact({
                                     userId: inst.userId,
                                     workspaceId: wsId,
                                     phone: resolvedPhone,
@@ -242,6 +243,7 @@ export class InstanceManager {
                                     sourceLabel: inst.name,
                                     isAnonymous,
                                 });
+                                if (c) maybeRefreshProfilePicAsync({ instanceId, clientId: c.id, jid: remoteJid, profilePicUpdatedAt: c.profilePicUpdatedAt });
                             }).catch(() => {});
                         }
                     }
@@ -352,7 +354,7 @@ export class InstanceManager {
                         if (!inst) return;
                         const wsId = inst.workspaceId
                             || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
-                        return upsertCrmContact({
+                        const c = await upsertCrmContact({
                             userId: inst.userId,
                             workspaceId: wsId,
                             phone: resolvedPhone,
@@ -361,6 +363,7 @@ export class InstanceManager {
                             sourceLabel: inst.name,
                             isAnonymous,
                         });
+                        if (c) maybeRefreshProfilePicAsync({ instanceId, clientId: c.id, jid: remoteJid, profilePicUpdatedAt: c.profilePicUpdatedAt });
                     }).catch(() => {});
 
                     webhookQueue.add('new-message', {

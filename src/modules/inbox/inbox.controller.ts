@@ -529,19 +529,32 @@ export class InboxController {
             const sock = sessions.get(body.accountId);
             if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
 
-            // WhatsApp's PTT (voice note) flag requires ogg/opus on the
-            // receiving end. If the browser fell back to webm, drop the
-            // ptt flag so it goes as a regular audio attachment instead
-            // — at least it plays. Voice-note recording UI in the
-            // frontend tries to pick ogg first.
-            const mimeLow = (body.mimetype || '').toLowerCase();
-            const isPtt = !!body.ptt && /audio\/ogg/.test(mimeLow);
+            // For voice notes (ptt) WhatsApp only accepts ogg/opus, so
+            // re-encode whatever the browser produced (usually webm) on
+            // the server before sending. If ffmpeg isn't installed we
+            // log and fall back to sending the raw clip as a regular
+            // audio attachment — the recipient still gets to hear it.
+            let mediaUrl = body.mediaUrl;
+            let mimetype = body.mimetype;
+            let isPtt = !!body.ptt;
+            if (isPtt) {
+                try {
+                    const { transcodeToOggOpus } = await import('../whatsapp/audio-transcoder');
+                    const out = await transcodeToOggOpus(body.mediaUrl);
+                    mediaUrl = out.url;
+                    mimetype = 'audio/ogg; codecs=opus';
+                } catch (e: any) {
+                    const { logger } = await import('../../utils/logger');
+                    logger.warn({ err: e?.message }, '[send-media] voice-note transcode failed, sending raw');
+                    isPtt = false;
+                }
+            }
 
             let payload: any;
-            if (body.mediaType === 'image')      payload = { image:    { url: body.mediaUrl }, caption: body.caption };
-            else if (body.mediaType === 'video') payload = { video:    { url: body.mediaUrl }, caption: body.caption };
-            else if (body.mediaType === 'audio') payload = { audio:    { url: body.mediaUrl }, mimetype: body.mimetype || 'audio/ogg; codecs=opus', ptt: isPtt };
-            else                                 payload = { document: { url: body.mediaUrl }, fileName: body.fileName || 'file', mimetype: body.mimetype || 'application/octet-stream', caption: body.caption };
+            if (body.mediaType === 'image')      payload = { image:    { url: mediaUrl }, caption: body.caption };
+            else if (body.mediaType === 'video') payload = { video:    { url: mediaUrl }, caption: body.caption };
+            else if (body.mediaType === 'audio') payload = { audio:    { url: mediaUrl }, mimetype: mimetype || 'audio/ogg; codecs=opus', ptt: isPtt };
+            else                                 payload = { document: { url: mediaUrl }, fileName: body.fileName || 'file', mimetype: mimetype || 'application/octet-stream', caption: body.caption };
 
             let sent: any;
             try {
@@ -557,8 +570,8 @@ export class InboxController {
                     isFromMe: true,
                     messageType: isPtt ? 'audio' : body.mediaType,
                     content: body.caption || '',
-                    mediaUrl: body.mediaUrl,
-                    mediaMime: body.mimetype || null,
+                    mediaUrl: mediaUrl,
+                    mediaMime: mimetype || null,
                     mediaName: body.fileName || null,
                     status: 'SENT',
                     timestamp: new Date(),

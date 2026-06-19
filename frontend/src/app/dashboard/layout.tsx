@@ -61,16 +61,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }
     }, [isAuthenticated, hasHydrated, router]);
 
-    if (!hasHydrated || !isAuthenticated) return null;
-
-    const handleLogout = () => {
-        logout();
-        router.push('/login');
-    };
-
     // Permissions for the active workspace come down with the workspaces
     // list — see WorkspaceSwitcher → /workspaces. Owners get null perms
-    // and bypass every gate.
+    // and bypass every gate. NOTE: these hooks must run BEFORE the early
+    // return below, otherwise React's rule-of-hooks ordering breaks on the
+    // first authed render and the page crashes.
     const wsList = useWorkspaceStore(s => s.workspaces);
     const wsActive = useWorkspaceStore(s => s.activeWorkspaceId);
     const activeWs = wsList.find(w => w.id === wsActive);
@@ -81,6 +76,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             return !!activeWs.permissions?.sections?.[section]?.view;
         };
     }, [activeWs]);
+
+    if (!hasHydrated || !isAuthenticated) return null;
+
+    const handleLogout = () => {
+        logout();
+        router.push('/login');
+    };
 
     const navLinks = [
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, section: 'dashboard' },

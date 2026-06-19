@@ -85,6 +85,7 @@ export class InboxController {
                 messageCount: number;
                 unreadCount?: number;
                 profilePic?: string | null;
+                agentPaused?: boolean;
             };
 
             const convos: Convo[] = [];
@@ -215,20 +216,24 @@ export class InboxController {
                 }
             }
 
-            // Batch-attach cached profile pictures for WhatsApp rows.
-            // Client.profilePicUrl is keyed by (workspaceId, phone) — same
-            // shape we already use for upsertCrmContact.
-            const waPhones = convos.filter(c => c.channel === 'whatsapp').map(c => c.phone);
-            if (waPhones.length > 0) {
+            // Batch-attach the cached profile picture + agent-paused flag
+            // for every conversation row. Client is keyed by
+            // (workspaceId, phone) and covers both WhatsApp and Instagram
+            // — IG conversations already get profilePic from
+            // InstagramContact above but still need agentPaused from
+            // here.
+            const allPhones = convos.map(c => c.phone);
+            if (allPhones.length > 0) {
                 const rows = await prisma.client.findMany({
-                    where: { workspaceId, phone: { in: waPhones } },
-                    select: { phone: true, profilePicUrl: true },
+                    where: { workspaceId, phone: { in: allPhones } },
+                    select: { phone: true, profilePicUrl: true, agentPaused: true },
                 });
-                const byPhone = new Map(rows.map(r => [r.phone, r.profilePicUrl]));
+                const byPhone = new Map(rows.map(r => [r.phone, r]));
                 for (const c of convos) {
-                    if (c.channel === 'whatsapp' && !c.profilePic) {
-                        c.profilePic = byPhone.get(c.phone) || null;
-                    }
+                    const r = byPhone.get(c.phone);
+                    if (!r) continue;
+                    if (c.channel === 'whatsapp' && !c.profilePic) c.profilePic = r.profilePicUrl || null;
+                    c.agentPaused = !!r.agentPaused;
                 }
             }
 

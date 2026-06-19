@@ -71,6 +71,7 @@ type Conversation = {
     messageCount: number;
     unreadCount?: number;
     profilePic?: string | null;
+    agentPaused?: boolean;
 };
 
 type Message = {
@@ -349,6 +350,13 @@ export default function InboxPage() {
                 paused: next,
             });
             setAgentPaused(next);
+            // Mirror the new state onto the conversation list row so the
+            // pause badge on the avatar flips immediately, without
+            // waiting for the next /unified refresh.
+            setConversations(prev => prev.map(c => (
+                c.accountId === selected.accountId && c.remoteJid === selected.remoteJid
+                    ? { ...c, agentPaused: next } : c
+            )));
         } catch (e: any) {
             alert(e.response?.data?.message || e.message);
         } finally { setPauseBusy(false); }
@@ -556,19 +564,33 @@ function Avatar({ conv, size }: { conv: Conversation; size: number }) {
     // instead of a broken-image placeholder.
     const [failed, setFailed] = useState(false);
     useEffect(() => { setFailed(false); }, [conv.profilePic]);
-    if (conv.profilePic && !failed) {
-        return (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={conv.profilePic} alt="" width={size} height={size}
-                onError={() => setFailed(true)}
-                referrerPolicy="no-referrer"
-                className="rounded-full object-cover flex-shrink-0" style={{ width: size, height: size }} />
-        );
-    }
-    return (
-        <div className="rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0"
+
+    const badgeSize = Math.max(14, Math.round(size * 0.42));
+    const pauseBadge = conv.agentPaused ? (
+        <span title="Agent paused"
+            className="absolute -bottom-0.5 -right-0.5 rounded-full bg-amber-500 text-white flex items-center justify-center ring-2 ring-card"
+            style={{ width: badgeSize, height: badgeSize }}>
+            <Pause style={{ width: badgeSize * 0.55, height: badgeSize * 0.55 }} strokeWidth={3} />
+        </span>
+    ) : null;
+
+    const inner = conv.profilePic && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={conv.profilePic} alt="" width={size} height={size}
+            onError={() => setFailed(true)}
+            referrerPolicy="no-referrer"
+            className="rounded-full object-cover" style={{ width: size, height: size }} />
+    ) : (
+        <div className="rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center"
             style={{ width: size, height: size, fontSize: size * 0.36 }}>
             {/[A-Za-z0-9]/.test(initial) ? initial : <Phone style={{ width: size * 0.4, height: size * 0.4 }} />}
+        </div>
+    );
+
+    return (
+        <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+            {inner}
+            {pauseBadge}
         </div>
     );
 }

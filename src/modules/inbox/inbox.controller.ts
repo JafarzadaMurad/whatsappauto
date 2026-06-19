@@ -529,10 +529,18 @@ export class InboxController {
             const sock = sessions.get(body.accountId);
             if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
 
+            // WhatsApp's PTT (voice note) flag requires ogg/opus on the
+            // receiving end. If the browser fell back to webm, drop the
+            // ptt flag so it goes as a regular audio attachment instead
+            // — at least it plays. Voice-note recording UI in the
+            // frontend tries to pick ogg first.
+            const mimeLow = (body.mimetype || '').toLowerCase();
+            const isPtt = !!body.ptt && /audio\/ogg/.test(mimeLow);
+
             let payload: any;
             if (body.mediaType === 'image')      payload = { image:    { url: body.mediaUrl }, caption: body.caption };
             else if (body.mediaType === 'video') payload = { video:    { url: body.mediaUrl }, caption: body.caption };
-            else if (body.mediaType === 'audio') payload = { audio:    { url: body.mediaUrl }, mimetype: body.mimetype || 'audio/ogg; codecs=opus', ptt: !!body.ptt };
+            else if (body.mediaType === 'audio') payload = { audio:    { url: body.mediaUrl }, mimetype: body.mimetype || 'audio/ogg; codecs=opus', ptt: isPtt };
             else                                 payload = { document: { url: body.mediaUrl }, fileName: body.fileName || 'file', mimetype: body.mimetype || 'application/octet-stream', caption: body.caption };
 
             let sent: any;
@@ -547,7 +555,7 @@ export class InboxController {
                     instanceId: body.accountId,
                     remoteJid: body.remoteJid,
                     isFromMe: true,
-                    messageType: body.ptt ? 'audio' : body.mediaType,
+                    messageType: isPtt ? 'audio' : body.mediaType,
                     content: body.caption || '',
                     mediaUrl: body.mediaUrl,
                     mediaMime: body.mimetype || null,
@@ -557,7 +565,30 @@ export class InboxController {
                     waMsgId: sent?.key?.id || null,
                 },
             });
-            return res.json({ success: true, message: saved });
+            // Mirror the shape the inbox /messages endpoint returns so
+            // the frontend's MessageBubble (which keys off
+            // userMessage/agentReply, not isFromMe) renders the bubble
+            // on the right with the media + caption.
+            const captionOrPlaceholder = body.caption || (
+                body.mediaType === 'image'    ? '🖼️ Photo' :
+                body.mediaType === 'video'    ? '🎬 Video' :
+                body.mediaType === 'audio'    ? (isPtt ? '🎤 Voice message' : '🎵 Audio') :
+                                                '📄 ' + (body.fileName || 'Document')
+            );
+            return res.json({ success: true, message: {
+                id: saved.id,
+                userMessage: '',
+                agentReply: captionOrPlaceholder,
+                createdAt: saved.timestamp,
+                provider: 'MANUAL', model: 'manual',
+                promptTokens: 0, completionTokens: 0, totalTokens: 0, toolCalls: [],
+                messageType: saved.messageType,
+                mediaUrl: saved.mediaUrl,
+                mediaMime: saved.mediaMime,
+                mediaName: saved.mediaName,
+                waMsgId: saved.waMsgId,
+                deliveryStatus: saved.status,
+            }});
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });

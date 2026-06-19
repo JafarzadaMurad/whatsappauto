@@ -365,20 +365,17 @@ export default function InboxPage() {
                 mimetype: opts.mimetype || up.data.mimetype,
                 ptt: !!opts.ptt,
             });
-            if (r.data?.success) {
-                const msg = r.data.message;
-                setMessages(prev => [...prev, {
-                    id: msg.id,
-                    isFromMe: true,
-                    content: msg.content,
-                    createdAt: msg.timestamp || new Date().toISOString(),
-                    messageType: msg.messageType,
-                    mediaUrl: msg.mediaUrl,
-                    mediaMime: msg.mediaMime,
-                    mediaName: msg.mediaName,
-                    waMsgId: msg.waMsgId,
-                    deliveryStatus: 'SENT',
-                }]);
+            if (r.data?.success && r.data.message) {
+                stickToBottomRef.current = true;
+                setMessages(prev => [...prev, r.data.message]);
+                // Bump conversation to top with a friendly preview.
+                const preview = opts.caption || r.data.message.agentReply || '📎 Media';
+                setConversations(prev => {
+                    const next = prev.map(c => c.remoteJid === selected.remoteJid && c.accountId === selected.accountId
+                        ? { ...c, lastMessage: preview, lastFromMe: true, lastMessageAt: new Date().toISOString() }
+                        : c);
+                    return next.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+                });
             }
         } catch (e: any) {
             alert(e.response?.data?.message || e.message || 'Send failed');

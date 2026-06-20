@@ -410,6 +410,13 @@ model Agent {
   // clips). Setting this dramatically improves transcription quality
   // when the customer base speaks a known language.
   whisperLanguage String?
+  // OpenAI speech-to-text model. One of:
+  //   whisper-1               — classic, cheapest, broadest format
+  //   gpt-4o-transcribe       — newer, higher accuracy
+  //   gpt-4o-mini-transcribe  — cheaper newer model
+  // Default is whisper-1 because it's the most permissive about input
+  // formats (webm/ogg/m4a all work).
+  whisperModel    String   @default("whisper-1")
   // How many recent messages the agent sees on each turn. Smaller
   // windows force the model to use the memory tools for older context
   // (cheaper tokens, slower lookups); larger windows give it more

@@ -45,6 +45,7 @@ export async function transcribeAudioUrl(opts: {
     mediaUrl: string;
     mimetype?: string | null;
     language?: string | null;
+    model?: string | null; // whisper-1 | gpt-4o-transcribe | gpt-4o-mini-transcribe
 }): Promise<TranscribeResult | null> {
     const apiKey = await getOpenAIKey(opts.workspaceId);
     if (!apiKey) {
@@ -69,9 +70,13 @@ export async function transcribeAudioUrl(opts: {
     const fileBuf = fs.readFileSync(localPath);
     const fileBlob = new Blob([fileBuf], { type: opts.mimetype || 'audio/ogg' });
     const form = new FormData();
+    const model = opts.model || 'whisper-1';
     form.append('file', fileBlob, path.basename(localPath));
-    form.append('model', 'whisper-1');
-    form.append('response_format', 'verbose_json');
+    form.append('model', model);
+    // gpt-4o-transcribe and its mini variant only support json /
+    // text response formats — verbose_json is whisper-1 only.
+    const verbose = model === 'whisper-1';
+    form.append('response_format', verbose ? 'verbose_json' : 'json');
     if (opts.language) form.append('language', opts.language);
 
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -86,7 +91,7 @@ export async function transcribeAudioUrl(opts: {
     }
     const json: any = await res.json();
     const text = String(json.text || '').trim();
-    logger.info({ bytes: fileBuf.length, lang: json.language, dur: json.duration, chars: text.length }, '[whisper] transcribed');
+    logger.info({ bytes: fileBuf.length, model, lang: json.language, dur: json.duration, chars: text.length }, '[whisper] transcribed');
     return {
         text,
         language: json.language,

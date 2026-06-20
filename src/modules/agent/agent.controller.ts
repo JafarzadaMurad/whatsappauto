@@ -51,6 +51,7 @@ const createAgentSchema = z.object({
     visionEnabled: z.boolean().optional(),
     historyDepth: z.number().int().min(1).max(50).optional(),
     whisperLanguage: z.string().min(2).max(8).nullable().optional(),
+    whisperModel: z.enum(['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe']).optional(),
 });
 
 export class AgentController {
@@ -114,6 +115,7 @@ export class AgentController {
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                     ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
+                    ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
                 }
             });
 
@@ -152,6 +154,7 @@ export class AgentController {
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                     ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
+                    ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
                 }
             });
 

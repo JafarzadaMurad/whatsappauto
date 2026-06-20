@@ -306,7 +306,7 @@ export class InstanceManager {
                         try {
                             const instMeta = await prisma.instance.findUnique({
                                 where: { id: instanceId },
-                                select: { workspaceId: true, agent: { select: { audioEnabled: true, whisperLanguage: true } } },
+                                select: { workspaceId: true, agent: { select: { audioEnabled: true, whisperLanguage: true, whisperModel: true } } },
                             });
                             if (instMeta?.workspaceId && (instMeta as any)?.agent?.audioEnabled) {
                                 const { transcribeAudioUrl } = await import('../agent/whisper.service');
@@ -315,6 +315,7 @@ export class InstanceManager {
                                     mediaUrl: savedMedia.mediaUrl,
                                     mimetype: savedMedia.mediaMime,
                                     language: (instMeta as any).agent?.whisperLanguage || null,
+                                    model: (instMeta as any).agent?.whisperModel || null,
                                 });
                                 if (r?.text) {
                                     // No prefix — the agent treats this as

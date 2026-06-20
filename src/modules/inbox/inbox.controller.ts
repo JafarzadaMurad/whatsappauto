@@ -86,6 +86,8 @@ export class InboxController {
                 unreadCount?: number;
                 profilePic?: string | null;
                 agentPaused?: boolean;
+                assignedAgentId?: string | null;
+                assignedAgentName?: string | null;
             };
 
             const convos: Convo[] = [];
@@ -226,7 +228,11 @@ export class InboxController {
             if (allPhones.length > 0) {
                 const rows = await prisma.client.findMany({
                     where: { workspaceId, phone: { in: allPhones } },
-                    select: { id: true, phone: true, profilePicUrl: true, profilePicUpdatedAt: true, agentPaused: true },
+                    select: {
+                        id: true, phone: true, profilePicUrl: true, profilePicUpdatedAt: true, agentPaused: true,
+                        assignedAgentId: true,
+                        assignedAgent: { select: { name: true } },
+                    },
                 });
                 const byPhone = new Map(rows.map(r => [r.phone, r]));
                 for (const c of convos) {
@@ -234,6 +240,8 @@ export class InboxController {
                     if (!r) continue;
                     if (c.channel === 'whatsapp' && !c.profilePic) c.profilePic = r.profilePicUrl || null;
                     c.agentPaused = !!r.agentPaused;
+                    c.assignedAgentId = r.assignedAgentId;
+                    c.assignedAgentName = r.assignedAgent?.name || null;
                 }
 
                 // Backfill profile pics for WhatsApp rows that were never
@@ -476,6 +484,32 @@ export class InboxController {
     // the inbox when the operator opens a chat so the unread badge
     // clears and (for WhatsApp) we can optionally ship a read receipt
     // upstream later.
+    // Set or clear the sticky agent assignment on a contact. Used by
+    // the inbox UI's "switch agent" / "back to router" controls.
+    async assignAgent(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const schema = z.object({
+                phone: z.string().min(1),
+                agentId: z.string().uuid().nullable(),
+            });
+            const { phone, agentId } = schema.parse(req.body);
+            const phoneDigits = phone.replace(/[^0-9]/g, '');
+            if (agentId) {
+                const ok = await prisma.agent.findFirst({ where: { id: agentId, workspaceId } });
+                if (!ok) return res.status(400).json({ success: false, message: 'Invalid agentId' });
+            }
+            const updated = await prisma.client.updateMany({
+                where: { workspaceId, phone: phoneDigits },
+                data: { assignedAgentId: agentId },
+            });
+            return res.json({ success: true, updated: updated.count });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     // Manual profile-pic refresh — handy when the lazy fetcher hasn't
     // run yet for a contact (e.g. backlog from before the feature
     // shipped, or the contact's privacy initially blocked it).

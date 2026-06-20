@@ -72,6 +72,8 @@ type Conversation = {
     unreadCount?: number;
     profilePic?: string | null;
     agentPaused?: boolean;
+    assignedAgentId?: string | null;
+    assignedAgentName?: string | null;
 };
 
 type Message = {
@@ -382,6 +384,19 @@ export default function InboxPage() {
         } finally { setSending(false); }
     };
 
+    const clearAssignment = async () => {
+        if (!selected) return;
+        if (!confirm(`Release ${selected.name || 'this contact'} from "${selected.assignedAgentName}"? The router will handle the next message.`)) return;
+        try {
+            await api.post('/inbox/assign-agent', { phone: selected.phone, agentId: null });
+            setConversations(prev => prev.map(c => (
+                c.accountId === selected.accountId && c.remoteJid === selected.remoteJid
+                    ? { ...c, assignedAgentId: null, assignedAgentName: null } : c
+            )));
+            setSelected({ ...selected, assignedAgentId: null, assignedAgentName: null });
+        } catch (e: any) { alert(e.response?.data?.message || e.message); }
+    };
+
     const togglePause = async () => {
         if (!selected) return;
         const next = !agentPaused;
@@ -492,9 +507,18 @@ export default function InboxPage() {
                                 </button>
                                 <Avatar conv={selected} size={40} />
                                 <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 min-w-0">
+                                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                         <h2 className="font-semibold text-sm truncate">{displayName(selected)}</h2>
                                         <ChannelBadge channel={selected.channel} />
+                                        {selected.assignedAgentName && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-violet-500/10 text-violet-300 border border-violet-500/20"
+                                                title={`Routed to ${selected.assignedAgentName}. Click × to release.`}>
+                                                via {selected.assignedAgentName}
+                                                <button onClick={clearAssignment} className="ml-0.5 hover:text-violet-100">
+                                                    ×
+                                                </button>
+                                            </span>
+                                        )}
                                     </div>
                                     <p className="text-xs text-muted-foreground truncate">
                                         {!selected.name && selected.channel === 'whatsapp' && !selected.isAnonymous

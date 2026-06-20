@@ -367,6 +367,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [historyDepth, setHistoryDepth] = useState(10);
     const [whisperLanguage, setWhisperLanguage] = useState<string>("");
     const [whisperModel, setWhisperModel] = useState<string>("whisper-1");
+    const [isRouter, setIsRouter] = useState(false);
+    const [routerDescription, setRouterDescription] = useState("");
     const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
@@ -415,6 +417,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setHistoryDepth(Number(a.historyDepth) || 10);
                     setWhisperLanguage(a.whisperLanguage || "");
                     setWhisperModel(a.whisperModel || "whisper-1");
+                    setIsRouter(!!a.isRouter);
+                    setRouterDescription(a.routerDescription || "");
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -647,7 +651,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -666,7 +670,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1502,6 +1506,34 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     </div>
                                 </label>
                             </div>
+                        </div>
+
+                        {/* Routing — turn this agent into a dispatcher that
+                            picks a specialised sibling agent per contact. */}
+                        <div className={`rounded-xl border ${isRouter ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
+                            <div className="p-3 border-b border-border">
+                                <label className="flex items-start gap-3 cursor-pointer">
+                                    <input type="checkbox" checked={isRouter} onChange={e => setIsRouter(e.target.checked)}
+                                        className="w-4 h-4 mt-0.5 accent-primary rounded cursor-pointer" />
+                                    <div className="flex-1">
+                                        <div className="text-sm font-medium">Router (multi-business dispatcher)</div>
+                                        <div className="text-xs text-muted-foreground">
+                                            When on, this agent gets the handoffTo tool and is allowed to be selected as the router on a WhatsApp instance. It greets brand-new contacts, identifies which business they need, and binds them to the right specialised agent — future messages skip the router entirely.
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                            {!isRouter && (
+                                <div className="p-3">
+                                    <label className="text-[11px] font-medium text-muted-foreground">Router description</label>
+                                    <textarea value={routerDescription} onChange={e => setRouterDescription(e.target.value)} rows={2}
+                                        placeholder="Short one-liner shown to a router agent so it knows when to pick this agent. e.g. 'Handles laser cutting orders, quotes and turnaround questions.'"
+                                        className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                    <p className="text-[11px] text-muted-foreground mt-1">
+                                        Only used when another agent is set up as a router and is choosing which specialist to hand a contact to.
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}

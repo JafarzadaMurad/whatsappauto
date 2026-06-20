@@ -112,6 +112,7 @@ export class WhatsappController {
             const id = req.params.id as string;
             const schema = z.object({
                 agentId: z.string().uuid().nullable().optional(),
+                routerAgentId: z.string().uuid().nullable().optional(),
                 syncHistory: z.boolean().optional(),
             });
             const data = schema.parse(req.body);
@@ -125,6 +126,7 @@ export class WhatsappController {
                 where: { id },
                 data: {
                     ...(data.agentId !== undefined ? { agentId: data.agentId } : {}),
+                    ...(data.routerAgentId !== undefined ? { routerAgentId: data.routerAgentId } : {}),
                     ...(data.syncHistory !== undefined ? { syncHistory: data.syncHistory } : {}),
                 },
             });

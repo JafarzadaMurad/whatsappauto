@@ -17,5 +17,6 @@ router.post('/reply', requireChatWrite, controller.reply.bind(controller));
 router.post('/send-media', requireChatWrite, controller.sendMedia.bind(controller));
 router.post('/mark-read', requireChatView, controller.markRead.bind(controller));
 router.post('/refresh-profile-pic', requireChatView, controller.refreshProfilePic.bind(controller));
+router.post('/assign-agent', requireChatWrite, controller.assignAgent.bind(controller));
 
 export default router;

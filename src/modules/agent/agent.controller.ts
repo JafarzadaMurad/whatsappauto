@@ -52,6 +52,8 @@ const createAgentSchema = z.object({
     historyDepth: z.number().int().min(1).max(50).optional(),
     whisperLanguage: z.string().min(2).max(8).nullable().optional(),
     whisperModel: z.enum(['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe']).optional(),
+    isRouter: z.boolean().optional(),
+    routerDescription: z.string().max(400).nullable().optional(),
 });
 
 export class AgentController {
@@ -116,6 +118,8 @@ export class AgentController {
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                     ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
                     ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
+                    ...(data.isRouter !== undefined ? { isRouter: data.isRouter } : {}),
+                    ...(data.routerDescription !== undefined ? { routerDescription: data.routerDescription } : {}),
                 }
             });
 
@@ -155,6 +159,8 @@ export class AgentController {
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                     ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
                     ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
+                    ...(data.isRouter !== undefined ? { isRouter: data.isRouter } : {}),
+                    ...(data.routerDescription !== undefined ? { routerDescription: data.routerDescription } : {}),
                 }
             });
 

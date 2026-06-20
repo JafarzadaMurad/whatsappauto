@@ -223,6 +223,14 @@ model Instance {
   agentId String?
   agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
+  // Optional router agent — used as the first agent that talks to a
+  // brand new contact. Its handoffTo tool then binds the contact to a
+  // specialised agent via Client.assignedAgentId and the router
+  // stops being called for that contact. When null, the conversation
+  // goes straight to the primary agent above.
+  routerAgentId String?
+  routerAgent   Agent?  @relation("InstanceRouter", fields: [routerAgentId], references: [id], onDelete: SetNull)
+
   name        String
   status      String  @default("DISCONNECTED") // CONNECTED, DISCONNECTED, CONNECTING
   sessionData String? @db.Text // Can store some meta-info, actual baileys state might be stored elsewhere or here piece by piece
@@ -417,6 +425,16 @@ model Agent {
   // Default is whisper-1 because it's the most permissive about input
   // formats (webm/ogg/m4a all work).
   whisperModel    String   @default("whisper-1")
+  // Sticky routing. isRouter=true marks this agent as a dispatcher —
+  // it gets the handoffTo + unassignAgent tools and is allowed to be
+  // selected as Instance.routerAgentId. routerDescription is a short
+  // text the router sees in its tool's enum so it knows when to pick
+  // each sibling ("Handles laser cutting orders and quote requests").
+  isRouter           Boolean @default(false)
+  routerDescription  String?
+
+  instancesAsRouter Instance[] @relation("InstanceRouter")
+  assignedClients   Client[]   @relation("ClientAssignedAgent")
   // How many recent messages the agent sees on each turn. Smaller
   // windows force the model to use the memory tools for older context
   // (cheaper tokens, slower lookups); larger windows give it more
@@ -726,6 +744,13 @@ model Client {
   // full memory after the human un-pauses.
   agentPaused      Boolean   @default(false)
   pausedAt         DateTime?
+
+  // Sticky routing pointer. Set by the router agent's handoffTo tool
+  // when a new contact picks a topic. Future messages from this
+  // contact go straight to the assigned agent, skipping the router.
+  // Null = let the router (or the instance's primary agent) decide.
+  assignedAgentId  String?
+  assignedAgent    Agent?    @relation("ClientAssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
 
   // True when `phone` is actually a WhatsApp LID (anonymous identity)
   // rather than a real phone number. UI uses this to render a 🔒 badge

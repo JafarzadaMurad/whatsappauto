@@ -1505,6 +1505,80 @@ export function buildToolsForSkills(
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };
 }
 
+// Builds the router-specific tools: handoffTo (binds the contact to a
+// specialised agent) and unassignAgent (releases the binding so future
+// messages flow back through the router). Returned alongside a prompt
+// block that lists every assignable sibling agent + its
+// routerDescription so the model knows when to pick which.
+async function buildRouterTools(opts: {
+    workspaceId: string;
+    currentAgentId: string;
+    contactPhone: string;
+}): Promise<{ tools: Record<string, any>; prompt: string }> {
+    const siblings = await prisma.agent.findMany({
+        where: {
+            workspaceId: opts.workspaceId,
+            isActive: true,
+            isRouter: false,
+            id: { not: opts.currentAgentId },
+        },
+        select: { id: true, name: true, routerDescription: true },
+        orderBy: { name: 'asc' },
+    });
+    if (siblings.length === 0) return { tools: {}, prompt: '' };
+
+    const enumIds = siblings.map(s => s.id) as [string, ...string[]];
+    const handoffSchema = z.object({
+        agentId: z.enum(enumIds).describe('Which specialised agent should take over.'),
+        greeting: z.string().optional().describe('Short Azerbaijani / Russian one-liner to send to the customer right before handing off, e.g. "Sizi mütəxəssisə yönəldirəm."'),
+    });
+
+    const tools: Record<string, any> = {
+        handoffTo: makeTool(
+            'Bind this contact to a specialised agent. After calling this, every future message from the contact goes straight to that agent — the router stops being invoked. Call exactly once per conversation, once you are confident about which topic the customer needs.',
+            handoffSchema,
+            async (params: { agentId: string; greeting?: string }) => {
+                const target = siblings.find(s => s.id === params.agentId);
+                if (!target) return { ok: false, error: 'Unknown agent' };
+                await prisma.client.updateMany({
+                    where: { workspaceId: opts.workspaceId, phone: opts.contactPhone },
+                    data: { assignedAgentId: params.agentId },
+                });
+                return { ok: true, assignedTo: target.name, greeting: params.greeting || null };
+            },
+        ),
+        unassignAgent: makeTool(
+            'Release the current contact\'s agent binding. After this the router will handle the next message again (use when the customer says "I want a different topic" or similar).',
+            z.object({}),
+            async () => {
+                await prisma.client.updateMany({
+                    where: { workspaceId: opts.workspaceId, phone: opts.contactPhone },
+                    data: { assignedAgentId: null },
+                });
+                return { ok: true };
+            },
+        ),
+    };
+
+    const list = siblings
+        .map(s => `- "${s.id}" → ${s.name}: ${s.routerDescription || '(no description)'}`)
+        .join('\n');
+    const prompt = `
+## Routing
+You are the router agent. Your job is to greet the customer, find out which topic they need, then hand them off to the right specialised agent via the handoffTo tool. After handoff, you are out of the loop — the specialised agent owns the conversation.
+
+Available agents (agentId → name → what they handle):
+${list}
+
+Rules:
+- Ask at most ONE short question to figure out the topic.
+- Once you are reasonably confident, call handoffTo with the matching agentId. Include a brief greeting in the 'greeting' field if you want to send a transition line to the customer.
+- If the topic isn't covered by any agent, apologise briefly and stop — do NOT call handoffTo with a guess.
+- Use unassignAgent only when an already-assigned customer asks to switch topics.
+`;
+    return { tools, prompt };
+}
+
 // ─── Main AI Service ───
 export class AiService {
     static async handleIncomingMessage(
@@ -1516,7 +1590,10 @@ export class AiService {
         try {
             const instance = await prisma.instance.findUnique({
                 where: { id: instanceId },
-                include: { agent: { include: { provider: true } } }
+                include: {
+                    agent: { include: { provider: true } },
+                    routerAgent: { include: { provider: true } },
+                },
             });
             if (!instance) return;
 
@@ -1583,10 +1660,39 @@ export class AiService {
                 return;
             }
 
-            if (!instance?.agent?.provider) return;
-            if (!(instance.agent as any).isActive) return;
+            // ─── Sticky routing ───
+            // Resolution order:
+            //   1. The contact already has Client.assignedAgentId set → use that agent
+            //      (this is what the router's handoffTo tool wrote).
+            //   2. Instance has a routerAgent configured AND the contact
+            //      isn't assigned yet → use the router. It will pick a
+            //      specialised agent via handoffTo on its first turn.
+            //   3. Fall back to Instance.agent (the legacy single-agent
+            //      setup — most workspaces stay on this path).
+            const phoneForLookup = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const wsLookup = instance.workspaceId
+                || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(instance.userId));
+            const clientForRouting = await prisma.client.findFirst({
+                where: { workspaceId: wsLookup, phone: phoneForLookup },
+                select: { assignedAgentId: true },
+            });
+            let resolvedAgent: any = null;
+            if (clientForRouting?.assignedAgentId) {
+                resolvedAgent = await prisma.agent.findUnique({
+                    where: { id: clientForRouting.assignedAgentId },
+                    include: { provider: true },
+                });
+            }
+            if (!resolvedAgent && instance.routerAgent) {
+                resolvedAgent = instance.routerAgent;
+            }
+            if (!resolvedAgent) {
+                resolvedAgent = instance.agent;
+            }
+            if (!resolvedAgent?.provider) return;
+            if (!(resolvedAgent as any).isActive) return;
 
-            const agent = instance.agent;
+            const agent = resolvedAgent;
             const providerInfo = agent.provider;
 
             // Configure AI model
@@ -1676,13 +1782,28 @@ export class AiService {
             // Build tools based on agent skills
             const httpTools = (((agent as any).httpTools) || []) as HttpToolTemplate[];
             const skillPrompts = (((agent as any).skillPrompts) || {}) as Record<string, string>;
-            const { tools, skillPrompt } = buildToolsForSkills(
+            const { tools: skillTools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, remoteJid, skillPrompts,
                 instanceId, contactName
             );
 
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
+            // Router agents pick up the handoffTo / unassignAgent tools and
+            // a prompt block listing every assignable sibling agent.
+            let tools = skillTools as Record<string, any> | undefined;
+            let routerPrompt = '';
+            if ((agent as any).isRouter) {
+                const r = await buildRouterTools({
+                    workspaceId: wsId, currentAgentId: agent.id,
+                    contactPhone: phone,
+                });
+                if (Object.keys(r.tools).length > 0) {
+                    tools = { ...(tools || {}), ...r.tools };
+                    routerPrompt = r.prompt;
+                }
+            }
+
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt + routerPrompt;
 
             // Set AGENT_DEBUG=true to dump the exact provider request
             // (system prompt, message turns, tool names) and the

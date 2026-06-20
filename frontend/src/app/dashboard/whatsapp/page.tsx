@@ -14,6 +14,8 @@ interface Instance {
     createdAt: string;
     agentId?: string | null;
     agent?: any;
+    routerAgentId?: string | null;
+    routerAgent?: any;
 }
 
 export default function WhatsAppPage() {
@@ -162,6 +164,15 @@ export default function WhatsAppPage() {
         finally { setUpdatingAgent(null); }
     };
 
+    const handleLinkRouter = async (instanceId: string, routerAgentId: string) => {
+        setUpdatingAgent(instanceId);
+        try {
+            await api.put(`/instances/${instanceId}`, { routerAgentId: routerAgentId || null });
+            setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, routerAgentId: routerAgentId || null, routerAgent: agents.find(a => a.id === routerAgentId) } : i));
+        } catch (err) { console.error(err); }
+        finally { setUpdatingAgent(null); }
+    };
+
     return (
         <div className="max-w-5xl mx-auto space-y-8">
             <div>
@@ -255,17 +266,32 @@ export default function WhatsAppPage() {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-3">
-                                    {/* Agent selector */}
-                                    <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                    {/* Primary agent — handles a contact when no router is set or
+                                        when the contact is already bound to no specific agent. */}
+                                    <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl" title="Primary agent — used when no router is set">
                                         {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Bot className="w-4 h-4 text-primary" />}
                                         <select value={inst.agentId || ""} disabled={updatingAgent === inst.id}
                                             onChange={e => handleLinkAgent(inst.id, e.target.value)}
                                             className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
                                             <option value="">No AI Agent</option>
-                                            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                            {agents.filter(a => !a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                                         </select>
                                     </div>
+                                    {/* Router agent — greets new contacts and hands them off to
+                                        a specialised agent via the handoffTo tool. Only agents
+                                        with isRouter=true are listed. */}
+                                    {agents.some(a => a.isRouter) && (
+                                        <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl" title="Router agent — greets new contacts and dispatches them">
+                                            {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Bot className="w-4 h-4 text-amber-400" />}
+                                            <select value={inst.routerAgentId || ""} disabled={updatingAgent === inst.id}
+                                                onChange={e => handleLinkRouter(inst.id, e.target.value)}
+                                                className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
+                                                <option value="">No router</option>
+                                                {agents.filter(a => a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                            </select>
+                                        </div>
+                                    )}
 
                                     {inst.status === 'CONNECTED' ? (
                                         <Link href={`/dashboard/instances/${inst.id}`}

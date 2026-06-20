@@ -43,7 +43,12 @@ export type MediaSaveResult = {
 // from, returns the canonical /api/uploads/files/... URL. Returns null
 // if the message has no downloadable media (text, sticker without
 // image, etc.) or if WhatsApp rejected the fetch.
-export async function downloadAndSaveMedia(msg: any): Promise<MediaSaveResult | null> {
+//
+// `sock` is the live Baileys connection; it's passed in so we can call
+// sock.updateMediaMessage when WhatsApp returns 410 / expired-URL and
+// asks us to re-request the media. Without that callback the download
+// just throws and the inbox bubble renders as a "📷 Photo" placeholder.
+export async function downloadAndSaveMedia(msg: any, sock?: any): Promise<MediaSaveResult | null> {
     const m = msg?.message;
     if (!m) return null;
 
@@ -79,15 +84,36 @@ export async function downloadAndSaveMedia(msg: any): Promise<MediaSaveResult | 
     const filePath = path.join(UPLOAD_DIR, fileName);
 
     try {
-        const buffer = await downloadMediaMessage(
-            msg,
-            'buffer',
-            {},
-            { logger: logger as any, reuploadRequest: async () => msg } as any,
-        );
-        if (!buffer || (buffer as Buffer).length === 0) return null;
+        // Hand Baileys its own updateMediaMessage when we have a live
+        // socket — that's the only way to recover from "media expired"
+        // (re-requests the encrypted blob from the WhatsApp server).
+        // A retry loop covers transient decryption failures Baileys
+        // sometimes throws on the first attempt right after connect.
+        const reuploadRequest = sock?.updateMediaMessage
+            ? sock.updateMediaMessage.bind(sock)
+            : (async (m: any) => m);
+        let buffer: Buffer | null = null;
+        let lastErr: any = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                buffer = await downloadMediaMessage(
+                    msg,
+                    'buffer',
+                    {},
+                    { logger: logger as any, reuploadRequest } as any,
+                ) as Buffer;
+                if (buffer && (buffer as Buffer).length > 0) break;
+            } catch (e: any) {
+                lastErr = e;
+            }
+        }
+        if (!buffer || (buffer as Buffer).length === 0) {
+            logger.warn({ err: lastErr?.message, kind, mime: baseMime }, '[media] empty buffer from CDN');
+            return null;
+        }
 
         fs.writeFileSync(filePath, buffer as Buffer);
+        logger.info({ kind, bytes: buffer.length, fileName }, '[media] saved');
 
         const base = (config.FRONTEND_URL || '').replace(/\/$/, '');
         return {

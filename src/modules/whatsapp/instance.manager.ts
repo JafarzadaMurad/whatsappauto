@@ -214,7 +214,7 @@ export class InstanceManager {
                             },
                         }).catch(() => null);
                         if (created && ['image', 'video', 'audio', 'document', 'sticker'].includes(msgType)) {
-                            downloadAndSaveMedia(msg).then(saved => {
+                            downloadAndSaveMedia(msg, sock).then(saved => {
                                 if (saved) {
                                     prisma.message.update({
                                         where: { id: created.id },
@@ -294,7 +294,7 @@ export class InstanceManager {
                     // record has the URL immediately).
                     const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
                     const isMedia = mediaTypes.includes(msgType);
-                    const savedMedia = isMedia ? await downloadAndSaveMedia(msg) : null;
+                    const savedMedia = isMedia ? await downloadAndSaveMedia(msg, sock) : null;
 
                     if (msg.key.fromMe) {
                         await prisma.message.create({

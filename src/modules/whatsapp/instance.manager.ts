@@ -316,7 +316,14 @@ export class InstanceManager {
                                     mimetype: savedMedia.mediaMime,
                                 });
                                 if (r?.text) {
-                                    finalContent = `[Voice transcript]: ${r.text}`;
+                                    // No prefix — the agent treats this as
+                                    // ordinary user text. Whisper transcripts
+                                    // are usually rough, but the model
+                                    // handles minor typos fine and a visible
+                                    // tag like "[Voice transcript]:" tends
+                                    // to make some models ignore the line
+                                    // as metadata.
+                                    finalContent = r.text;
                                 }
                             }
                         } catch (e: any) {

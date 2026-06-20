@@ -1684,6 +1684,30 @@ export class AiService {
 
             const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
 
+            // Set AGENT_DEBUG=true to dump the exact provider request
+            // (system prompt, message turns, tool names) and the
+            // resulting response on every call. Off by default so logs
+            // stay clean in production; flip it on, send one test
+            // message, then turn it back off and pm2 restart backend.
+            if (process.env.AGENT_DEBUG === 'true') {
+                logger.info({
+                    instanceId,
+                    remoteJid,
+                    provider: providerInfo.provider,
+                    model: agent.model,
+                    historyDepth,
+                    systemPromptChars: systemPrompt.length,
+                    systemPromptPreview: systemPrompt.slice(0, 800),
+                    toolNames: tools ? Object.keys(tools) : [],
+                    messages: messages.map((m: any) => ({
+                        role: m.role,
+                        content: typeof m.content === 'string'
+                            ? m.content.slice(0, 600)
+                            : (m.content || []).map((p: any) => p.type === 'text' ? { type: 'text', text: String(p.text || '').slice(0, 600) } : { type: p.type })
+                    })),
+                }, '[ai-debug] outgoing request');
+            }
+
             // Generate AI response
             const t0 = Date.now();
             const result = await generateText({
@@ -1698,6 +1722,20 @@ export class AiService {
                 ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
             } as any);
             const durationMs = Date.now() - t0;
+
+            if (process.env.AGENT_DEBUG === 'true') {
+                logger.info({
+                    instanceId,
+                    remoteJid,
+                    durationMs,
+                    finalText: String(result.text || '').slice(0, 800),
+                    steps: (result.steps || []).map((s: any) => ({
+                        toolCalls: (s.toolCalls || []).map((tc: any) => ({ tool: tc.toolName, args: tc.args ?? tc.input ?? null })),
+                        toolResults: (s.toolResults || []).map((tr: any) => ({ tool: tr.toolName, resultPreview: JSON.stringify(tr.result ?? tr.output ?? null).slice(0, 300) })),
+                    })),
+                    tokens: result.usage,
+                }, '[ai-debug] response');
+            }
 
             const cacheUsage = extractCacheUsage(providerInfo.provider, result);
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, Menu, X, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,7 +16,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const router = useRouter();
     const { user, isAuthenticated, logout, hasHydrated } = useAuthStore();
     const pathname = usePathname();
-    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [collapsed, setCollapsed] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
         Networks: true, 'AI Workspace': true, CRM: true
@@ -138,24 +137,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     return (
         <div className="h-screen overflow-hidden bg-background flex">
-            {/* Mobile Sidebar overlay */}
-            <AnimatePresence>
-                {sidebarOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40 lg:hidden"
-                        onClick={() => setSidebarOpen(false)}
-                    />
-                )}
-            </AnimatePresence>
-
-            {/* Sidebar */}
+            {/* Sidebar — always in the flex flow, never a fixed overlay.
+                That keeps the main content beside it regardless of viewport
+                width or browser zoom; on very narrow screens the user can
+                collapse it to a 72px icon-only rail. */}
             <motion.aside
                 animate={{ width: collapsed ? 72 : 256 }}
                 transition={{ duration: 0.2, ease: 'easeInOut' }}
-                className={`fixed inset-y-0 left-0 z-50 bg-card border-r border-border transform transition-transform duration-300 ease-in-out sm:translate-x-0 sm:static flex flex-col flex-shrink-0 overflow-hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'}`}
+                className="relative z-30 bg-card border-r border-border flex flex-col flex-shrink-0 overflow-hidden h-screen"
             >
                 <div className="h-16 flex items-center justify-between px-4 border-b border-border min-w-0">
                     {!collapsed ? (
@@ -164,14 +153,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <MessageSquare className="w-6 h-6 flex-shrink-0" />
                                 alChatBot
                             </div>
-                            <div className="flex items-center gap-1">
-                                <button className="hidden sm:block p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(true)}>
-                                    <PanelLeftClose className="w-4 h-4" />
-                                </button>
-                                <button className="sm:hidden text-muted-foreground" onClick={() => setSidebarOpen(false)}>
-                                    <X className="w-5 h-5" />
-                                </button>
-                            </div>
+                            <button className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(true)}>
+                                <PanelLeftClose className="w-4 h-4" />
+                            </button>
                         </>
                     ) : (
                         <button className="w-full flex justify-center p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors" onClick={() => setCollapsed(false)}>
@@ -214,7 +198,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                 const badge = (child as any).badge as number | undefined;
                                                 return (
                                                     <Link key={child.name} href={child.href} title={child.name}
-                                                        onClick={() => setSidebarOpen(false)}
                                                         className={`relative flex justify-center p-2.5 rounded-xl transition-colors ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
                                                         <child.icon className="w-4 h-4" />
                                                         {badge && badge > 0 ? (
@@ -254,7 +237,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                             <Link
                                                                 key={child.name}
                                                                 href={child.href}
-                                                                onClick={() => setSidebarOpen(false)}
                                                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium text-sm ${isChildActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
                                                             >
                                                                 <child.icon className="w-4 h-4 flex-shrink-0" />
@@ -280,7 +262,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             if (collapsed) {
                                 return (
                                     <Link key={item.name} href={item.href!} title={item.name}
-                                        onClick={() => setSidebarOpen(false)}
                                         className={`flex justify-center p-2.5 rounded-xl transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
                                         <Icon className="w-5 h-5" />
                                     </Link>
@@ -291,7 +272,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 <Link
                                     key={item.name}
                                     href={item.href!}
-                                    onClick={() => setSidebarOpen(false)}
                                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}
                                 >
                                     <Icon className="w-5 h-5 flex-shrink-0" />
@@ -334,14 +314,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </motion.aside>
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                <header className="h-16 border-b border-border bg-card/50 backdrop-blur flex items-center px-4 sm:hidden sticky top-0 z-30">
-                    <button onClick={() => setSidebarOpen(true)} className="p-2 text-foreground">
-                        <Menu className="w-6 h-6" />
-                    </button>
-                    <div className="ml-4 font-bold text-lg">alChatBot</div>
-                </header>
-
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden min-w-0">
                 <VerifyEmailBanner />
                 <main className="flex-1 overflow-y-auto p-4 md:p-8">
                     {children}

@@ -1602,9 +1602,14 @@ export class AiService {
                 return;
             }
 
-            // Fetch chat history (short window — agent uses memory tools for older context when needed)
+            // Fetch chat history. The number of recent messages the
+            // model sees comes straight from the agent's historyDepth
+            // setting (default 10). With the memory skill enabled the
+            // agent can fetch older context on demand via tools, so a
+            // small window stays useful; without memory pick a larger
+            // window from the UI.
             const skills = (agent as any).skills || [];
-            const historyDepth = skills.includes('memory') ? 3 : 10;
+            const historyDepth = Math.max(1, Math.min(50, Number((agent as any).historyDepth) || 10));
             const history = await prisma.message.findMany({
                 where: { instanceId, remoteJid },
                 orderBy: { timestamp: 'desc' },

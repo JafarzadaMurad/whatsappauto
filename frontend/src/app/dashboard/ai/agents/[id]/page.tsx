@@ -364,6 +364,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
     const [audioEnabled, setAudioEnabled] = useState(true);
     const [visionEnabled, setVisionEnabled] = useState(true);
+    const [historyDepth, setHistoryDepth] = useState(10);
     const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
@@ -409,6 +410,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setSkillPrompts((a.skillPrompts as Record<string, string>) || {});
                     setAudioEnabled(a.audioEnabled !== false);
                     setVisionEnabled(a.visionEnabled !== false);
+                    setHistoryDepth(Number(a.historyDepth) || 10);
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -641,7 +643,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -660,7 +662,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1486,7 +1488,19 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 )}
                             </div>
                             {skills.includes('memory') && expandedSkills.has('memory') && (
-                                <div className="border-t border-border p-4">
+                                <div className="border-t border-border p-4 space-y-4">
+                                    <div>
+                                        <label className="text-xs font-medium text-muted-foreground">History depth</label>
+                                        <div className="mt-1 flex items-center gap-3">
+                                            <input type="number" min={1} max={50}
+                                                value={historyDepth}
+                                                onChange={e => setHistoryDepth(Math.max(1, Math.min(50, Number(e.target.value) || 10)))}
+                                                className="w-24 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Number of recent messages the agent automatically sees each turn. Older context still reachable via memory tools. Range 1–50.
+                                            </p>
+                                        </div>
+                                    </div>
                                     <div className="flex items-center justify-between mb-1">
                                         <label className="text-xs font-medium text-muted-foreground">Memory Prompt</label>
                                         {(skillPrompts['memory'] || '').trim().length > 0 && (

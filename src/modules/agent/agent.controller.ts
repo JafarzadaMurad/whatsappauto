@@ -49,6 +49,7 @@ const createAgentSchema = z.object({
     isActive: z.boolean().optional(),
     audioEnabled: z.boolean().optional(),
     visionEnabled: z.boolean().optional(),
+    historyDepth: z.number().int().min(1).max(50).optional(),
 });
 
 export class AgentController {
@@ -110,6 +111,7 @@ export class AgentController {
                     skillPrompts: (data.skillPrompts || {}) as any,
                     ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
+                    ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                 }
             });
 
@@ -146,6 +148,7 @@ export class AgentController {
                     ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
                     ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
+                    ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
                 }
             });
 

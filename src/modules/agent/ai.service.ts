@@ -1612,10 +1612,33 @@ export class AiService {
             });
             history.reverse();
 
-            const messages = history.map(msg => ({
-                role: (msg.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
-                content: msg.content || '[Unsupported Media]'
-            }));
+            // Vision: if the agent has visionEnabled and the model
+            // supports image input, attach the image as a native content
+            // part on the LAST user message. Earlier history rows stay
+            // as plain text since most providers cap image cost per
+            // turn — only the most recent attachment matters anyway.
+            const visionOn = !!(agent as any).visionEnabled;
+            const lastIdx = history.length - 1;
+            const messages: any[] = history.map((msg, idx) => {
+                const isImage = visionOn && idx === lastIdx
+                    && !msg.isFromMe && msg.mediaUrl
+                    && (msg.messageType === 'image' || msg.messageType === 'sticker'
+                        || (msg.mediaMime || '').toLowerCase().startsWith('image/'));
+                const text = msg.content || '[Unsupported Media]';
+                if (isImage) {
+                    return {
+                        role: 'user' as const,
+                        content: [
+                            { type: 'text' as const, text },
+                            { type: 'image' as const, image: new URL(msg.mediaUrl as string) },
+                        ],
+                    };
+                }
+                return {
+                    role: (msg.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
+                    content: text,
+                };
+            });
 
             if (messages.length === 0) return;
 

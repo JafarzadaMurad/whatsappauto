@@ -46,7 +46,9 @@ const createAgentSchema = z.object({
     allowedUrls: z.array(z.string()).optional(),
     httpTools: z.array(httpToolTemplateSchema).optional(),
     skillPrompts: z.record(z.string(), z.string()).optional(),
-    isActive: z.boolean().optional()
+    isActive: z.boolean().optional(),
+    audioEnabled: z.boolean().optional(),
+    visionEnabled: z.boolean().optional(),
 });
 
 export class AgentController {
@@ -105,7 +107,9 @@ export class AgentController {
                     skills: data.skills || [],
                     allowedUrls: data.allowedUrls || [],
                     httpTools: (data.httpTools || []) as any,
-                    skillPrompts: (data.skillPrompts || {}) as any
+                    skillPrompts: (data.skillPrompts || {}) as any,
+                    ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
+                    ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                 }
             });
 
@@ -139,7 +143,9 @@ export class AgentController {
                     allowedUrls: data.allowedUrls || [],
                     httpTools: (data.httpTools || []) as any,
                     skillPrompts: (data.skillPrompts || {}) as any,
-                    ...(data.isActive !== undefined ? { isActive: data.isActive } : {})
+                    ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+                    ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
+                    ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                 }
             });
 

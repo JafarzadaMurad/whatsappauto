@@ -399,6 +399,12 @@ model Agent {
   httpTools       Json     @default("[]") // Array of HttpToolTemplate (n8n-style structured HTTP tools)
   skillPrompts    Json     @default("{}") // Per-skill prompt overrides: { memory?: string, crm?: string, ... }
   isActive        Boolean  @default(true)
+  // Multi-modal toggles. audioEnabled + an OpenAI provider key in the
+  // workspace ⇒ incoming voice notes are transcribed via Whisper.
+  // visionEnabled + a vision-capable model ⇒ incoming photos are
+  // forwarded as a native image part. Both default to on.
+  audioEnabled    Boolean  @default(true)
+  visionEnabled   Boolean  @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

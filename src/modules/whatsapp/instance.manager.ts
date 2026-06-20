@@ -296,6 +296,34 @@ export class InstanceManager {
                     const isMedia = mediaTypes.includes(msgType);
                     const savedMedia = isMedia ? await downloadAndSaveMedia(msg, sock) : null;
 
+                    // Voice-to-text: if this is an incoming voice note and
+                    // the agent has audioEnabled, transcribe via Whisper
+                    // and store the transcript as the message content so
+                    // the AI sees what was actually said. Falls through
+                    // silently when no OpenAI key or transcription fails.
+                    let finalContent = content;
+                    if (!msg.key.fromMe && msgType === 'audio' && savedMedia) {
+                        try {
+                            const instMeta = await prisma.instance.findUnique({
+                                where: { id: instanceId },
+                                select: { workspaceId: true, agent: { select: { audioEnabled: true } } },
+                            });
+                            if (instMeta?.workspaceId && (instMeta as any)?.agent?.audioEnabled) {
+                                const { transcribeAudioUrl } = await import('../agent/whisper.service');
+                                const r = await transcribeAudioUrl({
+                                    workspaceId: instMeta.workspaceId,
+                                    mediaUrl: savedMedia.mediaUrl,
+                                    mimetype: savedMedia.mediaMime,
+                                });
+                                if (r?.text) {
+                                    finalContent = `[Voice transcript]: ${r.text}`;
+                                }
+                            }
+                        } catch (e: any) {
+                            logger.warn({ err: e?.message }, '[whisper] transcription failed');
+                        }
+                    }
+
                     if (msg.key.fromMe) {
                         await prisma.message.create({
                             data: {
@@ -339,7 +367,7 @@ export class InstanceManager {
                             remoteJid,
                             isFromMe: false,
                             messageType: msgType,
-                            content,
+                            content: finalContent,
                             timestamp: ts,
                             waMsgId: msg.key?.id || null,
                             ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),

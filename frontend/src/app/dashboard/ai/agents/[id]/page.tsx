@@ -362,6 +362,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [allowedTableIds, setAllowedTableIds] = useState<string[]>([]);
     const [skills, setSkills] = useState<string[]>([]);
     const [httpTools, setHttpTools] = useState<HttpToolTemplate[]>([]);
+    const [audioEnabled, setAudioEnabled] = useState(true);
+    const [visionEnabled, setVisionEnabled] = useState(true);
     const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
@@ -405,6 +407,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         id: t.id || Math.random().toString(36).slice(2)
                     })));
                     setSkillPrompts((a.skillPrompts as Record<string, string>) || {});
+                    setAudioEnabled(a.audioEnabled !== false);
+                    setVisionEnabled(a.visionEnabled !== false);
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -637,7 +641,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts
+                httpTools, skillPrompts, audioEnabled, visionEnabled,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -656,7 +660,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1419,6 +1423,39 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
                             <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={6}
                                 className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                        </div>
+
+                        {/* Multi-modal — voice transcription + image vision. */}
+                        <div className="rounded-xl border border-border bg-card">
+                            <div className="p-3 border-b border-border">
+                                <div className="text-sm font-medium">Multi-modal input</div>
+                                <div className="text-xs text-muted-foreground">What the agent can perceive from incoming WhatsApp messages.</div>
+                            </div>
+                            <div className="p-3 space-y-2">
+                                <label className="flex items-start gap-3 cursor-pointer">
+                                    <input type="checkbox" checked={audioEnabled} onChange={e => setAudioEnabled(e.target.checked)}
+                                        className="w-4 h-4 mt-0.5 accent-primary rounded cursor-pointer" />
+                                    <div className="flex-1">
+                                        <div className="text-sm font-medium">Listen to voice messages</div>
+                                        <div className="text-xs text-muted-foreground">
+                                            Voice notes are transcribed via Whisper before the agent reads them. Requires an OpenAI provider configured in this workspace.
+                                            {!providers.some(p => p.provider === 'OPENAI') && (
+                                                <span className="ml-1 text-amber-400">No OpenAI key found — add one under AI Providers.</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </label>
+                                <label className="flex items-start gap-3 cursor-pointer">
+                                    <input type="checkbox" checked={visionEnabled} onChange={e => setVisionEnabled(e.target.checked)}
+                                        className="w-4 h-4 mt-0.5 accent-primary rounded cursor-pointer" />
+                                    <div className="flex-1">
+                                        <div className="text-sm font-medium">See images</div>
+                                        <div className="text-xs text-muted-foreground">
+                                            Photos are forwarded to the model as a native image part. Best-supported on GPT-4o, Claude 3+, and Gemini 1.5+.
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
                         </div>
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}

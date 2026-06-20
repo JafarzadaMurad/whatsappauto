@@ -405,6 +405,11 @@ model Agent {
   // forwarded as a native image part. Both default to on.
   audioEnabled    Boolean  @default(true)
   visionEnabled   Boolean  @default(true)
+  // Whisper language hint. ISO 639-1 ("az", "ru", "tr", "en", ...).
+  // Null = let Whisper auto-detect (often wrong for short non-English
+  // clips). Setting this dramatically improves transcription quality
+  // when the customer base speaks a known language.
+  whisperLanguage String?
   // How many recent messages the agent sees on each turn. Smaller
   // windows force the model to use the memory tools for older context
   // (cheaper tokens, slower lookups); larger windows give it more

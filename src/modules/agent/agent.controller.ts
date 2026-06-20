@@ -50,6 +50,7 @@ const createAgentSchema = z.object({
     audioEnabled: z.boolean().optional(),
     visionEnabled: z.boolean().optional(),
     historyDepth: z.number().int().min(1).max(50).optional(),
+    whisperLanguage: z.string().min(2).max(8).nullable().optional(),
 });
 
 export class AgentController {
@@ -112,6 +113,7 @@ export class AgentController {
                     ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
+                    ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
                 }
             });
 
@@ -149,6 +151,7 @@ export class AgentController {
                     ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
                     ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
                     ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
+                    ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
                 }
             });
 

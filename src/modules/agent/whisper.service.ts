@@ -44,6 +44,7 @@ export async function transcribeAudioUrl(opts: {
     workspaceId: string;
     mediaUrl: string;
     mimetype?: string | null;
+    language?: string | null;
 }): Promise<TranscribeResult | null> {
     const apiKey = await getOpenAIKey(opts.workspaceId);
     if (!apiKey) {
@@ -71,6 +72,7 @@ export async function transcribeAudioUrl(opts: {
     form.append('file', fileBlob, path.basename(localPath));
     form.append('model', 'whisper-1');
     form.append('response_format', 'verbose_json');
+    if (opts.language) form.append('language', opts.language);
 
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',

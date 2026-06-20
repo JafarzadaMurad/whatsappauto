@@ -365,6 +365,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [audioEnabled, setAudioEnabled] = useState(true);
     const [visionEnabled, setVisionEnabled] = useState(true);
     const [historyDepth, setHistoryDepth] = useState(10);
+    const [whisperLanguage, setWhisperLanguage] = useState<string>("");
     const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
@@ -411,6 +412,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setAudioEnabled(a.audioEnabled !== false);
                     setVisionEnabled(a.visionEnabled !== false);
                     setHistoryDepth(Number(a.historyDepth) || 10);
+                    setWhisperLanguage(a.whisperLanguage || "");
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -643,7 +645,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -662,7 +664,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1447,6 +1449,30 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                         </div>
                                     </div>
                                 </label>
+                                {audioEnabled && (
+                                    <div className="pl-7">
+                                        <label className="text-[11px] font-medium text-muted-foreground">Expected language</label>
+                                        <div className="mt-1 flex items-center gap-3">
+                                            <select value={whisperLanguage} onChange={e => setWhisperLanguage(e.target.value)}
+                                                className="bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                                <option value="">Auto-detect</option>
+                                                <option value="az">Azerbaijani</option>
+                                                <option value="ru">Russian</option>
+                                                <option value="tr">Turkish</option>
+                                                <option value="en">English</option>
+                                                <option value="uk">Ukrainian</option>
+                                                <option value="ar">Arabic</option>
+                                                <option value="fa">Persian</option>
+                                                <option value="es">Spanish</option>
+                                                <option value="fr">French</option>
+                                                <option value="de">German</option>
+                                            </select>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Setting this dramatically improves accuracy for short clips. Auto-detect frequently mis-identifies Azerbaijani / Turkic voices as English.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                                 <label className="flex items-start gap-3 cursor-pointer">
                                     <input type="checkbox" checked={visionEnabled} onChange={e => setVisionEnabled(e.target.checked)}
                                         className="w-4 h-4 mt-0.5 accent-primary rounded cursor-pointer" />

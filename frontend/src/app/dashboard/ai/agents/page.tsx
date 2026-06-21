@@ -33,7 +33,7 @@ export default function AiAgentsPage() {
     const loadData = async () => {
         try {
             const [agentsRes, provRes, tablesRes, modelsRes] = await Promise.all([
-                api.get('/agents'),
+                api.get('/agents', { params: { type: 'ai' } }),
                 api.get('/ai-providers'),
                 api.get('/tables'),
                 api.get('/ai-providers/models').catch(() => ({ data: { success: false } })),

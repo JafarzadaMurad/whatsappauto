@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Camera, Loader2, Trash2, Bot, Power } from "lucide-react";
+import { Camera, Loader2, Trash2, Bot, Power, GitBranch } from "lucide-react";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
@@ -40,6 +40,13 @@ export default function InstagramPage() {
     const handleLinkAgent = async (accountId: string, agentId: string) => {
         try {
             await api.put(`/instagram/accounts/${accountId}`, { agentId: agentId || null });
+            loadData();
+        } catch (err) { console.error(err); }
+    };
+
+    const handleLinkRouter = async (accountId: string, routerAgentId: string) => {
+        try {
+            await api.put(`/instagram/accounts/${accountId}`, { routerAgentId: routerAgentId || null });
             loadData();
         } catch (err) { console.error(err); }
     };
@@ -103,15 +110,29 @@ export default function InstagramPage() {
                                 </div>
                             </button>
 
-                            <div className="flex items-center gap-3">
-                                <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl">
+                            <div className="flex items-center gap-3 flex-wrap">
+                                {/* AI agent (direct mode) */}
+                                <div className="flex items-center gap-2 bg-primary/5 border border-primary/30 px-3 py-1.5 rounded-xl" title="AI Agent — answers directly when no router is set">
                                     <Bot className="w-4 h-4 text-primary" />
+                                    <span className="text-[10px] uppercase tracking-wide text-primary/80 font-semibold">AI</span>
                                     <select value={acc.agentId || ""} onChange={e => handleLinkAgent(acc.id, e.target.value)}
                                         className="bg-card text-foreground text-sm font-medium focus:outline-none w-32 truncate rounded-lg">
-                                        <option value="" className="bg-card text-foreground">No AI Agent</option>
-                                        {agents.map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
+                                        <option value="" className="bg-card text-foreground">— None —</option>
+                                        {agents.filter(a => !a.isRouter).map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
                                     </select>
                                 </div>
+                                {/* Router agent (dispatcher) */}
+                                {agents.some(a => a.isRouter) && (
+                                    <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/30 px-3 py-1.5 rounded-xl" title="Router — greets new contacts and dispatches them to a specialised AI agent">
+                                        <GitBranch className="w-4 h-4 text-amber-400" />
+                                        <span className="text-[10px] uppercase tracking-wide text-amber-300/90 font-semibold">Router</span>
+                                        <select value={acc.routerAgentId || ""} onChange={e => handleLinkRouter(acc.id, e.target.value)}
+                                            className="bg-card text-foreground text-sm font-medium focus:outline-none w-32 truncate rounded-lg">
+                                            <option value="" className="bg-card text-foreground">— None —</option>
+                                            {agents.filter(a => a.isRouter).map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
 
                                 <button onClick={() => handleToggle(acc.id, acc.isActive)}
                                     className={`p-2 rounded-lg transition-colors ${acc.isActive ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-muted-foreground hover:bg-secondary'}`}

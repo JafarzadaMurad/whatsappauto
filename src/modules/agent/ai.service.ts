@@ -1514,14 +1514,22 @@ async function buildRouterTools(opts: {
     workspaceId: string;
     currentAgentId: string;
     contactPhone: string;
+    allowedAgentIds?: string[];
 }): Promise<{ tools: Record<string, any>; prompt: string }> {
+    // If the router has an explicit allow-list, narrow to those IDs.
+    // Otherwise (empty array) fall back to "any non-router sibling" so
+    // routers from before this field existed keep working.
+    const where: any = {
+        workspaceId: opts.workspaceId,
+        isActive: true,
+        isRouter: false,
+        id: { not: opts.currentAgentId },
+    };
+    if (opts.allowedAgentIds && opts.allowedAgentIds.length > 0) {
+        where.id = { in: opts.allowedAgentIds, not: opts.currentAgentId } as any;
+    }
     const siblings = await prisma.agent.findMany({
-        where: {
-            workspaceId: opts.workspaceId,
-            isActive: true,
-            isRouter: false,
-            id: { not: opts.currentAgentId },
-        },
+        where,
         select: { id: true, name: true, routerDescription: true },
         orderBy: { name: 'asc' },
     });
@@ -1796,6 +1804,7 @@ export class AiService {
                 const r = await buildRouterTools({
                     workspaceId: wsId, currentAgentId: agent.id,
                     contactPhone: phone,
+                    allowedAgentIds: ((agent as any).routableAgentIds || []) as string[],
                 });
                 if (Object.keys(r.tools).length > 0) {
                     tools = { ...(tools || {}), ...r.tools };

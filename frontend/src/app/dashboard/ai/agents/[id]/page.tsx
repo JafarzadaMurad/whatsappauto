@@ -369,6 +369,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [whisperModel, setWhisperModel] = useState<string>("whisper-1");
     const [isRouter, setIsRouter] = useState(false);
     const [routerDescription, setRouterDescription] = useState("");
+    const [routableAgentIds, setRoutableAgentIds] = useState<string[]>([]);
+    const [siblingAgents, setSiblingAgents] = useState<{ id: string; name: string }[]>([]);
     const [operators, setOperators] = useState<Operator[]>([]);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [aiModels, setAiModels] = useState<Record<string, string[]>>({});
@@ -419,6 +421,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setWhisperModel(a.whisperModel || "whisper-1");
                     setIsRouter(!!a.isRouter);
                     setRouterDescription(a.routerDescription || "");
+                    setRoutableAgentIds((a.routableAgentIds || []) as string[]);
+                    // Load the rest of the workspace's AI agents so we can
+                    // render a "Targets" picker if this agent is a router.
+                    try {
+                        const sibs = await api.get('/agents', { params: { type: 'ai' } });
+                        if (sibs.data?.success) {
+                            setSiblingAgents((sibs.data.agents || []).map((x: any) => ({ id: x.id, name: x.name })));
+                        }
+                    } catch { /* not critical */ }
                 }
                 if (provRes.data.success) setProviders(provRes.data.providers);
                 if (tablesRes.data.success) setTables(tablesRes.data.tables);
@@ -651,7 +662,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -670,7 +681,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1508,33 +1519,51 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </div>
                         </div>
 
-                        {/* Routing — turn this agent into a dispatcher that
-                            picks a specialised sibling agent per contact. */}
-                        <div className={`rounded-xl border ${isRouter ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
-                            <div className="p-3 border-b border-border">
-                                <label className="flex items-start gap-3 cursor-pointer">
-                                    <input type="checkbox" checked={isRouter} onChange={e => setIsRouter(e.target.checked)}
-                                        className="w-4 h-4 mt-0.5 accent-primary rounded cursor-pointer" />
-                                    <div className="flex-1">
-                                        <div className="text-sm font-medium">Router (multi-business dispatcher)</div>
-                                        <div className="text-xs text-muted-foreground">
-                                            When on, this agent gets the handoffTo tool and is allowed to be selected as the router on a WhatsApp instance. It greets brand-new contacts, identifies which business they need, and binds them to the right specialised agent — future messages skip the router entirely.
-                                        </div>
+                        {/* Routing card — content depends on agent type.
+                            Router agents (created from the Router Agents page)
+                            see a target picker. Regular agents see only the
+                            optional one-liner shown to routers. The isRouter
+                            type itself is fixed at creation. */}
+                        {isRouter ? (
+                            <div className="rounded-xl border bg-amber-500/5 border-amber-500/30">
+                                <div className="p-3 border-b border-amber-500/20 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 text-sm font-medium">
+                                        <span className="text-amber-300">Router targets</span>
+                                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">router</span>
                                     </div>
-                                </label>
-                            </div>
-                            {!isRouter && (
-                                <div className="p-3">
-                                    <label className="text-[11px] font-medium text-muted-foreground">Router description</label>
-                                    <textarea value={routerDescription} onChange={e => setRouterDescription(e.target.value)} rows={2}
-                                        placeholder="Short one-liner shown to a router agent so it knows when to pick this agent. e.g. 'Handles laser cutting orders, quotes and turnaround questions.'"
-                                        className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
-                                    <p className="text-[11px] text-muted-foreground mt-1">
-                                        Only used when another agent is set up as a router and is choosing which specialist to hand a contact to.
-                                    </p>
+                                    <span className="text-xs text-muted-foreground">{routableAgentIds.length} selected</span>
                                 </div>
-                            )}
-                        </div>
+                                <div className="p-3 space-y-2">
+                                    <p className="text-xs text-muted-foreground">
+                                        Choose which specialised agents this router is allowed to dispatch contacts to. The router's handoffTo tool will only show these as options to the model.
+                                    </p>
+                                    <div className="border border-border rounded-lg max-h-56 overflow-y-auto">
+                                        {siblingAgents.length === 0 ? (
+                                            <div className="p-3 text-xs text-muted-foreground">No regular AI agents in this workspace yet. Create some under <a href="/dashboard/ai/agents" className="underline">AI Agents</a> first.</div>
+                                        ) : siblingAgents.map(s => (
+                                            <label key={s.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/40 cursor-pointer text-sm">
+                                                <input type="checkbox" checked={routableAgentIds.includes(s.id)}
+                                                    onChange={() => setRoutableAgentIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                                                    className="w-3.5 h-3.5 accent-primary" />
+                                                {s.name}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="rounded-xl border border-border bg-card">
+                                <div className="p-3 border-b border-border">
+                                    <div className="text-sm font-medium">Router description</div>
+                                    <div className="text-xs text-muted-foreground">A short label routers see when deciding whether to hand a contact off to this agent.</div>
+                                </div>
+                                <div className="p-3">
+                                    <textarea value={routerDescription} onChange={e => setRouterDescription(e.target.value)} rows={2}
+                                        placeholder="e.g. 'Handles laser cutting orders, quotes and turnaround questions.'"
+                                        className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                </div>
+                            </div>
+                        )}
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}
                         <div className={`rounded-xl border ${skills.includes('memory') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>

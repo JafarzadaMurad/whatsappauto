@@ -271,7 +271,7 @@ export class InstagramController {
         try {
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
-            const { agentId, isActive } = req.body;
+            const { agentId, routerAgentId, isActive } = req.body;
 
             const account = await prisma.instagramAccount.findFirst({ where: { id, workspaceId } });
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
@@ -280,6 +280,7 @@ export class InstagramController {
                 where: { id },
                 data: {
                     ...(agentId !== undefined ? { agentId: agentId || null } : {}),
+                    ...(routerAgentId !== undefined ? { routerAgentId: routerAgentId || null } : {}),
                     ...(isActive !== undefined ? { isActive } : {}),
                 }
             });

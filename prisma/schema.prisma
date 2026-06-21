@@ -432,8 +432,14 @@ model Agent {
   // each sibling ("Handles laser cutting orders and quote requests").
   isRouter           Boolean @default(false)
   routerDescription  String?
+  // For router agents: explicit allow-list of agent ids this router
+  // is allowed to dispatch to. Empty array = unset (back-compat: any
+  // workspace sibling is allowed). Owner manages this from the
+  // Router Agents page.
+  routableAgentIds   String[] @default([])
 
   instancesAsRouter Instance[] @relation("InstanceRouter")
+  igAccountsAsRouter InstagramAccount[] @relation("InstagramRouter")
   assignedClients   Client[]   @relation("ClientAssignedAgent")
   // How many recent messages the agent sees on each turn. Smaller
   // windows force the model to use the memory tools for older context
@@ -852,6 +858,12 @@ model InstagramAccount {
 
   agentId String?
   agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  // Optional router agent — same pattern as Instance.routerAgentId.
+  // When set, a brand-new IG contact talks to the router first; the
+  // router's handoffTo binds them to a specialised AI agent.
+  routerAgentId String?
+  routerAgent   Agent?  @relation("InstagramRouter", fields: [routerAgentId], references: [id], onDelete: SetNull)
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

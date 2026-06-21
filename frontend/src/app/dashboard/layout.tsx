@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -109,6 +109,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'AI Agents', href: '/dashboard/ai/agents', icon: Bot, section: 'agents' },
+                { name: 'Router Agents', href: '/dashboard/ai/routers', icon: GitBranch, section: 'agents' },
                 { name: 'Oversight', href: '/dashboard/oversight', icon: Brain, section: 'oversight', badge: oversightUnread },
                 { name: 'Data Tables', href: '/dashboard/ai/tables', icon: Database, section: 'tables' },
                 { name: 'AI Providers', href: '/dashboard/ai/providers', icon: Server, section: 'providers' }

@@ -54,15 +54,22 @@ const createAgentSchema = z.object({
     whisperModel: z.enum(['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe']).optional(),
     isRouter: z.boolean().optional(),
     routerDescription: z.string().max(400).nullable().optional(),
+    routableAgentIds: z.array(z.string().uuid()).optional(),
 });
 
 export class AgentController {
     async getAgents(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
+            // ?type=ai      → only regular AI agents
+            // ?type=router  → only router agents
+            // ?type=all|''  → everything
+            const type = String(req.query.type || 'all');
+            const where: any = { workspaceId };
+            if (type === 'ai') where.isRouter = false;
+            else if (type === 'router') where.isRouter = true;
             const agents = await prisma.agent.findMany({
-                where: { workspaceId },
+                where,
                 include: { provider: true, instances: true },
                 orderBy: { createdAt: 'desc' }
             });
@@ -120,6 +127,7 @@ export class AgentController {
                     ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
                     ...(data.isRouter !== undefined ? { isRouter: data.isRouter } : {}),
                     ...(data.routerDescription !== undefined ? { routerDescription: data.routerDescription } : {}),
+                    ...(data.routableAgentIds !== undefined ? { routableAgentIds: data.routableAgentIds } : {}),
                 }
             });
 
@@ -161,6 +169,7 @@ export class AgentController {
                     ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
                     ...(data.isRouter !== undefined ? { isRouter: data.isRouter } : {}),
                     ...(data.routerDescription !== undefined ? { routerDescription: data.routerDescription } : {}),
+                    ...(data.routableAgentIds !== undefined ? { routableAgentIds: data.routableAgentIds } : {}),
                 }
             });
 

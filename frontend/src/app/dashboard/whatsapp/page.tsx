@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X } from "lucide-react";
+import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
@@ -267,27 +267,27 @@ export default function WhatsAppPage() {
                                 </div>
 
                                 <div className="flex items-center gap-3 flex-wrap">
-                                    {/* Primary agent — handles a contact when no router is set or
-                                        when the contact is already bound to no specific agent. */}
-                                    <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl" title="Primary agent — used when no router is set">
+                                    {/* AI agent — direct mode (no router). Color: primary blue. */}
+                                    <div className="flex items-center gap-2 bg-primary/5 border border-primary/30 px-3 py-1.5 rounded-xl" title="AI Agent — answers directly when no router is set or no contact assignment exists">
                                         {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Bot className="w-4 h-4 text-primary" />}
+                                        <span className="text-[10px] uppercase tracking-wide text-primary/80 font-semibold">AI</span>
                                         <select value={inst.agentId || ""} disabled={updatingAgent === inst.id}
                                             onChange={e => handleLinkAgent(inst.id, e.target.value)}
                                             className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
-                                            <option value="">No AI Agent</option>
+                                            <option value="">— None —</option>
                                             {agents.filter(a => !a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                                         </select>
                                     </div>
-                                    {/* Router agent — greets new contacts and hands them off to
-                                        a specialised agent via the handoffTo tool. Only agents
-                                        with isRouter=true are listed. */}
+                                    {/* Router agent — dispatcher. Color: amber. Shown only when
+                                        at least one router agent exists in the workspace. */}
                                     {agents.some(a => a.isRouter) && (
-                                        <div className="flex items-center gap-2 bg-secondary/30 border border-border px-3 py-1.5 rounded-xl" title="Router agent — greets new contacts and dispatches them">
-                                            {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Bot className="w-4 h-4 text-amber-400" />}
+                                        <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/30 px-3 py-1.5 rounded-xl" title="Router — greets new contacts and dispatches them to a specialised AI agent">
+                                            {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <GitBranch className="w-4 h-4 text-amber-400" />}
+                                            <span className="text-[10px] uppercase tracking-wide text-amber-300/90 font-semibold">Router</span>
                                             <select value={inst.routerAgentId || ""} disabled={updatingAgent === inst.id}
                                                 onChange={e => handleLinkRouter(inst.id, e.target.value)}
                                                 className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
-                                                <option value="">No router</option>
+                                                <option value="">— None —</option>
                                                 {agents.filter(a => a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                                             </select>
                                         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
@@ -317,6 +318,7 @@ function NameValueRows({ items, onChange, namePlaceholder }: { items: NameValue[
 
 export default function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
+    const navigate = useRouter();
     const [agent, setAgent] = useState<any>(null);
     const [providers, setProviders] = useState<any[]>([]);
     const [tables, setTables] = useState<any[]>([]);
@@ -402,6 +404,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                 }
                 if (agentRes.data.success) {
                     const a = agentRes.data.agent;
+                    // Router agents have their own dedicated editor — bounce
+                    // the user there so the sidebar highlights "Router
+                    // Agents" and the layout shows the focused router UI.
+                    if (a.isRouter) {
+                        navigate.replace(`/dashboard/ai/routers/${id}`);
+                        return;
+                    }
                     setAgent(a);
                     setName(a.name);
                     setProviderId(a.providerId);
@@ -1519,51 +1528,22 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </div>
                         </div>
 
-                        {/* Routing card — content depends on agent type.
-                            Router agents (created from the Router Agents page)
-                            see a target picker. Regular agents see only the
-                            optional one-liner shown to routers. The isRouter
-                            type itself is fixed at creation. */}
-                        {isRouter ? (
-                            <div className="rounded-xl border bg-amber-500/5 border-amber-500/30">
-                                <div className="p-3 border-b border-amber-500/20 flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2 text-sm font-medium">
-                                        <span className="text-amber-300">Router targets</span>
-                                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">router</span>
-                                    </div>
-                                    <span className="text-xs text-muted-foreground">{routableAgentIds.length} selected</span>
-                                </div>
-                                <div className="p-3 space-y-2">
-                                    <p className="text-xs text-muted-foreground">
-                                        Choose which specialised agents this router is allowed to dispatch contacts to. The router's handoffTo tool will only show these as options to the model.
-                                    </p>
-                                    <div className="border border-border rounded-lg max-h-56 overflow-y-auto">
-                                        {siblingAgents.length === 0 ? (
-                                            <div className="p-3 text-xs text-muted-foreground">No regular AI agents in this workspace yet. Create some under <a href="/dashboard/ai/agents" className="underline">AI Agents</a> first.</div>
-                                        ) : siblingAgents.map(s => (
-                                            <label key={s.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/40 cursor-pointer text-sm">
-                                                <input type="checkbox" checked={routableAgentIds.includes(s.id)}
-                                                    onChange={() => setRoutableAgentIds(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
-                                                    className="w-3.5 h-3.5 accent-primary" />
-                                                {s.name}
-                                            </label>
-                                        ))}
-                                    </div>
-                                </div>
+                        {/* Router description — shown to any router agent
+                            so it knows when to dispatch contacts to this
+                            agent. Optional; leave empty if this agent isn't
+                            meant to receive handoffs. Router agents
+                            themselves are edited under Router Agents. */}
+                        <div className="rounded-xl border border-border bg-card">
+                            <div className="p-3 border-b border-border">
+                                <div className="text-sm font-medium">Router description</div>
+                                <div className="text-xs text-muted-foreground">A short label routers see when deciding whether to hand a contact off to this agent.</div>
                             </div>
-                        ) : (
-                            <div className="rounded-xl border border-border bg-card">
-                                <div className="p-3 border-b border-border">
-                                    <div className="text-sm font-medium">Router description</div>
-                                    <div className="text-xs text-muted-foreground">A short label routers see when deciding whether to hand a contact off to this agent.</div>
-                                </div>
-                                <div className="p-3">
-                                    <textarea value={routerDescription} onChange={e => setRouterDescription(e.target.value)} rows={2}
-                                        placeholder="e.g. 'Handles laser cutting orders, quotes and turnaround questions.'"
-                                        className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
-                                </div>
+                            <div className="p-3">
+                                <textarea value={routerDescription} onChange={e => setRouterDescription(e.target.value)} rows={2}
+                                    placeholder="e.g. 'Handles laser cutting orders, quotes and turnaround questions.'"
+                                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
                             </div>
-                        )}
+                        </div>
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}
                         <div className={`rounded-xl border ${skills.includes('memory') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>

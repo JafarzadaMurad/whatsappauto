@@ -81,7 +81,7 @@ export default function RoutersPage() {
             });
             if (r.data?.success) {
                 setOpen(false);
-                navigate.push(`/dashboard/ai/agents/${r.data.agent.id}`);
+                navigate.push(`/dashboard/ai/routers/${r.data.agent.id}`);
             }
         } catch (e: any) {
             alert(e.response?.data?.message || e.message);
@@ -147,7 +147,7 @@ export default function RoutersPage() {
                         <div key={r.id} className="bg-card border border-border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                    <Link href={`/dashboard/ai/agents/${r.id}`} className="font-semibold hover:text-primary">
+                                    <Link href={`/dashboard/ai/routers/${r.id}`} className="font-semibold hover:text-primary">
                                         {r.name}
                                     </Link>
                                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
@@ -177,7 +177,7 @@ export default function RoutersPage() {
                                 )}
                             </div>
                             <div className="flex items-center gap-2">
-                                <Link href={`/dashboard/ai/agents/${r.id}`}
+                                <Link href={`/dashboard/ai/routers/${r.id}`}
                                     className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50">
                                     Edit
                                 </Link>

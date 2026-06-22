@@ -267,31 +267,62 @@ export default function WhatsAppPage() {
                                 </div>
 
                                 <div className="flex items-center gap-3 flex-wrap">
-                                    {/* AI agent — direct mode (no router). Color: primary blue. */}
-                                    <div className="flex items-center gap-2 bg-primary/5 border border-primary/30 px-3 py-1.5 rounded-xl" title="AI Agent — answers directly when no router is set or no contact assignment exists">
-                                        {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Bot className="w-4 h-4 text-primary" />}
-                                        <span className="text-[10px] uppercase tracking-wide text-primary/80 font-semibold">AI</span>
-                                        <select value={inst.agentId || ""} disabled={updatingAgent === inst.id}
-                                            onChange={e => handleLinkAgent(inst.id, e.target.value)}
-                                            className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
-                                            <option value="">— None —</option>
-                                            {agents.filter(a => !a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                        </select>
-                                    </div>
-                                    {/* Router agent — dispatcher. Color: amber. Shown only when
-                                        at least one router agent exists in the workspace. */}
-                                    {agents.some(a => a.isRouter) && (
-                                        <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/30 px-3 py-1.5 rounded-xl" title="Router — greets new contacts and dispatches them to a specialised AI agent">
-                                            {updatingAgent === inst.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <GitBranch className="w-4 h-4 text-amber-400" />}
-                                            <span className="text-[10px] uppercase tracking-wide text-amber-300/90 font-semibold">Router</span>
-                                            <select value={inst.routerAgentId || ""} disabled={updatingAgent === inst.id}
-                                                onChange={e => handleLinkRouter(inst.id, e.target.value)}
-                                                className="bg-transparent text-sm font-medium focus:outline-none w-32 truncate">
-                                                <option value="">— None —</option>
-                                                {agents.filter(a => a.isRouter).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                            </select>
-                                        </div>
-                                    )}
+                                    {/* Unified handler picker — one slot per channel.
+                                        Pick either a regular AI agent OR a router agent.
+                                        Selecting one clears the other on the server side,
+                                        and 'None' means the channel is intentionally
+                                        idle (no AI replies, even for previously bound
+                                        contacts). */}
+                                    {(() => {
+                                        const current = inst.routerAgentId
+                                            ? `r:${inst.routerAgentId}`
+                                            : (inst.agentId ? `a:${inst.agentId}` : '');
+                                        const onPick = (val: string) => {
+                                            if (!val) {
+                                                handleLinkAgent(inst.id, '');
+                                                handleLinkRouter(inst.id, '');
+                                            } else if (val.startsWith('r:')) {
+                                                handleLinkAgent(inst.id, '');
+                                                handleLinkRouter(inst.id, val.slice(2));
+                                            } else if (val.startsWith('a:')) {
+                                                handleLinkRouter(inst.id, '');
+                                                handleLinkAgent(inst.id, val.slice(2));
+                                            }
+                                        };
+                                        const isRouter = !!inst.routerAgentId;
+                                        const accent = isRouter
+                                            ? 'bg-amber-500/5 border-amber-500/30'
+                                            : (inst.agentId ? 'bg-primary/5 border-primary/30' : 'bg-secondary/30 border-border');
+                                        return (
+                                            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${accent}`}
+                                                title="Pick the AI agent or router that handles this channel">
+                                                {updatingAgent === inst.id
+                                                    ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                                                    : isRouter
+                                                        ? <GitBranch className="w-4 h-4 text-amber-400" />
+                                                        : <Bot className={`w-4 h-4 ${inst.agentId ? 'text-primary' : 'text-muted-foreground'}`} />}
+                                                <select value={current} disabled={updatingAgent === inst.id}
+                                                    onChange={e => onPick(e.target.value)}
+                                                    className="bg-transparent text-sm font-medium focus:outline-none min-w-[140px] max-w-[180px] truncate">
+                                                    <option value="">— None (channel idle) —</option>
+                                                    {agents.filter(a => !a.isRouter).length > 0 && (
+                                                        <optgroup label="AI Agents">
+                                                            {agents.filter(a => !a.isRouter).map(a => (
+                                                                <option key={a.id} value={`a:${a.id}`}>{a.name}</option>
+                                                            ))}
+                                                        </optgroup>
+                                                    )}
+                                                    {agents.filter(a => a.isRouter).length > 0 && (
+                                                        <optgroup label="Routers">
+                                                            {agents.filter(a => a.isRouter).map(a => (
+                                                                <option key={a.id} value={`r:${a.id}`}>{a.name}</option>
+                                                            ))}
+                                                        </optgroup>
+                                                    )}
+                                                </select>
+                                            </div>
+                                        );
+                                    })()}
 
                                     {inst.status === 'CONNECTED' ? (
                                         <Link href={`/dashboard/instances/${inst.id}`}

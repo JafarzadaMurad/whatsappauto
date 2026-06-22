@@ -1690,6 +1690,17 @@ export class AiService {
                 return;
             }
 
+            // If the channel has neither a primary agent nor a router
+            // configured, treat it as intentionally disabled and stay
+            // silent — even when a contact still has a sticky
+            // assignedAgentId from a previous configuration. The owner
+            // explicitly removed the agent from this channel; respecting
+            // that beats "remembering" the old binding.
+            if (!instance.agentId && !instance.routerAgentId) {
+                logger.info(`[${instanceId}] no agent or router configured on instance — skipping AI`);
+                return;
+            }
+
             // ─── Sticky routing ───
             // Resolution order:
             //   1. The contact already has Client.assignedAgentId set → use that agent

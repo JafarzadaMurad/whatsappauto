@@ -111,28 +111,53 @@ export default function InstagramPage() {
                             </button>
 
                             <div className="flex items-center gap-3 flex-wrap">
-                                {/* AI agent (direct mode) */}
-                                <div className="flex items-center gap-2 bg-primary/5 border border-primary/30 px-3 py-1.5 rounded-xl" title="AI Agent — answers directly when no router is set">
-                                    <Bot className="w-4 h-4 text-primary" />
-                                    <span className="text-[10px] uppercase tracking-wide text-primary/80 font-semibold">AI</span>
-                                    <select value={acc.agentId || ""} onChange={e => handleLinkAgent(acc.id, e.target.value)}
-                                        className="bg-card text-foreground text-sm font-medium focus:outline-none w-32 truncate rounded-lg">
-                                        <option value="" className="bg-card text-foreground">— None —</option>
-                                        {agents.filter(a => !a.isRouter).map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
-                                    </select>
-                                </div>
-                                {/* Router agent (dispatcher) */}
-                                {agents.some(a => a.isRouter) && (
-                                    <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/30 px-3 py-1.5 rounded-xl" title="Router — greets new contacts and dispatches them to a specialised AI agent">
-                                        <GitBranch className="w-4 h-4 text-amber-400" />
-                                        <span className="text-[10px] uppercase tracking-wide text-amber-300/90 font-semibold">Router</span>
-                                        <select value={acc.routerAgentId || ""} onChange={e => handleLinkRouter(acc.id, e.target.value)}
-                                            className="bg-card text-foreground text-sm font-medium focus:outline-none w-32 truncate rounded-lg">
-                                            <option value="" className="bg-card text-foreground">— None —</option>
-                                            {agents.filter(a => a.isRouter).map(a => <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>)}
-                                        </select>
-                                    </div>
-                                )}
+                                {/* Unified handler picker — one per account */}
+                                {(() => {
+                                    const current = acc.routerAgentId
+                                        ? `r:${acc.routerAgentId}`
+                                        : (acc.agentId ? `a:${acc.agentId}` : '');
+                                    const onPick = (val: string) => {
+                                        if (!val) {
+                                            handleLinkAgent(acc.id, '');
+                                            handleLinkRouter(acc.id, '');
+                                        } else if (val.startsWith('r:')) {
+                                            handleLinkAgent(acc.id, '');
+                                            handleLinkRouter(acc.id, val.slice(2));
+                                        } else if (val.startsWith('a:')) {
+                                            handleLinkRouter(acc.id, '');
+                                            handleLinkAgent(acc.id, val.slice(2));
+                                        }
+                                    };
+                                    const isRouter = !!acc.routerAgentId;
+                                    const accent = isRouter
+                                        ? 'bg-amber-500/5 border-amber-500/30'
+                                        : (acc.agentId ? 'bg-primary/5 border-primary/30' : 'bg-secondary/30 border-border');
+                                    return (
+                                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${accent}`}>
+                                            {isRouter
+                                                ? <GitBranch className="w-4 h-4 text-amber-400" />
+                                                : <Bot className={`w-4 h-4 ${acc.agentId ? 'text-primary' : 'text-muted-foreground'}`} />}
+                                            <select value={current} onChange={e => onPick(e.target.value)}
+                                                className="bg-card text-foreground text-sm font-medium focus:outline-none min-w-[140px] max-w-[180px] truncate rounded-lg">
+                                                <option value="" className="bg-card text-foreground">— None (channel idle) —</option>
+                                                {agents.filter(a => !a.isRouter).length > 0 && (
+                                                    <optgroup label="AI Agents">
+                                                        {agents.filter(a => !a.isRouter).map(a => (
+                                                            <option key={a.id} value={`a:${a.id}`} className="bg-card text-foreground">{a.name}</option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+                                                {agents.filter(a => a.isRouter).length > 0 && (
+                                                    <optgroup label="Routers">
+                                                        {agents.filter(a => a.isRouter).map(a => (
+                                                            <option key={a.id} value={`r:${a.id}`} className="bg-card text-foreground">{a.name}</option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+                                            </select>
+                                        </div>
+                                    );
+                                })()}
 
                                 <button onClick={() => handleToggle(acc.id, acc.isActive)}
                                     className={`p-2 rounded-lg transition-colors ${acc.isActive ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-muted-foreground hover:bg-secondary'}`}

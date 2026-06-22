@@ -73,11 +73,88 @@ function hasAnySegmentFilter(f: AnalyticsFilters): boolean {
     return !!(f.status?.length || f.tags?.length || f.channel || f.agentId || f.customField?.key);
 }
 
+// Cross-dimensional breakdowns of the filtered segment. Only computed
+// when a filter is active — otherwise the chart already shows
+// workspace-level status numbers and these extras would just repeat
+// the same data in different shapes.
+async function segmentBreakdowns(workspaceId: string, f: AnalyticsFilters) {
+    const { from, to } = dateRange(f);
+    const where = {
+        ...buildClientWhere(workspaceId, f),
+        createdAt: { gte: from, lte: to },
+    };
+    const clients = await prisma.client.findMany({
+        where,
+        select: {
+            channel: true,
+            tags: true,
+            customFields: true,
+            assignedAgent: { select: { name: true, isRouter: true } },
+        },
+        take: 5000,
+    });
+
+    // Channel
+    const channelMap = new Map<string, number>();
+    // Top tags (excluding the ones currently filtered on, to avoid
+    // self-noise)
+    const filteredTags = new Set(f.tags || []);
+    const tagMap = new Map<string, number>();
+    // Assigned agent
+    const agentMap = new Map<string, number>();
+    // Custom field values (top 1 user field if any)
+    const cfValueMap = new Map<string, number>();
+    // Available custom field keys to know what to bucket
+    const cfKeysSeen = new Set<string>();
+
+    for (const c of clients) {
+        channelMap.set(c.channel || 'unknown', (channelMap.get(c.channel || 'unknown') || 0) + 1);
+        for (const t of (c.tags || [])) {
+            if (filteredTags.has(t)) continue;
+            tagMap.set(t, (tagMap.get(t) || 0) + 1);
+        }
+        const aname = c.assignedAgent?.name || '— unassigned —';
+        agentMap.set(aname, (agentMap.get(aname) || 0) + 1);
+        const cf = (c.customFields as Record<string, any>) || {};
+        for (const k of Object.keys(cf)) cfKeysSeen.add(k);
+    }
+
+    // Pick the most-populated custom field as the "interesting" one to
+    // break down on. (Cheap heuristic — most use 1 anyway.)
+    let bestKey: string | null = null;
+    let bestCount = 0;
+    for (const k of cfKeysSeen) {
+        const n = clients.filter(c => ((c.customFields as any) || {})[k] != null).length;
+        if (n > bestCount) { bestKey = k; bestCount = n; }
+    }
+    if (bestKey) {
+        for (const c of clients) {
+            const v = ((c.customFields as any) || {})[bestKey];
+            if (v == null || v === '') continue;
+            const sv = String(v).slice(0, 40);
+            cfValueMap.set(sv, (cfValueMap.get(sv) || 0) + 1);
+        }
+    }
+
+    const sortDesc = (m: Map<string, number>) =>
+        Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ key: k, count: v }));
+
+    return {
+        channel:    sortDesc(channelMap),
+        topTags:    sortDesc(tagMap).slice(0, 10),
+        topAgents:  sortDesc(agentMap).slice(0, 10),
+        customField: bestKey ? { key: bestKey, rows: sortDesc(cfValueMap).slice(0, 10) } : null,
+    };
+}
+
 export async function funnel(workspaceId: string, f: AnalyticsFilters) {
     const segment = await funnelOnce(workspaceId, f, false);
-    if (!hasAnySegmentFilter(f)) return { ...segment, baseline: null };
-    const baseline = await funnelOnce(workspaceId, f, true);
-    return { ...segment, baseline };
+    if (!hasAnySegmentFilter(f)) return { ...segment, baseline: null, breakdowns: null };
+    const [baseline, breakdowns] = await Promise.all([
+        funnelOnce(workspaceId, f, true),
+        segmentBreakdowns(workspaceId, f),
+    ]);
+    return { ...segment, baseline, breakdowns };
 }
 
 // ─── 2) Daily volume ───

@@ -308,6 +308,28 @@ export function MetricResult({ metric, data }: { metric: string; data: any }) {
                     <RateCard label="Purchase rate"    value={data.rates.purchaseRate}   baseline={data.baseline?.rates?.purchaseRate}   accent="text-emerald-400" />
                     <RateCard label="Lead → Purchase"  value={data.rates.leadToPurchase} baseline={data.baseline?.rates?.leadToPurchase} accent="text-green-400" />
                 </div>
+
+                {data.breakdowns && (
+                    <div className="pt-3 border-t border-border space-y-3">
+                        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Segment breakdown</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {data.breakdowns.channel?.length > 0 && (
+                                <BreakdownCard title="By channel" rows={data.breakdowns.channel} />
+                            )}
+                            {data.breakdowns.topAgents?.length > 0 && (
+                                <BreakdownCard title="By assigned agent" rows={data.breakdowns.topAgents} />
+                            )}
+                            {data.breakdowns.topTags?.length > 0 && (
+                                <BreakdownCard title="Co-occurring tags" rows={data.breakdowns.topTags} />
+                            )}
+                            {data.breakdowns.customField && (
+                                <BreakdownCard
+                                    title={`Top values of "${data.breakdowns.customField.key}"`}
+                                    rows={data.breakdowns.customField.rows} />
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
@@ -452,6 +474,39 @@ export function MetricResult({ metric, data }: { metric: string; data: any }) {
         );
     }
     return <Empty />;
+}
+
+// Simple labeled-bar list — used for cross-dimensional breakdowns
+// (channel, tag, agent, custom field) of the filtered segment so the
+// operator sees what the matched set actually looks like, not just
+// status distribution.
+function BreakdownCard({ title, rows }: { title: string; rows: Array<{ key: string; count: number }> }) {
+    const max = Math.max(1, ...rows.map(r => r.count));
+    const total = rows.reduce((a, b) => a + b.count, 0);
+    return (
+        <div className="bg-card border border-border rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{title}</h4>
+                <span className="text-[10px] text-muted-foreground">{total} total</span>
+            </div>
+            <div className="space-y-1.5">
+                {rows.map((r, i) => {
+                    const pct = total > 0 ? (r.count / total) * 100 : 0;
+                    return (
+                        <div key={r.key + i}>
+                            <div className="flex items-center justify-between text-xs mb-0.5">
+                                <span className="truncate flex-1 min-w-0">{r.key}</span>
+                                <span className="text-muted-foreground ml-2">{r.count} ({pct.toFixed(1)}%)</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-secondary/40 overflow-hidden">
+                                <div className="h-full" style={{ width: `${(r.count / max) * 100}%`, background: COLORS[i % COLORS.length] }} />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
 }
 
 // Rate card with side-by-side filtered vs baseline % and a delta hint.

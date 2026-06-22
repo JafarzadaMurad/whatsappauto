@@ -13,8 +13,27 @@ type Filters = {
     status?: string[]; tags?: string[];
     channel?: 'whatsapp' | 'instagram';
     agentId?: string;
+    instanceId?: string;
     customField?: { key: string; value: any };
 };
+
+type ViewFlags = {
+    statusFunnel: boolean;
+    rates: boolean;
+    channel: boolean;
+    agents: boolean;
+    tags: boolean;
+    customField: boolean;
+};
+const DEFAULT_VIEW: ViewFlags = {
+    statusFunnel: true,
+    rates: true,
+    channel: true,
+    agents: true,
+    tags: true,
+    customField: true,
+};
+const VIEW_STORAGE_KEY = 'analytics:view-flags:v1';
 
 type MetricKey = 'funnel' | 'daily_volume' | 'channel_split' | 'tag_conversion' | 'agent_perf' | 'drop_off';
 
@@ -46,7 +65,22 @@ export default function AnalyticsPage() {
     const [kpis, setKpis] = useState<any>(null);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+    const [instances, setInstances] = useState<Array<{ id: string; name: string; channel: 'whatsapp' | 'instagram' }>>([]);
     const [availableTags, setAvailableTags] = useState<string[]>([]);
+    const [view, setView] = useState<ViewFlags>(DEFAULT_VIEW);
+    const [viewPanelOpen, setViewPanelOpen] = useState(false);
+
+    // Restore + persist the per-section visibility toggles so the
+    // operator's preferred layout sticks across reloads.
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+            if (saved) setView({ ...DEFAULT_VIEW, ...JSON.parse(saved) });
+        } catch { /* ignore */ }
+    }, []);
+    useEffect(() => {
+        try { localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(view)); } catch {}
+    }, [view]);
 
     useEffect(() => {
         api.get('/user-fields').then(r => {
@@ -54,6 +88,21 @@ export default function AnalyticsPage() {
         }).catch(() => {});
         api.get('/agents').then(r => {
             if (r.data?.success) setAgents((r.data.agents || []).map((a: any) => ({ id: a.id, name: a.name })));
+        }).catch(() => {});
+        // Pull WhatsApp instances + Instagram accounts so the operator
+        // can scope analytics down to a single number / account.
+        Promise.all([
+            api.get('/instances').catch(() => ({ data: { success: false } })),
+            api.get('/instagram/accounts').catch(() => ({ data: { success: false } })),
+        ]).then(([waRes, igRes]) => {
+            const list: typeof instances = [];
+            if (waRes.data?.success) {
+                for (const i of (waRes.data.instances || [])) list.push({ id: i.id, name: i.name, channel: 'whatsapp' });
+            }
+            if (igRes.data?.success) {
+                for (const a of (igRes.data.accounts || [])) list.push({ id: a.id, name: '@' + a.igUsername, channel: 'instagram' });
+            }
+            setInstances(list);
         }).catch(() => {});
         // Pull a generous page of clients to surface the unique tag set —
         // good enough for a filter dropdown without a dedicated endpoint.
@@ -142,7 +191,7 @@ export default function AnalyticsPage() {
             )}
 
             {/* Filter bar */}
-            <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
                 <div>
                     <label className="text-[11px] text-muted-foreground">From</label>
                     <input type="date" value={filters.from || ''} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
@@ -171,6 +220,19 @@ export default function AnalyticsPage() {
                     </select>
                 </div>
                 <div>
+                    <label className="text-[11px] text-muted-foreground">Instance</label>
+                    <select value={filters.instanceId || ''} onChange={e => setFilters(f => ({ ...f, instanceId: e.target.value || undefined }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="">All channels</option>
+                        {instances.filter(i => i.channel === 'whatsapp').map(i => (
+                            <option key={i.id} value={i.id}>📱 {i.name}</option>
+                        ))}
+                        {instances.filter(i => i.channel === 'instagram').map(i => (
+                            <option key={i.id} value={i.id}>📸 {i.name}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
                     <label className="text-[11px] text-muted-foreground">Status</label>
                     <select value={filters.status?.[0] || ''}
                         onChange={e => setFilters(f => ({ ...f, status: e.target.value ? [e.target.value] : undefined }))}
@@ -191,7 +253,7 @@ export default function AnalyticsPage() {
                         {availableTags.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                 </div>
-                <div className="col-span-2 md:col-span-3 lg:col-span-6">
+                <div className="col-span-2 md:col-span-3 lg:col-span-7">
                     <label className="text-[11px] text-muted-foreground">Custom field</label>
                     <div className="mt-1 flex gap-1 max-w-md">
                         <select value={filters.customField?.key || ''}
@@ -226,7 +288,7 @@ export default function AnalyticsPage() {
                         </button>
                     ))}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative">
                     {active === 'daily_volume' && (
                         <select value={period} onChange={e => setPeriod(e.target.value as any)}
                             className="bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-xs">
@@ -235,10 +297,45 @@ export default function AnalyticsPage() {
                             <option value="month">By month</option>
                         </select>
                     )}
+                    {active === 'funnel' && (
+                        <button onClick={() => setViewPanelOpen(o => !o)}
+                            className="bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5">
+                            ⚙ View
+                        </button>
+                    )}
                     <button onClick={pinWidget}
                         className="bg-primary text-primary-foreground rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5">
                         <Pin className="w-3.5 h-3.5" /> Pin to Dashboard
                     </button>
+
+                    {viewPanelOpen && active === 'funnel' && (
+                        <div className="absolute right-0 top-full mt-2 z-20 bg-card border border-border rounded-xl shadow-2xl p-3 w-64 space-y-2">
+                            <div className="flex items-center justify-between mb-1">
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Show in funnel view</h4>
+                                <button onClick={() => setViewPanelOpen(false)} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
+                            </div>
+                            {([
+                                ['statusFunnel', 'Status funnel bars'],
+                                ['rates',        'Conversion rate cards'],
+                                ['channel',      'Breakdown by channel'],
+                                ['agents',       'Breakdown by assigned agent'],
+                                ['tags',         'Co-occurring tags'],
+                                ['customField',  'Top custom-field values'],
+                            ] as Array<[keyof ViewFlags, string]>).map(([k, label]) => (
+                                <label key={k} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-secondary/30 p-1.5 rounded">
+                                    <input type="checkbox" checked={view[k]} onChange={e => setView(v => ({ ...v, [k]: e.target.checked }))}
+                                        className="w-3.5 h-3.5 accent-primary" />
+                                    {label}
+                                </label>
+                            ))}
+                            <div className="flex justify-end pt-2 border-t border-border">
+                                <button onClick={() => setView(DEFAULT_VIEW)}
+                                    className="text-[11px] text-muted-foreground hover:text-foreground">
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -247,7 +344,7 @@ export default function AnalyticsPage() {
                 {loading ? (
                     <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
                 ) : data ? (
-                    <MetricResult metric={active} data={data} />
+                    <MetricResult metric={active} data={data} view={view} />
                 ) : (
                     <div className="text-center text-muted-foreground py-12 text-sm">Run a query…</div>
                 )}
@@ -278,51 +375,62 @@ function KpiCard({ icon: Icon, label, value, accent, baseline }: { icon: any; la
     );
 }
 
-export function MetricResult({ metric, data }: { metric: string; data: any }) {
+export function MetricResult({ metric, data, view }: { metric: string; data: any; view?: ViewFlags }) {
+    const v = view || DEFAULT_VIEW;
     if (metric === 'funnel') {
         const totals = data.total || 0;
         const max = Math.max(1, ...(data.rows || []).map((r: any) => r.count));
+        const anyBreakdown = !!data.breakdowns && (
+            (v.channel && data.breakdowns.channel?.length > 0) ||
+            (v.agents && data.breakdowns.topAgents?.length > 0) ||
+            (v.tags && data.breakdowns.topTags?.length > 0) ||
+            (v.customField && !!data.breakdowns.customField)
+        );
         return (
             <div className="space-y-3">
                 <div className="text-sm text-muted-foreground">
                     Total contacts in range: <span className="font-semibold text-foreground">{totals}</span>
                 </div>
-                <div className="space-y-2">
-                    {data.rows.map((r: any, i: number) => {
-                        const pct = totals > 0 ? (r.count / totals) * 100 : 0;
-                        return (
-                            <div key={r.status}>
-                                <div className="flex items-center justify-between text-xs mb-1">
-                                    <span className="font-medium">{r.status}</span>
-                                    <span className="text-muted-foreground">{r.count} ({pct.toFixed(1)}%)</span>
+                {v.statusFunnel && (
+                    <div className="space-y-2">
+                        {data.rows.map((r: any, i: number) => {
+                            const pct = totals > 0 ? (r.count / totals) * 100 : 0;
+                            return (
+                                <div key={r.status}>
+                                    <div className="flex items-center justify-between text-xs mb-1">
+                                        <span className="font-medium">{r.status}</span>
+                                        <span className="text-muted-foreground">{r.count} ({pct.toFixed(1)}%)</span>
+                                    </div>
+                                    <div className="h-3 rounded-full bg-secondary/40 overflow-hidden">
+                                        <div className="h-full" style={{ width: `${(r.count / max) * 100}%`, background: COLORS[i % COLORS.length] }} />
+                                    </div>
                                 </div>
-                                <div className="h-3 rounded-full bg-secondary/40 overflow-hidden">
-                                    <div className="h-full" style={{ width: `${(r.count / max) * 100}%`, background: COLORS[i % COLORS.length] }} />
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-                <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border">
-                    <RateCard label="Lead rate"        value={data.rates.leadRate}       baseline={data.baseline?.rates?.leadRate}       accent="text-amber-400" />
-                    <RateCard label="Purchase rate"    value={data.rates.purchaseRate}   baseline={data.baseline?.rates?.purchaseRate}   accent="text-emerald-400" />
-                    <RateCard label="Lead → Purchase"  value={data.rates.leadToPurchase} baseline={data.baseline?.rates?.leadToPurchase} accent="text-green-400" />
-                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                {v.rates && (
+                    <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border">
+                        <RateCard label="Lead rate"        value={data.rates.leadRate}       baseline={data.baseline?.rates?.leadRate}       accent="text-amber-400" />
+                        <RateCard label="Purchase rate"    value={data.rates.purchaseRate}   baseline={data.baseline?.rates?.purchaseRate}   accent="text-emerald-400" />
+                        <RateCard label="Lead → Purchase"  value={data.rates.leadToPurchase} baseline={data.baseline?.rates?.leadToPurchase} accent="text-green-400" />
+                    </div>
+                )}
 
-                {data.breakdowns && (
+                {anyBreakdown && (
                     <div className="pt-3 border-t border-border space-y-3">
                         <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Segment breakdown</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {data.breakdowns.channel?.length > 0 && (
+                            {v.channel && data.breakdowns.channel?.length > 0 && (
                                 <BreakdownCard title="By channel" rows={data.breakdowns.channel} />
                             )}
-                            {data.breakdowns.topAgents?.length > 0 && (
+                            {v.agents && data.breakdowns.topAgents?.length > 0 && (
                                 <BreakdownCard title="By assigned agent" rows={data.breakdowns.topAgents} />
                             )}
-                            {data.breakdowns.topTags?.length > 0 && (
+                            {v.tags && data.breakdowns.topTags?.length > 0 && (
                                 <BreakdownCard title="Co-occurring tags" rows={data.breakdowns.topTags} />
                             )}
-                            {data.breakdowns.customField && (
+                            {v.customField && data.breakdowns.customField && (
                                 <BreakdownCard
                                     title={`Top values of "${data.breakdowns.customField.key}"`}
                                     rows={data.breakdowns.customField.rows} />

@@ -15,6 +15,7 @@ const filtersSchema = z.object({
     tags: z.array(z.string()).optional(),
     channel: z.enum(['whatsapp', 'instagram']).optional(),
     agentId: z.string().uuid().optional(),
+    instanceId: z.string().uuid().optional(),
     customField: z.object({ key: z.string(), value: z.any() }).optional(),
 }).optional();
 

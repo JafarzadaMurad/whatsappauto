@@ -8,6 +8,7 @@ export type AnalyticsFilters = {
     tags?: string[];   // any of these tags
     channel?: 'whatsapp' | 'instagram';
     agentId?: string;
+    instanceId?: string;     // WhatsApp instance OR Instagram account
     customField?: { key: string; value: any };
 };
 
@@ -45,10 +46,17 @@ async function funnelOnce(workspaceId: string, f: AnalyticsFilters, baseline = f
     const segmentFilters = baseline
         ? { from: f.from, to: f.to } // baseline = date range only
         : { ...f, status: undefined };
-    const where = {
+    const where: any = {
         ...buildClientWhere(workspaceId, segmentFilters),
         createdAt: { gte: from, lte: to },
     };
+    if (!baseline && f.instanceId) {
+        const phones = await phonesForInstance(workspaceId, f.instanceId);
+        if (phones && phones.length === 0) {
+            return { rows: ['NEW', 'LEAD', 'PURCHASED', 'SPAM'].map(s => ({ status: s, count: 0 })), total: 0, rates: { leadRate: 0, purchaseRate: 0, leadToPurchase: 0 } };
+        }
+        if (phones) where.phone = { in: phones };
+    }
     const grouped = await prisma.client.groupBy({
         by: ['status'], where, _count: { _all: true },
     });
@@ -70,7 +78,33 @@ async function funnelOnce(workspaceId: string, f: AnalyticsFilters, baseline = f
 }
 
 function hasAnySegmentFilter(f: AnalyticsFilters): boolean {
-    return !!(f.status?.length || f.tags?.length || f.channel || f.agentId || f.customField?.key);
+    return !!(f.status?.length || f.tags?.length || f.channel || f.agentId || f.instanceId || f.customField?.key);
+}
+
+// Resolve an instance filter to the digit-only phone set of every
+// contact that has exchanged messages with that instance. Returns
+// null when no instance is selected. Empty array = filter selected
+// but the instance is foreign or has no history yet.
+async function phonesForInstance(workspaceId: string, instanceId: string | undefined): Promise<string[] | null> {
+    if (!instanceId) return null;
+    const wa = await prisma.instance.findFirst({ where: { id: instanceId, workspaceId }, select: { id: true } });
+    const ig = wa ? null : await prisma.instagramAccount.findFirst({ where: { id: instanceId, workspaceId }, select: { id: true } });
+    if (!wa && !ig) return [];
+    const rows: { remoteJid: string }[] = wa
+        ? await prisma.message.findMany({
+            where: { instanceId }, select: { remoteJid: true },
+            distinct: ['remoteJid'], take: 10000,
+        })
+        : await prisma.aiConversationLog.findMany({
+            where: { instanceId }, select: { remoteJid: true },
+            distinct: ['remoteJid'], take: 10000,
+        });
+    const phones = new Set<string>();
+    for (const r of rows) {
+        const d = r.remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/^ig:/, '').replace(/[^0-9]/g, '');
+        if (d) phones.add(d);
+    }
+    return Array.from(phones);
 }
 
 // Cross-dimensional breakdowns of the filtered segment. Only computed
@@ -79,10 +113,17 @@ function hasAnySegmentFilter(f: AnalyticsFilters): boolean {
 // the same data in different shapes.
 async function segmentBreakdowns(workspaceId: string, f: AnalyticsFilters) {
     const { from, to } = dateRange(f);
-    const where = {
+    const where: any = {
         ...buildClientWhere(workspaceId, f),
         createdAt: { gte: from, lte: to },
     };
+    if (f.instanceId) {
+        const phones = await phonesForInstance(workspaceId, f.instanceId);
+        if (phones && phones.length === 0) {
+            return { channel: [], topTags: [], topAgents: [], customField: null };
+        }
+        if (phones) where.phone = { in: phones };
+    }
     const clients = await prisma.client.findMany({
         where,
         select: {
@@ -166,8 +207,12 @@ export async function dailyVolume(workspaceId: string, f: AnalyticsFilters, peri
         prisma.instance.findMany({ where: { workspaceId }, select: { id: true } }),
         prisma.instagramAccount.findMany({ where: { workspaceId }, select: { id: true } }),
     ]);
-    const instanceIds = instances.map(i => i.id);
-    const igIds = igAccounts.map(a => a.id);
+    let instanceIds = instances.map(i => i.id);
+    let igIds = igAccounts.map(a => a.id);
+    if (f.instanceId) {
+        instanceIds = instanceIds.filter(id => id === f.instanceId);
+        igIds = igIds.filter(id => id === f.instanceId);
+    }
     if (instanceIds.length === 0 && igIds.length === 0) return { rows: [] };
 
     // Use raw SQL for DATE_TRUNC efficiency
@@ -283,6 +328,7 @@ export async function agentPerformance(workspaceId: string, f: AnalyticsFilters)
         where: {
             agentId: { in: agents.map(a => a.id) },
             createdAt: { gte: from, lte: to },
+            ...(f.instanceId ? { instanceId: f.instanceId } : {}),
         },
         _count: { _all: true },
         _sum: { promptTokens: true, completionTokens: true, totalTokens: true },
@@ -325,7 +371,8 @@ export async function dropOff(workspaceId: string, f: AnalyticsFilters) {
     const { from, to } = dateRange(f);
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const instances = await prisma.instance.findMany({ where: { workspaceId }, select: { id: true } });
-    const instanceIds = instances.map(i => i.id);
+    let instanceIds = instances.map(i => i.id);
+    if (f.instanceId) instanceIds = instanceIds.filter(id => id === f.instanceId);
     if (instanceIds.length === 0) return { rows: [] };
 
     // For each (instanceId, remoteJid), find the last message timestamp
@@ -365,6 +412,14 @@ async function kpisOnce(workspaceId: string, f: AnalyticsFilters, baseline = fal
     const { from, to } = dateRange(f);
     const filterPart = baseline ? { from: f.from, to: f.to } : f;
     const clientBase: any = { ...buildClientWhere(workspaceId, filterPart) };
+    // Apply instance filter via the phone-from-messages join.
+    if (!baseline && f.instanceId) {
+        const phones = await phonesForInstance(workspaceId, f.instanceId);
+        if (phones && phones.length === 0) {
+            return { contacts: 0, leadCount: 0, purchasedCount: 0, aiTurns: 0, tokens: 0, operatorTickets: 0 };
+        }
+        if (phones) clientBase.phone = { in: phones };
+    }
     // Phone-keyed match: we need each contact's phone set to scope AI
     // turns + operator tickets to the same segment. For the baseline
     // path we skip this and use the whole workspace.

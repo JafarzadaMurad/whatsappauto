@@ -35,11 +35,18 @@ function buildClientWhere(workspaceId: string, f: AnalyticsFilters) {
 }
 
 // ─── 1) Sales funnel ───
-// NEW → LEAD → PURCHASED breakdown with conversion rates.
-export async function funnel(workspaceId: string, f: AnalyticsFilters) {
+// NEW → LEAD → PURCHASED breakdown with conversion rates. Status
+// filter is intentionally dropped because the whole point of the
+// funnel is the status distribution. The baseline payload returns
+// the same numbers without any segment filters (only the date range
+// stays) so the UI can show "vs workspace 12%" deltas.
+async function funnelOnce(workspaceId: string, f: AnalyticsFilters, baseline = false) {
     const { from, to } = dateRange(f);
+    const segmentFilters = baseline
+        ? { from: f.from, to: f.to } // baseline = date range only
+        : { ...f, status: undefined };
     const where = {
-        ...buildClientWhere(workspaceId, { ...f, status: undefined }),
+        ...buildClientWhere(workspaceId, segmentFilters),
         createdAt: { gte: from, lte: to },
     };
     const grouped = await prisma.client.groupBy({
@@ -53,14 +60,24 @@ export async function funnel(workspaceId: string, f: AnalyticsFilters) {
     const lead = (map['LEAD'] || 0) + (map['PURCHASED'] || 0);
     const purchased = map['PURCHASED'] || 0;
     return {
-        rows,
-        total,
+        rows, total,
         rates: {
-            leadRate:      total > 0 ? Math.round((lead / total) * 1000) / 10 : 0,
-            purchaseRate:  total > 0 ? Math.round((purchased / total) * 1000) / 10 : 0,
+            leadRate:       total > 0 ? Math.round((lead / total) * 1000) / 10 : 0,
+            purchaseRate:   total > 0 ? Math.round((purchased / total) * 1000) / 10 : 0,
             leadToPurchase: lead > 0  ? Math.round((purchased / lead) * 1000) / 10 : 0,
         },
     };
+}
+
+function hasAnySegmentFilter(f: AnalyticsFilters): boolean {
+    return !!(f.status?.length || f.tags?.length || f.channel || f.agentId || f.customField?.key);
+}
+
+export async function funnel(workspaceId: string, f: AnalyticsFilters) {
+    const segment = await funnelOnce(workspaceId, f, false);
+    if (!hasAnySegmentFilter(f)) return { ...segment, baseline: null };
+    const baseline = await funnelOnce(workspaceId, f, true);
+    return { ...segment, baseline };
 }
 
 // ─── 2) Daily volume ───
@@ -264,40 +281,78 @@ export async function dropOff(workspaceId: string, f: AnalyticsFilters) {
 }
 
 // ─── 7) KPIs strip (small numbers for the top of the page) ───
-export async function kpis(workspaceId: string, f: AnalyticsFilters) {
+// Returns BOTH a filtered view (respecting tag/status/channel/agent/
+// customField filters) and a baseline view (only workspace + date
+// range) so the UI can display "X matches · vs Y overall (Z%)".
+async function kpisOnce(workspaceId: string, f: AnalyticsFilters, baseline = false) {
     const { from, to } = dateRange(f);
-    const [totalContacts, newContacts, leadCount, purchasedCount, totalLogs, tokensAgg, operatorTickets] = await Promise.all([
-        prisma.client.count({ where: { workspaceId } }),
-        prisma.client.count({ where: { workspaceId, createdAt: { gte: from, lte: to } } }),
-        prisma.client.count({ where: { workspaceId, status: 'LEAD', createdAt: { gte: from, lte: to } } }),
-        prisma.client.count({ where: { workspaceId, status: 'PURCHASED', createdAt: { gte: from, lte: to } } }),
-        prisma.aiConversationLog.count({
-            where: {
-                createdAt: { gte: from, lte: to },
-                agent: { workspaceId },
-            },
-        }),
-        prisma.aiConversationLog.aggregate({
-            where: {
-                createdAt: { gte: from, lte: to },
-                agent: { workspaceId },
-            },
-            _sum: { totalTokens: true },
-        }),
-        prisma.operatorRequest.count({
-            where: {
-                createdAt: { gte: from, lte: to },
-                agent: { workspaceId },
-            },
-        }),
+    const filterPart = baseline ? { from: f.from, to: f.to } : f;
+    const clientBase: any = { ...buildClientWhere(workspaceId, filterPart) };
+    // Phone-keyed match: we need each contact's phone set to scope AI
+    // turns + operator tickets to the same segment. For the baseline
+    // path we skip this and use the whole workspace.
+    let phoneIn: string[] | null = null;
+    if (!baseline && hasAnySegmentFilter(f)) {
+        const matches = await prisma.client.findMany({
+            where: { ...clientBase, createdAt: { gte: from, lte: to } },
+            select: { phone: true },
+            take: 5000,
+        });
+        phoneIn = matches.map(m => m.phone);
+    }
+    const aiTurnsWhere: any = {
+        createdAt: { gte: from, lte: to },
+        agent: { workspaceId },
+    };
+    if (phoneIn !== null) {
+        if (phoneIn.length === 0) aiTurnsWhere.id = '__none__';
+        else aiTurnsWhere.remoteJid = { in: phoneIn.flatMap(p => [`${p}@s.whatsapp.net`, `ig:${p}`]) };
+    }
+    const operatorWhere: any = {
+        createdAt: { gte: from, lte: to },
+        agent: { workspaceId },
+    };
+    if (phoneIn !== null) {
+        if (phoneIn.length === 0) operatorWhere.id = '__none__';
+        else operatorWhere.customerJid = { in: phoneIn.flatMap(p => [`${p}@s.whatsapp.net`, `ig:${p}`]) };
+    }
+
+    const [totalContacts, leadCount, purchasedCount, totalLogs, tokensAgg, operatorTickets] = await Promise.all([
+        prisma.client.count({ where: { ...clientBase, createdAt: { gte: from, lte: to } } }),
+        prisma.client.count({ where: { ...clientBase, status: 'LEAD', createdAt: { gte: from, lte: to } } }),
+        prisma.client.count({ where: { ...clientBase, status: 'PURCHASED', createdAt: { gte: from, lte: to } } }),
+        prisma.aiConversationLog.count({ where: aiTurnsWhere }),
+        prisma.aiConversationLog.aggregate({ where: aiTurnsWhere, _sum: { totalTokens: true } }),
+        prisma.operatorRequest.count({ where: operatorWhere }),
     ]);
     return {
-        totalContacts,
-        newContacts,
+        contacts: totalContacts,
         leadCount,
         purchasedCount,
-        totalAiTurns: totalLogs,
-        totalTokens: tokensAgg._sum.totalTokens || 0,
+        aiTurns: totalLogs,
+        tokens: tokensAgg._sum.totalTokens || 0,
         operatorTickets,
+    };
+}
+
+export async function kpis(workspaceId: string, f: AnalyticsFilters) {
+    const filtered = await kpisOnce(workspaceId, f, false);
+    const baseline = hasAnySegmentFilter(f) ? await kpisOnce(workspaceId, f, true) : null;
+    // Workspace-wide all-time totals stay useful for the "platform
+    // overview" feel of the strip.
+    const allTime = await prisma.client.count({ where: { workspaceId } });
+    return {
+        // Legacy field names so the old UI keeps rendering
+        totalContacts: allTime,
+        newContacts: filtered.contacts,
+        leadCount: filtered.leadCount,
+        purchasedCount: filtered.purchasedCount,
+        totalAiTurns: filtered.aiTurns,
+        totalTokens: filtered.tokens,
+        operatorTickets: filtered.operatorTickets,
+        // New, structured view for the comparison-aware UI
+        segment: filtered,
+        baseline,
+        filterActive: hasAnySegmentFilter(f),
     };
 }

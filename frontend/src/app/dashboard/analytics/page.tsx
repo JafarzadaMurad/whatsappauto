@@ -115,16 +115,29 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
+            {/* Filter-active banner — visible when any segment filter is on */}
+            {kpis?.filterActive && kpis?.baseline && (
+                <div className="bg-primary/5 border border-primary/30 rounded-2xl p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                    <span className="font-semibold text-primary">Filter active</span>
+                    <span className="text-foreground">
+                        {kpis.segment?.contacts ?? 0} of {kpis.baseline.contacts ?? 0} contacts match
+                        {kpis.baseline.contacts > 0 && (
+                            <span className="text-muted-foreground"> · {((kpis.segment.contacts / kpis.baseline.contacts) * 100).toFixed(1)}% of total</span>
+                        )}
+                    </span>
+                </div>
+            )}
+
             {/* KPI strip */}
             {kpis && (
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
                     <KpiCard icon={Users}        label="Contacts (all-time)" value={kpis.totalContacts} />
-                    <KpiCard icon={Sparkles}     label="New in range"        value={kpis.newContacts}  accent="text-emerald-400" />
-                    <KpiCard icon={Activity}     label="LEAD in range"       value={kpis.leadCount}    accent="text-amber-400" />
-                    <KpiCard icon={Activity}     label="PURCHASED in range"  value={kpis.purchasedCount} accent="text-green-400" />
-                    <KpiCard icon={MessageSquare} label="AI turns"           value={kpis.totalAiTurns} accent="text-violet-300" />
+                    <KpiCard icon={Sparkles}     label="In range"            value={kpis.newContacts}    baseline={kpis.baseline?.contacts}      accent="text-emerald-400" />
+                    <KpiCard icon={Activity}     label="LEAD"                value={kpis.leadCount}      baseline={kpis.baseline?.leadCount}     accent="text-amber-400" />
+                    <KpiCard icon={Activity}     label="PURCHASED"           value={kpis.purchasedCount} baseline={kpis.baseline?.purchasedCount} accent="text-green-400" />
+                    <KpiCard icon={MessageSquare} label="AI turns"           value={kpis.totalAiTurns}   baseline={kpis.baseline?.aiTurns}       accent="text-violet-300" />
                     <KpiCard icon={DollarSign}   label="Tokens"              value={kpis.totalTokens?.toLocaleString?.() || '0'} accent="text-sky-300" />
-                    <KpiCard icon={Activity}     label="Operator tickets"    value={kpis.operatorTickets} />
+                    <KpiCard icon={Activity}     label="Operator tickets"    value={kpis.operatorTickets} baseline={kpis.baseline?.operatorTickets} />
                 </div>
             )}
 
@@ -243,13 +256,24 @@ export default function AnalyticsPage() {
     );
 }
 
-function KpiCard({ icon: Icon, label, value, accent }: { icon: any; label: string; value: any; accent?: string }) {
+function KpiCard({ icon: Icon, label, value, accent, baseline }: { icon: any; label: string; value: any; accent?: string; baseline?: number }) {
+    // When a baseline is provided AND a segment is in play, show
+    // "X of Y · Z%" so the operator immediately sees what the filter
+    // narrowed down to.
+    const numericValue = typeof value === 'number' ? value : Number(String(value).replace(/[^0-9]/g, '')) || 0;
+    const showBaseline = baseline !== undefined && baseline !== null && baseline !== numericValue;
     return (
         <div className="bg-card border border-border rounded-xl p-3 flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
                 <Icon className="w-3 h-3" /> {label}
             </div>
             <div className={`text-xl font-bold ${accent || ''}`}>{value ?? '—'}</div>
+            {showBaseline && (
+                <div className="text-[10px] text-muted-foreground">
+                    of {baseline.toLocaleString()} overall
+                    {baseline > 0 && <span className="ml-1">· {((numericValue / baseline) * 100).toFixed(1)}%</span>}
+                </div>
+            )}
         </div>
     );
 }
@@ -280,9 +304,9 @@ export function MetricResult({ metric, data }: { metric: string; data: any }) {
                     })}
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border">
-                    <KpiCard icon={Activity} label="Lead rate"        value={`${data.rates.leadRate}%`} accent="text-amber-400" />
-                    <KpiCard icon={Activity} label="Purchase rate"    value={`${data.rates.purchaseRate}%`} accent="text-emerald-400" />
-                    <KpiCard icon={Activity} label="Lead → Purchase"  value={`${data.rates.leadToPurchase}%`} accent="text-green-400" />
+                    <RateCard label="Lead rate"        value={data.rates.leadRate}       baseline={data.baseline?.rates?.leadRate}       accent="text-amber-400" />
+                    <RateCard label="Purchase rate"    value={data.rates.purchaseRate}   baseline={data.baseline?.rates?.purchaseRate}   accent="text-emerald-400" />
+                    <RateCard label="Lead → Purchase"  value={data.rates.leadToPurchase} baseline={data.baseline?.rates?.leadToPurchase} accent="text-green-400" />
                 </div>
             </div>
         );
@@ -428,6 +452,29 @@ export function MetricResult({ metric, data }: { metric: string; data: any }) {
         );
     }
     return <Empty />;
+}
+
+// Rate card with side-by-side filtered vs baseline % and a delta hint.
+// Used inside the funnel result. Baseline is undefined when no segment
+// filter is active — then we collapse to a plain KpiCard appearance.
+function RateCard({ label, value, baseline, accent }: { label: string; value: number; baseline?: number; accent?: string }) {
+    const hasBaseline = baseline !== undefined && baseline !== null;
+    const delta = hasBaseline ? Math.round((value - baseline) * 10) / 10 : 0;
+    const deltaColor = delta > 0 ? 'text-emerald-400' : delta < 0 ? 'text-red-400' : 'text-muted-foreground';
+    return (
+        <div className="bg-card border border-border rounded-xl p-3 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+                <Activity className="w-3 h-3" /> {label}
+            </div>
+            <div className={`text-xl font-bold ${accent || ''}`}>{value}%</div>
+            {hasBaseline && (
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <span>workspace {baseline}%</span>
+                    <span className={deltaColor}>· {delta > 0 ? '+' : ''}{delta} pp</span>
+                </div>
+            )}
+        </div>
+    );
 }
 
 function Empty({ hint }: { hint?: string } = {}) {

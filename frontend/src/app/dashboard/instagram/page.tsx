@@ -138,22 +138,18 @@ export default function InstagramPage() {
                                                 ? <GitBranch className="w-4 h-4 text-amber-400" />
                                                 : <Bot className={`w-4 h-4 ${acc.agentId ? 'text-primary' : 'text-muted-foreground'}`} />}
                                             <select value={current} onChange={e => onPick(e.target.value)}
-                                                className="bg-card text-foreground text-sm font-medium focus:outline-none min-w-[140px] max-w-[180px] truncate rounded-lg">
+                                                className="bg-card text-foreground text-sm font-medium focus:outline-none min-w-[180px] max-w-[220px] truncate rounded-lg">
                                                 <option value="" className="bg-card text-foreground">— None (channel idle) —</option>
-                                                {agents.filter(a => !a.isRouter).length > 0 && (
-                                                    <optgroup label="AI Agents">
-                                                        {agents.filter(a => !a.isRouter).map(a => (
-                                                            <option key={a.id} value={`a:${a.id}`} className="bg-card text-foreground">{a.name}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                )}
-                                                {agents.filter(a => a.isRouter).length > 0 && (
-                                                    <optgroup label="Routers">
-                                                        {agents.filter(a => a.isRouter).map(a => (
-                                                            <option key={a.id} value={`r:${a.id}`} className="bg-card text-foreground">{a.name}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                )}
+                                                {agents.filter(a => !a.isRouter).map(a => (
+                                                    <option key={a.id} value={`a:${a.id}`} className="bg-card text-foreground">
+                                                        🤖 AI · {a.name}
+                                                    </option>
+                                                ))}
+                                                {agents.filter(a => a.isRouter).map(a => (
+                                                    <option key={a.id} value={`r:${a.id}`} className="bg-card text-foreground">
+                                                        🔀 Router · {a.name}
+                                                    </option>
+                                                ))}
                                             </select>
                                         </div>
                                     );

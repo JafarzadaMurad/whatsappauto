@@ -607,6 +607,12 @@ function ConvoRow({ convo, active, onClick }: { convo: Conversation; active: boo
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                     <ChannelBadge channel={convo.channel} mini />
+                    {convo.assignedAgentName && (
+                        <span title={`Assigned to ${convo.assignedAgentName}`}
+                            className="text-[9px] font-medium px-1 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20 max-w-[80px] truncate flex-shrink-0">
+                            {convo.assignedAgentName}
+                        </span>
+                    )}
                     <p className={`text-xs truncate flex-1 ${unread ? 'text-foreground' : 'text-muted-foreground'}`}>
                         {convo.lastFromMe && <span className="opacity-60">You: </span>}
                         {convo.lastMessage || '—'}

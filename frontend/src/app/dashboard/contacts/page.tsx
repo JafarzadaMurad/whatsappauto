@@ -15,6 +15,8 @@ interface Client {
     customFields: Record<string, any> | null;
     summary?: string | null;
     isAnonymous?: boolean;
+    assignedAgentId?: string | null;
+    assignedAgent?: { id: string; name: string; isRouter?: boolean } | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -36,6 +38,7 @@ const BASE_COLUMNS: { id: ColumnId; label: string; sortable?: boolean }[] = [
     { id: 'channel', label: 'Channel' },
     { id: 'status', label: 'Status', sortable: true },
     { id: 'tags', label: 'Tags' },
+    { id: 'assignedAgent', label: 'Assigned Agent', sortable: true },
     { id: 'summary', label: 'Summary' },
     { id: 'updatedAt', label: 'Last Activity', sortable: true },
 ];
@@ -171,6 +174,7 @@ export default function ContactsPage() {
             if (key === 'channel') return c.channel || '';
             if (key === 'status') return c.status;
             if (key === 'tags') return c.tags.join(',');
+            if (key === 'assignedAgent') return c.assignedAgent?.name || '';
             if (key === 'summary') return c.summary || '';
             if (key === 'updatedAt') return c.updatedAt;
             if (key.startsWith('cf:')) return c.customFields?.[key.slice(3)] ?? '';
@@ -391,6 +395,15 @@ function CellValue({ client: c, columnId, field }: { client: Client; columnId: C
             </div>
         );
     }
+    if (columnId === 'assignedAgent') {
+        if (!c.assignedAgent) return <span className="text-muted-foreground text-xs italic">—</span>;
+        return (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-300 border border-violet-500/20 max-w-[160px] truncate"
+                title={c.assignedAgent.isRouter ? 'Currently routed to a router' : 'Bound to this AI agent'}>
+                {c.assignedAgent.name}
+            </span>
+        );
+    }
     if (columnId === 'summary') {
         return <span className="text-xs text-muted-foreground line-clamp-2 max-w-[200px]">{c.summary || '—'}</span>;
     }
@@ -584,6 +597,17 @@ function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
     const [custom, setCustom] = useState<Record<string, any>>(client.customFields || {});
     const [saving, setSaving] = useState(false);
     const [purging, setPurging] = useState(false);
+    const [assignedAgentId, setAssignedAgentId] = useState<string | null>(client.assignedAgentId ?? null);
+    const [agents, setAgents] = useState<Array<{ id: string; name: string; isRouter?: boolean }>>([]);
+
+    useEffect(() => {
+        // Load every agent in the workspace (AI + routers) so the
+        // operator can rebind a contact to whichever one they want, or
+        // unbind to let the router take over again on the next message.
+        api.get('/agents').then(r => {
+            if (r.data?.success) setAgents(r.data.agents || []);
+        }).catch(() => {});
+    }, []);
 
     const purgeContact = async () => {
         const label = client.name || '+' + client.phone;
@@ -620,6 +644,7 @@ function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
                 status,
                 tags,
                 customFields: custom,
+                assignedAgentId,
             });
             if (r.data.success) onSaved(r.data.client);
         } catch (e: any) {
@@ -668,6 +693,30 @@ function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
                             <option value="PURCHASED">PURCHASED</option>
                             <option value="SPAM">SPAM</option>
                         </select>
+                    </Field>
+
+                    <Field label="Assigned Agent">
+                        <select value={assignedAgentId || ''} onChange={e => setAssignedAgentId(e.target.value || null)}
+                            className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm">
+                            <option value="">— None (router decides on next message) —</option>
+                            {agents.filter(a => !a.isRouter).length > 0 && (
+                                <optgroup label="AI Agents">
+                                    {agents.filter(a => !a.isRouter).map(a => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {agents.filter(a => a.isRouter).length > 0 && (
+                                <optgroup label="Routers">
+                                    {agents.filter(a => a.isRouter).map(a => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                        </select>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                            The router-assigned agent that handles this contact. Clear it to send the next message back through the router.
+                        </p>
                     </Field>
 
                     <Field label="Tags">

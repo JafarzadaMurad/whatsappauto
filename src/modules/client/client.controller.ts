@@ -10,6 +10,7 @@ const updateClientSchema = z.object({
     summary: z.string().nullable().optional(),
     customFields: z.record(z.string(), z.any()).optional(),
     agentPaused: z.boolean().optional(),
+    assignedAgentId: z.string().uuid().nullable().optional(),
 });
 
 const pauseSchema = z.object({
@@ -40,6 +41,9 @@ export class ClientController {
                     orderBy: { updatedAt: 'desc' },
                     skip: (page - 1) * pageSize,
                     take: pageSize,
+                    include: {
+                        assignedAgent: { select: { id: true, name: true, isRouter: true } },
+                    },
                 }),
             ]);
             return res.json({
@@ -54,11 +58,11 @@ export class ClientController {
 
     async getClient(req: Request, res: Response) {
         try {
-            const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
             const id = req.params.id as string;
             const client = await prisma.client.findFirst({
-                where: { id, workspaceId }
+                where: { id, workspaceId },
+                include: { assignedAgent: { select: { id: true, name: true, isRouter: true } } },
             });
             if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
             return res.json({ success: true, client });
@@ -87,10 +91,18 @@ export class ClientController {
                 updateData.agentPaused = data.agentPaused;
                 updateData.pausedAt = data.agentPaused ? new Date() : null;
             }
+            if (data.assignedAgentId !== undefined) {
+                if (data.assignedAgentId) {
+                    const ok = await prisma.agent.findFirst({ where: { id: data.assignedAgentId, workspaceId } });
+                    if (!ok) return res.status(400).json({ success: false, message: 'Invalid assignedAgentId' });
+                }
+                updateData.assignedAgentId = data.assignedAgentId;
+            }
 
             const client = await prisma.client.update({
                 where: { id },
-                data: updateData
+                data: updateData,
+                include: { assignedAgent: { select: { id: true, name: true, isRouter: true } } },
             });
 
             return res.json({ success: true, client });

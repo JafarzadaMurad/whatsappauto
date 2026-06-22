@@ -1543,7 +1543,7 @@ async function buildRouterTools(opts: {
 
     const tools: Record<string, any> = {
         handoffTo: makeTool(
-            'Bind this contact to a specialised agent. After calling this, every future message from the contact goes straight to that agent — the router stops being invoked. Call exactly once per conversation, once you are confident about which topic the customer needs.',
+            'BINDS the contact to a specialised agent. This is the ONLY way the customer actually gets routed. If you intend to say "I will connect you to X", you MUST call this tool in the SAME turn — otherwise the customer sees your message but nothing happens and the next message comes back to YOU, the router. After a successful call, the chosen agent owns every future message until the binding is released.',
             handoffSchema,
             async (params: { agentId: string; greeting?: string }) => {
                 const target = siblings.find(s => s.id === params.agentId);
@@ -1552,6 +1552,7 @@ async function buildRouterTools(opts: {
                     where: { workspaceId: opts.workspaceId, phone: opts.contactPhone },
                     data: { assignedAgentId: params.agentId },
                 });
+                logger.info({ phone: opts.contactPhone, assignedTo: target.name, agentId: params.agentId }, '[router] handoff executed');
                 return { ok: true, assignedTo: target.name, greeting: params.greeting || null };
             },
         ),
@@ -1563,26 +1564,33 @@ async function buildRouterTools(opts: {
                     where: { workspaceId: opts.workspaceId, phone: opts.contactPhone },
                     data: { assignedAgentId: null },
                 });
+                logger.info({ phone: opts.contactPhone }, '[router] handoff cleared');
                 return { ok: true };
             },
         ),
     };
 
     const list = siblings
-        .map(s => `- "${s.id}" → ${s.name}: ${s.routerDescription || '(no description)'}`)
+        .map(s => `- agentId="${s.id}"  →  ${s.name}  →  ${s.routerDescription || '(no description)'}`)
         .join('\n');
     const prompt = `
-## Routing
-You are the router agent. Your job is to greet the customer, find out which topic they need, then hand them off to the right specialised agent via the handoffTo tool. After handoff, you are out of the loop — the specialised agent owns the conversation.
 
-Available agents (agentId → name → what they handle):
+## ROUTING — CRITICAL INSTRUCTIONS
+You are a router agent. Your ONLY job is to figure out which specialised agent the customer needs, then bind them via the handoffTo tool. You do NOT answer business questions yourself — you greet, identify the topic, and route.
+
+### Available specialised agents
 ${list}
 
-Rules:
-- Ask at most ONE short question to figure out the topic.
-- Once you are reasonably confident, call handoffTo with the matching agentId. Include a brief greeting in the 'greeting' field if you want to send a transition line to the customer.
-- If the topic isn't covered by any agent, apologise briefly and stop — do NOT call handoffTo with a guess.
-- Use unassignAgent only when an already-assigned customer asks to switch topics.
+### How to behave
+1. If the customer hasn't told you which topic yet, ask ONE short question listing the choices (use the agent names, e.g. "Hansı mövzu üzrə kömək lazımdır: <Name1>, yoxsa <Name2>?"). Then STOP and wait — do not call any tool yet.
+2. As soon as the customer's reply matches one of the agents above (even loosely — "realeast", "real east", "realestate" all clearly mean the Real East agent), you MUST call \`handoffTo\` with that agent's agentId. The text you write to the customer in the same turn is the transition line (e.g. "Sizi Real East üzrə mütəxəssisə yönləndirirəm.").
+3. If the topic doesn't match any agent above, apologise briefly. Do NOT call handoffTo with a guess.
+
+### ABSOLUTE RULES — DO NOT BREAK
+- **Saying "I will route you" is NOT routing.** The customer is only routed when you call the handoffTo tool. If you write "Sizi yönləndirirəm" / "I'll connect you" / "I'll transfer you" without calling handoffTo in the same turn, the routing FAILS — the customer's next message comes back to you and the loop repeats. This has actually happened. Do NOT make this mistake.
+- Always call handoffTo BEFORE or alongside your transition message, never instead of it.
+- One handoffTo per conversation. Once called, the binding sticks.
+- Use unassignAgent only when an already-assigned customer explicitly says they want a different topic.
 `;
     return { tools, prompt };
 }

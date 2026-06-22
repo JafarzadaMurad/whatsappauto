@@ -46,6 +46,7 @@ export default function AnalyticsPage() {
     const [kpis, setKpis] = useState<any>(null);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+    const [availableTags, setAvailableTags] = useState<string[]>([]);
 
     useEffect(() => {
         api.get('/user-fields').then(r => {
@@ -53,6 +54,15 @@ export default function AnalyticsPage() {
         }).catch(() => {});
         api.get('/agents').then(r => {
             if (r.data?.success) setAgents((r.data.agents || []).map((a: any) => ({ id: a.id, name: a.name })));
+        }).catch(() => {});
+        // Pull a generous page of clients to surface the unique tag set —
+        // good enough for a filter dropdown without a dedicated endpoint.
+        api.get('/clients', { params: { pageSize: 200 } }).then(r => {
+            if (r.data?.success) {
+                const all = new Set<string>();
+                for (const c of r.data.clients || []) (c.tags || []).forEach((t: string) => all.add(t));
+                setAvailableTags(Array.from(all).sort());
+            }
         }).catch(() => {});
     }, []);
 
@@ -119,7 +129,7 @@ export default function AnalyticsPage() {
             )}
 
             {/* Filter bar */}
-            <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+            <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <div>
                     <label className="text-[11px] text-muted-foreground">From</label>
                     <input type="date" value={filters.from || ''} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
@@ -148,14 +158,38 @@ export default function AnalyticsPage() {
                     </select>
                 </div>
                 <div>
+                    <label className="text-[11px] text-muted-foreground">Status</label>
+                    <select value={filters.status?.[0] || ''}
+                        onChange={e => setFilters(f => ({ ...f, status: e.target.value ? [e.target.value] : undefined }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="">All</option>
+                        <option value="NEW">NEW</option>
+                        <option value="LEAD">LEAD</option>
+                        <option value="PURCHASED">PURCHASED</option>
+                        <option value="SPAM">SPAM</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="text-[11px] text-muted-foreground">Tag</label>
+                    <select value={filters.tags?.[0] || ''}
+                        onChange={e => setFilters(f => ({ ...f, tags: e.target.value ? [e.target.value] : undefined }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="">All</option>
+                        {availableTags.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                </div>
+                <div className="col-span-2 md:col-span-3 lg:col-span-6">
                     <label className="text-[11px] text-muted-foreground">Custom field</label>
-                    <div className="mt-1 flex gap-1">
+                    <div className="mt-1 flex gap-1 max-w-md">
                         <select value={filters.customField?.key || ''}
                             onChange={e => setFilters(f => ({
                                 ...f, customField: e.target.value ? { key: e.target.value, value: f.customField?.value ?? '' } : undefined,
                             }))}
                             className="flex-1 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-sm">
-                            <option value="">—</option>
+                            <option value="">— No custom-field filter —</option>
+                            {userFields.length === 0 && (
+                                <option disabled>No user fields defined yet</option>
+                            )}
                             {userFields.map(uf => <option key={uf.key} value={uf.key}>{uf.label}</option>)}
                         </select>
                         <input type="text" value={filters.customField?.value || ''}
@@ -164,7 +198,7 @@ export default function AnalyticsPage() {
                             onChange={e => setFilters(f => ({
                                 ...f, customField: f.customField ? { key: f.customField.key, value: e.target.value } : undefined,
                             }))}
-                            className="w-20 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-sm disabled:opacity-50" />
+                            className="w-32 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-sm disabled:opacity-50" />
                     </div>
                 </div>
             </section>

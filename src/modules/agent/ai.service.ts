@@ -887,21 +887,30 @@ function buildTemplateSchema(tpl: HttpToolTemplate) {
         if (tpl.url?.mode === 'ai') {
             shape['url'] = z.string().describe(tpl.url.description || 'Full URL to call');
         }
-        (tpl.queryParams || []).forEach((p, i) => {
-            if (p.value?.mode === 'ai') {
+        // Defensively normalise headers / queryParams / bodyParams. Older
+        // tools or templates restored from an external source occasionally
+        // store these as plain objects ({Authorization: "Bearer …"})
+        // instead of the expected [{name, value:{mode, value}}] array;
+        // forEach blows up on the object form and kills the whole agent
+        // turn. Treat anything non-array as empty.
+        const qParams = Array.isArray(tpl.queryParams) ? tpl.queryParams : [];
+        const headersArr = Array.isArray(tpl.headers) ? tpl.headers : [];
+        const bodyArr = Array.isArray(tpl.bodyParams) ? tpl.bodyParams : [];
+        qParams.forEach((p: any, i: number) => {
+            if (p?.value?.mode === 'ai') {
                 const key = `query_${sanitizeName(p.name, `p${i}`)}`;
                 shape[key] = z.string().describe(p.value.description || `Value for query param "${p.name}"`);
             }
         });
-        (tpl.headers || []).forEach((h, i) => {
-            if (h.value?.mode === 'ai') {
+        headersArr.forEach((h: any, i: number) => {
+            if (h?.value?.mode === 'ai') {
                 const key = `header_${sanitizeName(h.name, `h${i}`)}`;
                 shape[key] = z.string().describe(h.value.description || `Value for header "${h.name}"`);
             }
         });
         if (tpl.bodyType === 'json') {
-            (tpl.bodyParams || []).forEach((b, i) => {
-                if (b.value?.mode === 'ai') {
+            bodyArr.forEach((b: any, i: number) => {
+                if (b?.value?.mode === 'ai') {
                     const key = `body_${sanitizeName(b.name, `b${i}`)}`;
                     shape[key] = z.string().describe(b.value.description || `Value for body field "${b.name}"`);
                 }
@@ -1165,20 +1174,25 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
             const url = await applyAllPlaceholders(rawUrl, crmValues, stepResults, ctx);
             if (!url) return { error: 'No URL provided' };
 
+            // Defensive normalisation — see comment in buildTemplateSchema.
+            const qParams: any[] = Array.isArray(tpl.queryParams) ? tpl.queryParams : [];
+            const headerList: any[] = Array.isArray(tpl.headers) ? tpl.headers : [];
+            const bodyParamsList: any[] = Array.isArray(tpl.bodyParams) ? tpl.bodyParams : [];
+
             // Query params
             const params: Record<string, string> = {};
-            for (let i = 0; i < (tpl.queryParams || []).length; i++) {
-                const p = tpl.queryParams![i];
-                if (!p.name) continue;
+            for (let i = 0; i < qParams.length; i++) {
+                const p = qParams[i];
+                if (!p?.name) continue;
                 const aiKey = `query_${sanitizeName(p.name, `p${i}`)}`;
                 params[p.name] = await applyAllPlaceholders(resolveValue(p.value, args[aiKey]), crmValues, stepResults, ctx);
             }
 
             // Headers
             const headers: Record<string, string> = {};
-            for (let i = 0; i < (tpl.headers || []).length; i++) {
-                const h = tpl.headers![i];
-                if (!h.name) continue;
+            for (let i = 0; i < headerList.length; i++) {
+                const h = headerList[i];
+                if (!h?.name) continue;
                 const aiKey = `header_${sanitizeName(h.name, `h${i}`)}`;
                 headers[h.name] = await applyAllPlaceholders(resolveValue(h.value, args[aiKey]), crmValues, stepResults, ctx);
             }
@@ -1195,9 +1209,9 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
             let data: any = undefined;
             if (tpl.bodyType === 'json') {
                 const obj: Record<string, any> = {};
-                for (let i = 0; i < (tpl.bodyParams || []).length; i++) {
-                    const b = tpl.bodyParams![i];
-                    if (!b.name) continue;
+                for (let i = 0; i < bodyParamsList.length; i++) {
+                    const b = bodyParamsList[i];
+                    if (!b?.name) continue;
                     const aiKey = `body_${sanitizeName(b.name, `b${i}`)}`;
                     obj[b.name] = await applyAllPlaceholders(resolveValue(b.value, args[aiKey]), crmValues, stepResults, ctx);
                 }

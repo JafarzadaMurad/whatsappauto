@@ -37,6 +37,7 @@ export const SECTIONS: Array<{
     verbs: CrudFlag[];
 }> = [
     { key: 'dashboard',   label: 'Dashboard',     verbs: ['view'] },
+    { key: 'analytics',   label: 'Analytics',     verbs: ['view'] },
     { key: 'inbox',       label: 'Inbox',         verbs: ['view'] },
     { key: 'whatsapp',    label: 'WhatsApp',      verbs: ['view', 'create', 'update', 'delete'] },
     { key: 'instagram',   label: 'Instagram',     verbs: ['view', 'create', 'update', 'delete'] },

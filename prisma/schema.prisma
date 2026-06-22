@@ -58,6 +58,7 @@ model Workspace {
   mcpPermission  McpPermission?
   mcpAuditLogs   McpAuditLog[]
   oversightAgents OversightAgent[]
+  dashboardWidgets DashboardWidget[]
 
   @@index([ownerId])
 }
@@ -1010,4 +1011,28 @@ model InstagramContact {
   updatedAt DateTime @updatedAt
 
   @@unique([igUserId, senderId])
+}
+
+// Pinned analytics widget. Each row is a saved analytics query the
+// owner has parked on the Dashboard page; the renderer feeds `metric`
+// + `filters` + `groupBy` to /api/analytics/query and draws the result
+// using `visualType`. Layout order is `position` ascending.
+model DashboardWidget {
+  id          String     @id @default(uuid())
+  userId      String
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  title       String
+  metric      String     // funnel | daily_volume | channel_split | tag_conversion | agent_perf | drop_off
+  filters     Json       @default("{}")    // { from?, to?, status?, tags?, channel?, agentId?, customField? }
+  groupBy     String?
+  visualType  String     // kpi | line | bar | table | funnel
+  position    Int        @default(0)
+  size        String     @default("md")    // sm | md | lg
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([workspaceId, position])
 }

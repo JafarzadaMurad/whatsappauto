@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -85,6 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const navLinks = [
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, section: 'dashboard' },
+        { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3, section: 'analytics' },
         { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox, section: 'inbox' },
         {
             name: 'Networks',

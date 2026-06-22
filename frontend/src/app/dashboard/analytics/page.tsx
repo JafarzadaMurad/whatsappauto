@@ -1,0 +1,401 @@
+"use client";
+
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { BarChart3, Loader2, Pin, Sparkles, Users, MessageSquare, DollarSign, Activity } from "lucide-react";
+import api from "@/lib/api";
+import {
+    ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, Cell,
+} from "recharts";
+
+// ─── Types ───
+type Filters = {
+    from?: string; to?: string;
+    status?: string[]; tags?: string[];
+    channel?: 'whatsapp' | 'instagram';
+    agentId?: string;
+    customField?: { key: string; value: any };
+};
+
+type MetricKey = 'funnel' | 'daily_volume' | 'channel_split' | 'tag_conversion' | 'agent_perf' | 'drop_off';
+
+const METRICS: Array<{ key: MetricKey; label: string; vis: 'funnel' | 'line' | 'bar' | 'table' }> = [
+    { key: 'funnel',         label: 'Sales funnel',     vis: 'funnel' },
+    { key: 'daily_volume',   label: 'Daily volume',     vis: 'line'   },
+    { key: 'channel_split',  label: 'Channel split',    vis: 'bar'    },
+    { key: 'tag_conversion', label: 'Tag conversion',   vis: 'table'  },
+    { key: 'agent_perf',     label: 'Agent performance', vis: 'table' },
+    { key: 'drop_off',       label: 'Drop-off points',  vis: 'table'  },
+];
+
+const COLORS = ['#3b82f6', '#a855f7', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16', '#ec4899'];
+
+function toIsoDate(d: Date) { return d.toISOString().slice(0, 10); }
+
+export default function AnalyticsPage() {
+    const today = useMemo(() => new Date(), []);
+    const thirtyDaysAgo = useMemo(() => new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000), [today]);
+
+    const [filters, setFilters] = useState<Filters>({
+        from: toIsoDate(thirtyDaysAgo),
+        to: toIsoDate(today),
+    });
+    const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
+    const [active, setActive] = useState<MetricKey>('funnel');
+    const [loading, setLoading] = useState(false);
+    const [data, setData] = useState<any>(null);
+    const [kpis, setKpis] = useState<any>(null);
+    const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
+    const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+
+    useEffect(() => {
+        api.get('/user-fields').then(r => {
+            if (r.data?.success) setUserFields((r.data.fields || []).map((f: any) => ({ key: f.key, label: f.label || f.key })));
+        }).catch(() => {});
+        api.get('/agents').then(r => {
+            if (r.data?.success) setAgents((r.data.agents || []).map((a: any) => ({ id: a.id, name: a.name })));
+        }).catch(() => {});
+    }, []);
+
+    const runQuery = useCallback(async (metric: MetricKey) => {
+        setLoading(true);
+        try {
+            const r = await api.post('/analytics/query', { metric, filters, period });
+            if (r.data?.success) setData(r.data);
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        } finally { setLoading(false); }
+    }, [filters, period]);
+
+    const refreshKpis = useCallback(async () => {
+        try {
+            const r = await api.post('/analytics/query', { metric: 'kpis', filters });
+            if (r.data?.success) setKpis(r.data);
+        } catch { /* ignore */ }
+    }, [filters]);
+
+    useEffect(() => { runQuery(active); }, [active, runQuery]);
+    useEffect(() => { refreshKpis(); }, [refreshKpis]);
+
+    const pinWidget = async () => {
+        const metricDef = METRICS.find(m => m.key === active);
+        if (!metricDef) return;
+        const title = prompt(`Title for the pinned widget`, metricDef.label);
+        if (!title) return;
+        try {
+            await api.post('/analytics/widgets', {
+                title, metric: active, filters, period,
+                visualType: metricDef.vis,
+                size: 'md',
+            });
+            alert('Pinned to Dashboard.');
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        }
+    };
+
+    return (
+        <div className="max-w-7xl mx-auto space-y-5">
+            <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                    <h1 className="text-2xl font-bold">Analytics</h1>
+                    <p className="text-sm text-muted-foreground">Explore conversions, agent costs, channel volume and where customers drop off.</p>
+                </div>
+            </div>
+
+            {/* KPI strip */}
+            {kpis && (
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+                    <KpiCard icon={Users}        label="Contacts (all-time)" value={kpis.totalContacts} />
+                    <KpiCard icon={Sparkles}     label="New in range"        value={kpis.newContacts}  accent="text-emerald-400" />
+                    <KpiCard icon={Activity}     label="LEAD in range"       value={kpis.leadCount}    accent="text-amber-400" />
+                    <KpiCard icon={Activity}     label="PURCHASED in range"  value={kpis.purchasedCount} accent="text-green-400" />
+                    <KpiCard icon={MessageSquare} label="AI turns"           value={kpis.totalAiTurns} accent="text-violet-300" />
+                    <KpiCard icon={DollarSign}   label="Tokens"              value={kpis.totalTokens?.toLocaleString?.() || '0'} accent="text-sky-300" />
+                    <KpiCard icon={Activity}     label="Operator tickets"    value={kpis.operatorTickets} />
+                </div>
+            )}
+
+            {/* Filter bar */}
+            <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div>
+                    <label className="text-[11px] text-muted-foreground">From</label>
+                    <input type="date" value={filters.from || ''} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                    <label className="text-[11px] text-muted-foreground">To</label>
+                    <input type="date" value={filters.to || ''} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                    <label className="text-[11px] text-muted-foreground">Channel</label>
+                    <select value={filters.channel || ''} onChange={e => setFilters(f => ({ ...f, channel: (e.target.value || undefined) as any }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="">All</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="instagram">Instagram</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="text-[11px] text-muted-foreground">Agent</label>
+                    <select value={filters.agentId || ''} onChange={e => setFilters(f => ({ ...f, agentId: e.target.value || undefined }))}
+                        className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="">All</option>
+                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="text-[11px] text-muted-foreground">Custom field</label>
+                    <div className="mt-1 flex gap-1">
+                        <select value={filters.customField?.key || ''}
+                            onChange={e => setFilters(f => ({
+                                ...f, customField: e.target.value ? { key: e.target.value, value: f.customField?.value ?? '' } : undefined,
+                            }))}
+                            className="flex-1 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-sm">
+                            <option value="">—</option>
+                            {userFields.map(uf => <option key={uf.key} value={uf.key}>{uf.label}</option>)}
+                        </select>
+                        <input type="text" value={filters.customField?.value || ''}
+                            placeholder="value"
+                            disabled={!filters.customField?.key}
+                            onChange={e => setFilters(f => ({
+                                ...f, customField: f.customField ? { key: f.customField.key, value: e.target.value } : undefined,
+                            }))}
+                            className="w-20 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-sm disabled:opacity-50" />
+                    </div>
+                </div>
+            </section>
+
+            {/* Metric tabs + actions */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex flex-wrap gap-1 border border-border rounded-xl bg-card/40 p-1">
+                    {METRICS.map(m => (
+                        <button key={m.key} onClick={() => setActive(m.key)}
+                            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${active === m.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                            {m.label}
+                        </button>
+                    ))}
+                </div>
+                <div className="flex items-center gap-2">
+                    {active === 'daily_volume' && (
+                        <select value={period} onChange={e => setPeriod(e.target.value as any)}
+                            className="bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-xs">
+                            <option value="day">By day</option>
+                            <option value="week">By week</option>
+                            <option value="month">By month</option>
+                        </select>
+                    )}
+                    <button onClick={pinWidget}
+                        className="bg-primary text-primary-foreground rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5">
+                        <Pin className="w-3.5 h-3.5" /> Pin to Dashboard
+                    </button>
+                </div>
+            </div>
+
+            {/* Result panel */}
+            <section className="bg-card border border-border rounded-2xl p-5 min-h-[300px]">
+                {loading ? (
+                    <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+                ) : data ? (
+                    <MetricResult metric={active} data={data} />
+                ) : (
+                    <div className="text-center text-muted-foreground py-12 text-sm">Run a query…</div>
+                )}
+            </section>
+        </div>
+    );
+}
+
+function KpiCard({ icon: Icon, label, value, accent }: { icon: any; label: string; value: any; accent?: string }) {
+    return (
+        <div className="bg-card border border-border rounded-xl p-3 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+                <Icon className="w-3 h-3" /> {label}
+            </div>
+            <div className={`text-xl font-bold ${accent || ''}`}>{value ?? '—'}</div>
+        </div>
+    );
+}
+
+export function MetricResult({ metric, data }: { metric: string; data: any }) {
+    if (metric === 'funnel') {
+        const totals = data.total || 0;
+        const max = Math.max(1, ...(data.rows || []).map((r: any) => r.count));
+        return (
+            <div className="space-y-3">
+                <div className="text-sm text-muted-foreground">
+                    Total contacts in range: <span className="font-semibold text-foreground">{totals}</span>
+                </div>
+                <div className="space-y-2">
+                    {data.rows.map((r: any, i: number) => {
+                        const pct = totals > 0 ? (r.count / totals) * 100 : 0;
+                        return (
+                            <div key={r.status}>
+                                <div className="flex items-center justify-between text-xs mb-1">
+                                    <span className="font-medium">{r.status}</span>
+                                    <span className="text-muted-foreground">{r.count} ({pct.toFixed(1)}%)</span>
+                                </div>
+                                <div className="h-3 rounded-full bg-secondary/40 overflow-hidden">
+                                    <div className="h-full" style={{ width: `${(r.count / max) * 100}%`, background: COLORS[i % COLORS.length] }} />
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border">
+                    <KpiCard icon={Activity} label="Lead rate"        value={`${data.rates.leadRate}%`} accent="text-amber-400" />
+                    <KpiCard icon={Activity} label="Purchase rate"    value={`${data.rates.purchaseRate}%`} accent="text-emerald-400" />
+                    <KpiCard icon={Activity} label="Lead → Purchase"  value={`${data.rates.leadToPurchase}%`} accent="text-green-400" />
+                </div>
+            </div>
+        );
+    }
+    if (metric === 'daily_volume') {
+        // Group by bucket; series per channel
+        const bucketMap = new Map<string, any>();
+        for (const r of data.rows || []) {
+            const k = new Date(r.bucket).toISOString().slice(0, 10);
+            const existing = bucketMap.get(k) || { bucket: k };
+            existing[r.channel] = (existing[r.channel] || 0) + r.count;
+            bucketMap.set(k, existing);
+        }
+        const rows = Array.from(bucketMap.values()).sort((a, b) => a.bucket.localeCompare(b.bucket));
+        if (rows.length === 0) return <Empty />;
+        return (
+            <div style={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer>
+                    <LineChart data={rows} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                        <CartesianGrid stroke="#262630" strokeDasharray="3 3" />
+                        <XAxis dataKey="bucket" stroke="#888" fontSize={11} />
+                        <YAxis stroke="#888" fontSize={11} />
+                        <Tooltip contentStyle={{ background: '#0a0a0f', border: '1px solid #262630', borderRadius: 8 }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Line dataKey="whatsapp" stroke="#10b981" strokeWidth={2} dot={false} />
+                        <Line dataKey="instagram" stroke="#ec4899" strokeWidth={2} dot={false} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
+        );
+    }
+    if (metric === 'channel_split') {
+        const rows = data.rows || [];
+        if (rows.length === 0) return <Empty />;
+        return (
+            <div style={{ width: '100%', height: 280 }}>
+                <ResponsiveContainer>
+                    <BarChart data={rows}>
+                        <CartesianGrid stroke="#262630" strokeDasharray="3 3" />
+                        <XAxis dataKey="channel" stroke="#888" fontSize={11} />
+                        <YAxis stroke="#888" fontSize={11} />
+                        <Tooltip contentStyle={{ background: '#0a0a0f', border: '1px solid #262630', borderRadius: 8 }} />
+                        <Bar dataKey="count">
+                            {rows.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+        );
+    }
+    if (metric === 'tag_conversion') {
+        const rows = data.rows || [];
+        if (rows.length === 0) return <Empty />;
+        return (
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="text-xs text-muted-foreground">
+                        <tr className="border-b border-border">
+                            <th className="text-left py-2">Tag</th>
+                            <th className="text-right py-2">Contacts</th>
+                            <th className="text-right py-2">Lead</th>
+                            <th className="text-right py-2">Purchased</th>
+                            <th className="text-right py-2">Lead %</th>
+                            <th className="text-right py-2">Purchase %</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r: any) => (
+                            <tr key={r.tag} className="border-b border-border/40">
+                                <td className="py-2 font-medium">{r.tag}</td>
+                                <td className="py-2 text-right">{r.total}</td>
+                                <td className="py-2 text-right text-amber-300">{r.lead}</td>
+                                <td className="py-2 text-right text-emerald-300">{r.purchased}</td>
+                                <td className="py-2 text-right">{r.leadRate}%</td>
+                                <td className="py-2 text-right">{r.purchaseRate}%</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    }
+    if (metric === 'agent_perf') {
+        const rows = data.rows || [];
+        const t = data.totals || { turns: 0, tokens: 0, costUsd: 0 };
+        return (
+            <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                    <KpiCard icon={Activity}     label="Total turns"  value={t.turns} />
+                    <KpiCard icon={MessageSquare} label="Total tokens" value={t.tokens.toLocaleString()} accent="text-sky-300" />
+                    <KpiCard icon={DollarSign}   label="Est. cost"    value={`$${t.costUsd.toFixed(4)}`} accent="text-emerald-300" />
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="text-xs text-muted-foreground">
+                            <tr className="border-b border-border">
+                                <th className="text-left py-2">Agent</th>
+                                <th className="text-left py-2">Model</th>
+                                <th className="text-right py-2">Turns</th>
+                                <th className="text-right py-2">Tokens (in / out / total)</th>
+                                <th className="text-right py-2">Est. cost</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r: any) => (
+                                <tr key={r.agentId} className="border-b border-border/40">
+                                    <td className="py-2">
+                                        <span className="font-medium">{r.name}</span>
+                                        {r.isRouter && <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-300">router</span>}
+                                    </td>
+                                    <td className="py-2 text-muted-foreground text-xs font-mono">{r.provider} · {r.model}</td>
+                                    <td className="py-2 text-right">{r.turns}</td>
+                                    <td className="py-2 text-right text-xs font-mono text-muted-foreground">
+                                        {r.promptTokens.toLocaleString()} / {r.completionTokens.toLocaleString()} / {r.totalTokens.toLocaleString()}
+                                    </td>
+                                    <td className="py-2 text-right text-emerald-300">${r.estCostUsd.toFixed(4)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    }
+    if (metric === 'drop_off') {
+        const rows = data.rows || [];
+        if (rows.length === 0) return <Empty hint="No drop-offs in the selected period." />;
+        return (
+            <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Last assistant messages in chats that went cold (no customer reply for &gt;24h). High counts mean this question loses customers — improve the prompt around it.</p>
+                <div className="space-y-1.5">
+                    {rows.map((r: any, i: number) => (
+                        <div key={i} className="flex items-start gap-3 p-3 border border-border rounded-xl bg-secondary/10">
+                            <div className="text-2xl font-bold text-amber-400 w-10 text-right">{r.times}</div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm whitespace-pre-wrap break-words">{r.reply.slice(0, 280)}{r.reply.length > 280 ? '…' : ''}</p>
+                                <p className="text-[10px] text-muted-foreground mt-1">Last seen: {new Date(r.latest).toLocaleString()}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+    return <Empty />;
+}
+
+function Empty({ hint }: { hint?: string } = {}) {
+    return <div className="text-center text-muted-foreground py-12 text-sm">{hint || 'No data for the selected range.'}</div>;
+}

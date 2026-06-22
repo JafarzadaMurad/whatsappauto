@@ -1981,6 +1981,26 @@ export class AiService {
 
             logger.info(`[${instanceId}] AI replied to ${remoteJid}`);
 
+            // If the router just dispatched the contact, run the freshly
+            // assigned specialist agent immediately so the customer gets a
+            // proper greeting / first answer without having to write
+            // another message. The specialist sees the full conversation
+            // history including the router's transition line, so it knows
+            // exactly what the customer wanted.
+            const handoffOccurred = (agent as any).isRouter && (result.steps || []).some((s: any) =>
+                (s.toolCalls || []).some((tc: any) => tc.toolName === 'handoffTo')
+            );
+            if (handoffOccurred) {
+                logger.info({ instanceId, remoteJid }, '[router] follow-up: invoking specialist agent');
+                // Tiny delay so the router's own message lands first on the
+                // customer's phone before the specialist's response arrives.
+                setTimeout(() => {
+                    AiService.handleIncomingMessage(instanceId, remoteJid, sock, io).catch(err => {
+                        logger.error({ err: err.message, instanceId, remoteJid }, '[router] follow-up call failed');
+                    });
+                }, 800);
+            }
+
         } catch (error) {
             logger.error({ err: error, instanceId, remoteJid }, 'Failed to generate AI response');
         }

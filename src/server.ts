@@ -12,6 +12,7 @@ import { ensureWorkspaceRoles } from './lib/role-migration';
 import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
+import { startReminderScheduler } from './modules/agent/reminder.scheduler';
 
 const server = http.createServer(app);
 
@@ -71,6 +72,11 @@ server.listen(PORT, async () => {
     // agents and run them. Each run reviews its watched agents'
     // recent activity and persists suggestions for the UI.
     startOversightScheduler();
+
+    // Reminder scheduler: every 15 minutes, find conversations idle
+    // for at least agent.reminderHours and ask the model to draft a
+    // follow-up. Per-contact lock + max-reminders cap prevent nagging.
+    startReminderScheduler();
 });
 
 // Handle unhandled Promise rejections

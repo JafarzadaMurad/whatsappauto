@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -41,6 +41,7 @@ const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
     self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
     live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
+    reminder: 'You can periodically re-engage idle contacts. A background scheduler picks customers who haven\'t replied for the configured number of hours and invokes a special "reminder turn". When you are in a reminder turn (the latest non-assistant turn will be marked [REMINDER_TURN: customer silent for Xh]) read the conversation, then write ONE short warm message that nudges the customer based on where the conversation left off — never restart the funnel, never repeat your last message verbatim, never apologise for writing again. Stay in the customer\'s language. Keep it conversational, max 2 short sentences.',
 };
 
 type ValueSpec =
@@ -367,6 +368,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [audioEnabled, setAudioEnabled] = useState(true);
     const [visionEnabled, setVisionEnabled] = useState(true);
     const [historyDepth, setHistoryDepth] = useState(10);
+    const [reminderHours, setReminderHours] = useState(24);
     const [whisperLanguage, setWhisperLanguage] = useState<string>("");
     const [whisperModel, setWhisperModel] = useState<string>("whisper-1");
     const [isRouter, setIsRouter] = useState(false);
@@ -426,6 +428,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setAudioEnabled(a.audioEnabled !== false);
                     setVisionEnabled(a.visionEnabled !== false);
                     setHistoryDepth(Number(a.historyDepth) || 10);
+                    setReminderHours(Number(a.reminderHours) || 24);
                     setWhisperLanguage(a.whisperLanguage || "");
                     setWhisperModel(a.whisperModel || "whisper-1");
                     setIsRouter(!!a.isRouter);
@@ -671,7 +674,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -690,7 +693,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1657,6 +1660,72 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     {!(skillPrompts['self_pause'] || '').trim() && (
                                         <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
                                     )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Reminder — proactive follow-up after N hours of silence */}
+                        <div className={`rounded-xl border ${skills.includes('reminder') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>
+                            <div className="flex items-center gap-3 p-3">
+                                <input
+                                    type="checkbox"
+                                    checked={skills.includes('reminder')}
+                                    onChange={() => toggleSkill('reminder')}
+                                    className="w-4 h-4 accent-primary rounded cursor-pointer"
+                                />
+                                <button type="button"
+                                    onClick={() => skills.includes('reminder') && toggleSkillExpand('reminder')}
+                                    className={`flex-1 text-left ${skills.includes('reminder') ? 'cursor-pointer' : 'cursor-default'}`}
+                                    disabled={!skills.includes('reminder')}>
+                                    <div className="font-medium text-sm flex items-center gap-2">
+                                        <Bell className="w-4 h-4 text-muted-foreground" /> Reminder
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Background scheduler picks contacts who've been silent for N hours and asks the agent to write a short re-engagement message based on the chat history.
+                                    </div>
+                                </button>
+                                {skills.includes('reminder') && (
+                                    <button type="button" onClick={() => toggleSkillExpand('reminder')}
+                                        className="text-muted-foreground hover:text-foreground p-1 rounded">
+                                        {expandedSkills.has('reminder') ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                    </button>
+                                )}
+                            </div>
+                            {skills.includes('reminder') && expandedSkills.has('reminder') && (
+                                <div className="border-t border-border p-4 space-y-4">
+                                    <div>
+                                        <label className="text-xs font-medium text-muted-foreground">Idle hours before reminder</label>
+                                        <div className="mt-1 flex items-center gap-3">
+                                            <input type="number" min={1} max={720}
+                                                value={reminderHours}
+                                                onChange={e => setReminderHours(Math.max(1, Math.min(720, Number(e.target.value) || 24)))}
+                                                className="w-24 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                                            <p className="text-[11px] text-muted-foreground">
+                                                When the customer's last message is older than this and no reply has gone out, the agent will send a follow-up. Capped at 3 reminders per idle state. Range 1–720h.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-xs font-medium text-muted-foreground">Reminder prompt</label>
+                                            {(skillPrompts['reminder'] || '').trim().length > 0 && (
+                                                <button type="button"
+                                                    onClick={() => setSkillPrompts(prev => { const n = { ...prev }; delete n['reminder']; return n; })}
+                                                    className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+                                                    Reset to default
+                                                </button>
+                                            )}
+                                        </div>
+                                        <textarea
+                                            value={skillPrompts['reminder'] ?? ''}
+                                            onChange={e => setSkillPrompts(prev => ({ ...prev, reminder: e.target.value }))}
+                                            rows={5}
+                                            placeholder={DEFAULT_SKILL_PROMPTS.reminder || 'Write the customer ONE short warm follow-up that picks up where the chat left off…'}
+                                            className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                                        {!(skillPrompts['reminder'] || '').trim() && (
+                                            <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>

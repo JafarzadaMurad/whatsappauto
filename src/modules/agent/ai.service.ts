@@ -1448,6 +1448,7 @@ export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     http: 'You can call external HTTP APIs via the dedicated tools listed below.',
     memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
     self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
+    reminder: 'You can periodically re-engage idle contacts. A background scheduler picks customers who haven\'t replied for the configured number of hours and invokes a special "reminder turn". When you are in a reminder turn (the latest non-assistant turn will be marked [REMINDER_TURN: customer silent for Xh]) read the conversation, then write ONE short warm message that nudges the customer based on where the conversation left off — never restart the funnel, never repeat your last message verbatim, never apologise for writing again. Stay in the customer\'s language. Keep it conversational, max 2 short sentences.',
     live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
 };
 
@@ -2218,6 +2219,121 @@ export class AiService {
             logger.info(`[ai-operator] ticket ${request.ticket} answer delivered to ${request.customerJid}`);
         } catch (err: any) {
             logger.error({ err: err.message, ticket: request.ticket }, '[ai-operator] composing customer reply failed');
+        }
+    }
+
+    // Sends a single AI-generated reminder to a contact that has gone
+    // quiet. The model sees the full chat history, a system instruction
+    // explaining this is a reminder turn, and drafts ONE short
+    // re-engagement message. Used by the background reminder scheduler;
+    // never called from the regular message-receive path.
+    static async triggerReminder(opts: {
+        instanceId: string;
+        remoteJid: string;
+        idleHours: number;
+        sock: WASocket;
+        io: Server;
+    }) {
+        const { instanceId, remoteJid, idleHours, sock, io } = opts;
+        try {
+            const instance = await prisma.instance.findUnique({
+                where: { id: instanceId },
+                include: { agent: { include: { provider: true } } },
+            });
+            if (!instance?.agent?.provider) return;
+            if (!(instance.agent as any).isActive) return;
+            const agent: any = instance.agent;
+            const providerInfo = agent.provider;
+            if (!(agent.skills || []).includes('reminder')) return;
+
+            // Same provider wiring as handleIncomingMessage.
+            let aiModel: any;
+            if (providerInfo.provider === 'OPENAI')      aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
+            else if (providerInfo.provider === 'CLAUDE') aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
+            else if (providerInfo.provider === 'GEMINI') aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+            else return;
+
+            // Skip when the contact is paused or has no Client row.
+            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const inst = await prisma.instance.findUnique({ where: { id: instanceId }, select: { workspaceId: true } });
+            const wsId = inst?.workspaceId
+                || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(agent.userId));
+            const client = await prisma.client.findFirst({ where: { workspaceId: wsId, phone } });
+            if (client?.agentPaused) {
+                logger.info(`[${instanceId}] reminder skipped: contact paused`);
+                return;
+            }
+
+            const historyDepth = Math.max(1, Math.min(50, Number(agent.historyDepth) || 10));
+            const history = await prisma.message.findMany({
+                where: { instanceId, remoteJid },
+                orderBy: { timestamp: 'desc' },
+                take: historyDepth,
+            });
+            history.reverse();
+            if (history.length === 0) return;
+
+            const messages: any[] = history.map(msg => ({
+                role: (msg.isFromMe ? 'assistant' : 'user') as 'assistant' | 'user',
+                content: msg.content || '[Unsupported Media]',
+            }));
+            // Append the explicit reminder cue as a user-side system note
+            // so the model picks it up as the "current turn" instead of
+            // re-reading the last assistant message.
+            messages.push({
+                role: 'user' as const,
+                content: `[REMINDER_TURN: customer silent for ${idleHours}h. Write ONE short warm follow-up that nudges them based on chat history. Do not restart the funnel, do not apologise for writing again, do not repeat your last message verbatim.]`,
+            });
+
+            const skills = agent.skills || [];
+            const httpTools = (agent.httpTools || []) as HttpToolTemplate[];
+            const skillPrompts = (agent.skillPrompts || {}) as Record<string, string>;
+            const contactName = client?.name || null;
+            const contactContext = `\n\nCurrent contact info:\n- Phone: ${phone}${contactName ? `\n- Name: ${contactName}` : ''}\nYou already have this info — do NOT ask the customer for their phone number or name.`;
+            const { tools, skillPrompt } = buildToolsForSkills(
+                skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
+                agent.id, remoteJid, skillPrompts, instanceId, contactName,
+            );
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
+
+            const result = await generateText({
+                model: aiModel,
+                system: systemPrompt,
+                messages: applyAnthropicCacheControl(providerInfo.provider, messages),
+                ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
+            } as any);
+
+            const text = (result.text || '').trim();
+            if (!text) {
+                logger.info(`[${instanceId}] reminder skipped: empty model output`);
+                return;
+            }
+
+            const sentMsg = await sock.sendMessage(remoteJid, { text });
+            const saved = await prisma.message.create({
+                data: { instanceId, remoteJid, isFromMe: true, messageType: 'text', content: text, timestamp: new Date() },
+            });
+            await prisma.aiConversationLog.create({
+                data: {
+                    agentId: agent.id, instanceId, remoteJid,
+                    userMessage: '', agentReply: text,
+                    promptTokens: (result as any).usage?.inputTokens || 0,
+                    completionTokens: (result as any).usage?.outputTokens || 0,
+                    totalTokens: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
+                    provider: providerInfo.provider, model: agent.model,
+                    toolCalls: [{ toolName: 'auto_reminder', args: { idleHours } }] as any,
+                },
+            });
+            if (client) {
+                await prisma.client.update({ where: { id: client.id }, data: { lastReminderAt: new Date() } });
+            }
+            io.emit(`message.new-${instanceId}`, {
+                id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
+                status: 'DELIVERED', timestamp: new Date().toISOString(),
+            });
+            logger.info(`[${instanceId}] [reminder] sent to ${remoteJid} (idle ${idleHours}h)`);
+        } catch (e: any) {
+            logger.error({ err: e?.message, instanceId, remoteJid }, '[reminder] trigger failed');
         }
     }
 

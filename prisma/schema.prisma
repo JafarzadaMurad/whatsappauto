@@ -447,6 +447,11 @@ model Agent {
   // (cheaper tokens, slower lookups); larger windows give it more
   // context for free. Default 10 — comfortable middle ground.
   historyDepth    Int      @default(10)
+  // Auto-reminder skill setting. Used only when 'reminder' is in
+  // `skills`. The background scheduler picks contacts where the
+  // last inbound message is older than this many hours and asks the
+  // model to draft a re-engagement message based on chat history.
+  reminderHours   Int      @default(24)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -768,6 +773,11 @@ model Client {
   // when older than 24h so we don't hammer Baileys on every message.
   profilePicUrl       String?
   profilePicUpdatedAt DateTime?
+
+  // Last time the auto-reminder skill sent a re-engagement message to
+  // this contact. Used as a per-contact lock so the scheduler doesn't
+  // re-ping the same idle conversation on every sweep.
+  lastReminderAt      DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

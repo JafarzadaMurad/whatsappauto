@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -369,6 +369,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [visionEnabled, setVisionEnabled] = useState(true);
     const [historyDepth, setHistoryDepth] = useState(10);
     const [reminderHours, setReminderHours] = useState(24);
+    const [promptModalOpen, setPromptModalOpen] = useState(false);
+    const [promptInlineRows, setPromptInlineRows] = useState(6);
     const [whisperLanguage, setWhisperLanguage] = useState<string>("");
     const [whisperModel, setWhisperModel] = useState<string>("whisper-1");
     const [isRouter, setIsRouter] = useState(false);
@@ -1453,10 +1455,61 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         </div>
 
                         <div>
-                            <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
-                            <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={6}
-                                className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
+                            <div className="flex items-center justify-between gap-2">
+                                <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
+                                <div className="flex items-center gap-1">
+                                    <span className="text-[10px] text-muted-foreground tabular-nums">{systemPrompt.length.toLocaleString()} chars</span>
+                                    <button type="button" onClick={() => setPromptInlineRows(r => Math.max(4, r - 4))}
+                                        title="Shrink inline editor"
+                                        className="p-1 text-muted-foreground hover:text-foreground rounded">
+                                        <Minimize2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button type="button" onClick={() => setPromptInlineRows(r => Math.min(40, r + 4))}
+                                        title="Grow inline editor"
+                                        className="p-1 text-muted-foreground hover:text-foreground rounded">
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button type="button" onClick={() => setPromptModalOpen(true)}
+                                        title="Open in full-screen modal"
+                                        className="p-1 text-muted-foreground hover:text-foreground rounded">
+                                        <Maximize2 className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={promptInlineRows}
+                                className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm resize-y" />
                         </div>
+
+                        {/* Full-screen prompt editor — same value, much bigger
+                            editing surface. Keeps two-way binding with the
+                            inline textarea so closing the modal doesn't lose
+                            edits. */}
+                        {promptModalOpen && (
+                            <div className="fixed inset-0 bg-black/70 z-50 flex flex-col p-4 sm:p-8">
+                                <div className="bg-card border border-border rounded-2xl flex flex-col flex-1 min-h-0">
+                                    <div className="flex items-center justify-between gap-3 p-4 border-b border-border flex-shrink-0">
+                                        <div>
+                                            <h2 className="font-semibold">System Prompt — {name || 'Agent'}</h2>
+                                            <p className="text-xs text-muted-foreground">Changes save when you close and hit Save Changes on the main page.</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-muted-foreground tabular-nums">{systemPrompt.length.toLocaleString()} chars</span>
+                                            <button onClick={() => setPromptModalOpen(false)}
+                                                className="bg-primary text-primary-foreground rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5">
+                                                Done
+                                            </button>
+                                            <button onClick={() => setPromptModalOpen(false)}
+                                                className="text-muted-foreground hover:text-foreground p-1.5">
+                                                <XIcon className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
+                                        autoFocus spellCheck={false}
+                                        className="flex-1 w-full bg-card text-foreground p-5 text-sm font-mono leading-relaxed focus:outline-none resize-none rounded-b-2xl" />
+                                </div>
+                            </div>
+                        )}
 
                         {/* Multi-modal — voice transcription + image vision. */}
                         <div className="rounded-xl border border-border bg-card">

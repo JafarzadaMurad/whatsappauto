@@ -23,6 +23,22 @@ function dateRange(filters?: AnalyticsFilters): { from: Date; to: Date } {
     };
 }
 
+// Returns the createdAt clause for prisma `where` objects. When both
+// from and to are missing/empty we treat that as "all-time" and emit
+// no clause at all so the query returns every row regardless of age.
+function createdAtClause(filters?: AnalyticsFilters): { gte: Date; lte: Date } | undefined {
+    const hasFrom = !!filters?.from;
+    const hasTo = !!filters?.to;
+    if (!hasFrom && !hasTo) return undefined;
+    const { from, to } = dateRange(filters);
+    return { gte: from, lte: to };
+}
+
+// True when the operator has cleared the date inputs to get all-time.
+function isAllTime(f?: AnalyticsFilters): boolean {
+    return !f?.from && !f?.to;
+}
+
 function buildClientWhere(workspaceId: string, f: AnalyticsFilters) {
     const where: any = { workspaceId };
     if (f.status?.length) where.status = { in: f.status };
@@ -42,14 +58,14 @@ function buildClientWhere(workspaceId: string, f: AnalyticsFilters) {
 // the same numbers without any segment filters (only the date range
 // stays) so the UI can show "vs workspace 12%" deltas.
 async function funnelOnce(workspaceId: string, f: AnalyticsFilters, baseline = false) {
-    const { from, to } = dateRange(f);
     const segmentFilters = baseline
         ? { from: f.from, to: f.to } // baseline = date range only
         : { ...f, status: undefined };
     const where: any = {
         ...buildClientWhere(workspaceId, segmentFilters),
-        createdAt: { gte: from, lte: to },
     };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     if (!baseline && f.instanceId) {
         const phones = await phonesForInstance(workspaceId, f.instanceId);
         if (phones && phones.length === 0) {
@@ -112,11 +128,11 @@ async function phonesForInstance(workspaceId: string, instanceId: string | undef
 // workspace-level status numbers and these extras would just repeat
 // the same data in different shapes.
 async function segmentBreakdowns(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
     const where: any = {
         ...buildClientWhere(workspaceId, f),
-        createdAt: { gte: from, lte: to },
     };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     if (f.instanceId) {
         const phones = await phonesForInstance(workspaceId, f.instanceId);
         if (phones && phones.length === 0) {
@@ -252,11 +268,9 @@ export async function dailyVolume(workspaceId: string, f: AnalyticsFilters, peri
 // ─── 3) Channel split ───
 // One-shot total by channel for the period.
 export async function channelSplit(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
-    const where = {
-        ...buildClientWhere(workspaceId, f),
-        createdAt: { gte: from, lte: to },
-    };
+    const where: any = { ...buildClientWhere(workspaceId, f) };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     const grouped = await prisma.client.groupBy({
         by: ['channel'], where, _count: { _all: true },
     });
@@ -268,11 +282,9 @@ export async function channelSplit(workspaceId: string, f: AnalyticsFilters) {
 // ─── 4) Tag conversion ───
 // Per tag: how many contacts have it + how many became LEAD/PURCHASED.
 export async function tagConversion(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
-    const where = {
-        ...buildClientWhere(workspaceId, { ...f, tags: undefined }),
-        createdAt: { gte: from, lte: to },
-    };
+    const where: any = { ...buildClientWhere(workspaceId, { ...f, tags: undefined }) };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     const clients = await prisma.client.findMany({
         where,
         select: { tags: true, status: true },
@@ -316,20 +328,21 @@ function costFor(model: string, prompt: number, completion: number): number {
 }
 
 export async function agentPerformance(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
     const agents = await prisma.agent.findMany({
         where: { workspaceId, ...(f.agentId ? { id: f.agentId } : {}) },
         select: { id: true, name: true, isRouter: true, model: true, provider: { select: { provider: true } } },
     });
     if (agents.length === 0) return { rows: [], totals: { turns: 0, tokens: 0, costUsd: 0 } };
 
+    const agentLogWhere: any = {
+        agentId: { in: agents.map(a => a.id) },
+        ...(f.instanceId ? { instanceId: f.instanceId } : {}),
+    };
+    const dateClause = createdAtClause(f);
+    if (dateClause) agentLogWhere.createdAt = dateClause;
     const grouped = await prisma.aiConversationLog.groupBy({
         by: ['agentId'],
-        where: {
-            agentId: { in: agents.map(a => a.id) },
-            createdAt: { gte: from, lte: to },
-            ...(f.instanceId ? { instanceId: f.instanceId } : {}),
-        },
+        where: agentLogWhere,
         _count: { _all: true },
         _sum: { promptTokens: true, completionTokens: true, totalTokens: true },
     });
@@ -408,11 +421,9 @@ export async function dropOff(workspaceId: string, f: AnalyticsFilters) {
 // Returns the actual contacts behind a filter so the operator can
 // click through to the people, not just see aggregate counts.
 export async function contactList(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
-    const where: any = {
-        ...buildClientWhere(workspaceId, f),
-        createdAt: { gte: from, lte: to },
-    };
+    const where: any = { ...buildClientWhere(workspaceId, f) };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     if (f.instanceId) {
         const phones = await phonesForInstance(workspaceId, f.instanceId);
         if (phones && phones.length === 0) return { rows: [], total: 0 };
@@ -438,11 +449,9 @@ export async function contactList(workspaceId: string, f: AnalyticsFilters) {
 // Returns the matched-contact count + baseline so a tiny widget can
 // render "20 / 12% of total".
 export async function count(workspaceId: string, f: AnalyticsFilters) {
-    const { from, to } = dateRange(f);
-    const where: any = {
-        ...buildClientWhere(workspaceId, f),
-        createdAt: { gte: from, lte: to },
-    };
+    const where: any = { ...buildClientWhere(workspaceId, f) };
+    const dateClause = createdAtClause(f);
+    if (dateClause) where.createdAt = dateClause;
     if (f.instanceId) {
         const phones = await phonesForInstance(workspaceId, f.instanceId);
         if (phones && phones.length === 0) return { count: 0, baseline: hasAnySegmentFilter(f) ? 0 : null };
@@ -452,7 +461,7 @@ export async function count(workspaceId: string, f: AnalyticsFilters) {
     let baseline: number | null = null;
     if (hasAnySegmentFilter(f)) {
         baseline = await prisma.client.count({
-            where: { workspaceId, createdAt: { gte: from, lte: to } },
+            where: dateClause ? { workspaceId, createdAt: dateClause } : { workspaceId },
         });
     }
     return { count: segment, baseline };
@@ -463,9 +472,9 @@ export async function count(workspaceId: string, f: AnalyticsFilters) {
 // customField filters) and a baseline view (only workspace + date
 // range) so the UI can display "X matches · vs Y overall (Z%)".
 async function kpisOnce(workspaceId: string, f: AnalyticsFilters, baseline = false) {
-    const { from, to } = dateRange(f);
     const filterPart = baseline ? { from: f.from, to: f.to } : f;
     const clientBase: any = { ...buildClientWhere(workspaceId, filterPart) };
+    const dateClause = createdAtClause(f);
     // Apply instance filter via the phone-from-messages join.
     if (!baseline && f.instanceId) {
         const phones = await phonesForInstance(workspaceId, f.instanceId);
@@ -480,33 +489,32 @@ async function kpisOnce(workspaceId: string, f: AnalyticsFilters, baseline = fal
     let phoneIn: string[] | null = null;
     if (!baseline && hasAnySegmentFilter(f)) {
         const matches = await prisma.client.findMany({
-            where: { ...clientBase, createdAt: { gte: from, lte: to } },
+            where: dateClause ? { ...clientBase, createdAt: dateClause } : clientBase,
             select: { phone: true },
             take: 5000,
         });
         phoneIn = matches.map(m => m.phone);
     }
-    const aiTurnsWhere: any = {
-        createdAt: { gte: from, lte: to },
-        agent: { workspaceId },
-    };
+    const aiTurnsWhere: any = { agent: { workspaceId } };
+    if (dateClause) aiTurnsWhere.createdAt = dateClause;
     if (phoneIn !== null) {
         if (phoneIn.length === 0) aiTurnsWhere.id = '__none__';
         else aiTurnsWhere.remoteJid = { in: phoneIn.flatMap(p => [`${p}@s.whatsapp.net`, `ig:${p}`]) };
     }
-    const operatorWhere: any = {
-        createdAt: { gte: from, lte: to },
-        agent: { workspaceId },
-    };
+    const operatorWhere: any = { agent: { workspaceId } };
+    if (dateClause) operatorWhere.createdAt = dateClause;
     if (phoneIn !== null) {
         if (phoneIn.length === 0) operatorWhere.id = '__none__';
         else operatorWhere.customerJid = { in: phoneIn.flatMap(p => [`${p}@s.whatsapp.net`, `ig:${p}`]) };
     }
 
+    const contactsWhere = dateClause ? { ...clientBase, createdAt: dateClause } : clientBase;
+    const leadWhere = dateClause ? { ...clientBase, status: 'LEAD', createdAt: dateClause } : { ...clientBase, status: 'LEAD' };
+    const purchasedWhere = dateClause ? { ...clientBase, status: 'PURCHASED', createdAt: dateClause } : { ...clientBase, status: 'PURCHASED' };
     const [totalContacts, leadCount, purchasedCount, totalLogs, tokensAgg, operatorTickets] = await Promise.all([
-        prisma.client.count({ where: { ...clientBase, createdAt: { gte: from, lte: to } } }),
-        prisma.client.count({ where: { ...clientBase, status: 'LEAD', createdAt: { gte: from, lte: to } } }),
-        prisma.client.count({ where: { ...clientBase, status: 'PURCHASED', createdAt: { gte: from, lte: to } } }),
+        prisma.client.count({ where: contactsWhere }),
+        prisma.client.count({ where: leadWhere }),
+        prisma.client.count({ where: purchasedWhere }),
         prisma.aiConversationLog.count({ where: aiTurnsWhere }),
         prisma.aiConversationLog.aggregate({ where: aiTurnsWhere, _sum: { totalTokens: true } }),
         prisma.operatorRequest.count({ where: operatorWhere }),

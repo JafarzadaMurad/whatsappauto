@@ -219,13 +219,22 @@ export default function AnalyticsPage() {
             {/* Filter bar */}
             <section className="bg-card border border-border rounded-2xl p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
                 <div>
-                    <label className="text-[11px] text-muted-foreground">From</label>
-                    <input type="date" value={filters.from || ''} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
+                    <label className="text-[11px] text-muted-foreground flex items-center justify-between">
+                        From
+                        {(filters.from || filters.to) && (
+                            <button type="button"
+                                onClick={() => setFilters(f => ({ ...f, from: undefined, to: undefined }))}
+                                className="text-[10px] text-primary hover:underline">
+                                All time
+                            </button>
+                        )}
+                    </label>
+                    <input type="date" value={filters.from || ''} onChange={e => setFilters(f => ({ ...f, from: e.target.value || undefined }))}
                         className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm" />
                 </div>
                 <div>
                     <label className="text-[11px] text-muted-foreground">To</label>
-                    <input type="date" value={filters.to || ''} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))}
+                    <input type="date" value={filters.to || ''} onChange={e => setFilters(f => ({ ...f, to: e.target.value || undefined }))}
                         className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm" />
                 </div>
                 <div>

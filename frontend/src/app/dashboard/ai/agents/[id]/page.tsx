@@ -45,7 +45,7 @@ const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     self_pause: 'Self-pause: pauseAgent({reason}) stops auto-replies for this contact until a human resumes from the inbox.',
     live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
     reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
-    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question. Customers tap to vote and the chosen option arrives as the next user turn.',
+    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question — the poll itself IS the question, so write NO chat text in the same turn (no greeting before or after, the customer sees both at once otherwise). After the customer taps, their pick arrives as the next user turn with the option name as content; treat that as their answer and move on. NEVER re-send the same poll just because you saw a previous one; if the answer is in history, use it.',
 };
 
 type ValueSpec =

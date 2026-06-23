@@ -3,7 +3,8 @@ import makeWASocket, {
     useMultiFileAuthState,
     fetchLatestBaileysVersion,
     WASocket,
-    isJidGroup
+    isJidGroup,
+    getAggregateVotesInPollMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { logger } from '../../utils/logger';
@@ -59,6 +60,21 @@ export class InstanceManager {
                 // instead of the phone — the most common "my phone went
                 // silent after I connected" complaint.
                 markOnlineOnConnect: false,
+                // Required by getAggregateVotesInPollMessage so we can
+                // decrypt a customer's vote: Baileys asks us for the
+                // original poll message proto and we hand back the
+                // pollPayload column we stashed when sendPoll fired.
+                getMessage: async (key: any) => {
+                    try {
+                        const waMsgId = key?.id;
+                        if (!waMsgId) return undefined;
+                        const row = await prisma.message.findFirst({
+                            where: { instanceId, waMsgId },
+                            select: { pollPayload: true },
+                        });
+                        return (row?.pollPayload as any) || undefined;
+                    } catch { return undefined; }
+                },
             });
 
             sessions.set(instanceId, sock);
@@ -466,33 +482,58 @@ export class InstanceManager {
             sock.ev.on('messages.update', async (updates: any[]) => {
                 for (const u of updates) {
                     const waId = u?.key?.id;
-                    // Poll vote ingest. Baileys delivers vote updates here
-                    // with `pollUpdates` populated. We can't decrypt the
-                    // selected option without the original poll's encKey
-                    // (Baileys' getAggregateVotesInPollMessage needs the
-                    // sent-message store), so for now we just emit a
-                    // synthetic inbound message that tells the model the
-                    // customer voted. The model is free to ask for
-                    // confirmation; most customers also type the option
-                    // name after tapping anyway.
+                    // Poll vote ingest. Baileys delivers vote updates
+                    // here with `pollUpdates`. We look up the original
+                    // poll row (pollPayload column) so
+                    // getAggregateVotesInPollMessage can decrypt the
+                    // customer's choice, then write the picked option
+                    // name as a normal inbound Message so the agent
+                    // reacts to "Vətəndaşlıq" instead of a generic
+                    // "vote received" placeholder.
                     const pollUpdates = u?.pollUpdates;
                     if (pollUpdates && Array.isArray(pollUpdates) && pollUpdates.length > 0) {
                         const jid = u.key?.remoteJid;
-                        if (jid && !u.key?.fromMe) {
+                        if (jid) {
                             try {
-                                const { effectiveJid: rJid } = await resolveJid(instanceId, jid, { key: u.key } as any);
+                                // Find the original poll. waId is the vote's
+                                // own ID; the related poll lives in
+                                // pollUpdates[0].pollUpdateMessageKey.id.
+                                const pollMsgId = pollUpdates[0]?.pollUpdateMessageKey?.id || waId;
+                                const original = await prisma.message.findFirst({
+                                    where: { instanceId, waMsgId: pollMsgId, messageType: 'poll' },
+                                    select: { remoteJid: true, pollPayload: true },
+                                });
+                                if (!original?.pollPayload) {
+                                    logger.warn({ pollMsgId }, '[poll] vote arrived but original poll not stored');
+                                    continue;
+                                }
+                                const votes = getAggregateVotesInPollMessage({
+                                    message: original.pollPayload as any,
+                                    pollUpdates,
+                                } as any);
+                                const picked: string[] = (votes || [])
+                                    .filter((v: any) => Array.isArray(v.voters) && v.voters.length > 0)
+                                    .map((v: any) => String(v.name || '').trim())
+                                    .filter(Boolean);
+                                if (picked.length === 0) {
+                                    logger.info({ pollMsgId }, '[poll] vote could not be decoded, skipping');
+                                    continue;
+                                }
+                                const { effectiveJid: rJid } = await resolveJid(instanceId, original.remoteJid, { key: { remoteJid: original.remoteJid, fromMe: false } } as any);
                                 await prisma.message.create({
                                     data: {
                                         instanceId, remoteJid: rJid,
                                         isFromMe: false, messageType: 'poll_vote',
-                                        content: '[Customer voted in the poll above — ask them to confirm their choice if you need the exact option.]',
+                                        content: picked.join(', '),
                                         timestamp: new Date(),
                                         waMsgId: waId || null,
                                     },
                                 }).catch(() => {});
-                                logger.info({ instanceId, remoteJid: rJid }, '[poll] vote received');
+                                logger.info({ instanceId, remoteJid: rJid, picked }, '[poll] vote decoded');
                                 AiService.handleIncomingMessage(instanceId, rJid, sock, io).catch(() => {});
-                            } catch { /* not critical */ }
+                            } catch (e: any) {
+                                logger.warn({ err: e?.message }, '[poll] vote ingest failed');
+                            }
                         }
                         continue;
                     }

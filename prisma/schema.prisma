@@ -307,6 +307,12 @@ model Message {
   // messages as read. Null while still unread.
   readAt DateTime?
 
+  // For interactive poll messages we send: the original Baileys
+  // proto.IMessage struct (poll question + options + encKey) so we
+  // can decrypt the customer's vote when the messages.update event
+  // fires. Null for every other message type.
+  pollPayload Json?
+
   timestamp DateTime
   createdAt DateTime @default(now())
 

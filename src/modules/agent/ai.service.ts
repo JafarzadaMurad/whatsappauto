@@ -1450,7 +1450,7 @@ export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     self_pause: 'Self-pause: pauseAgent({reason}) stops auto-replies for this contact until a human resumes from the inbox.',
     reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
     live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
-    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question. Customers tap to vote and the chosen option arrives as the next user turn.',
+    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question — the poll itself IS the question, so write NO chat text in the same turn (no greeting before or after, the customer sees both at once otherwise). After the customer taps, their pick arrives as the next user turn with the option name as content; treat that as their answer and move on. NEVER re-send the same poll just because you saw a previous one; if the answer is in history, use it.',
 };
 
 // Owner-supplied skill prompts are APPENDED to the built-in usage rules,
@@ -1559,8 +1559,11 @@ function buildPollsTool(instanceId: string, remoteJid: string) {
                     });
                     // Persist the poll as an assistant Message so it
                     // shows in the inbox + history. content is the
-                    // serialized poll so the model can reference it
-                    // later if needed.
+                    // serialized poll for the model; pollPayload holds
+                    // the original Baileys message struct (with encKey)
+                    // so the messages.update handler can later decrypt
+                    // the customer's vote via
+                    // getAggregateVotesInPollMessage.
                     const content = `📊 ${params.name}\n` + params.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
                     await prisma.message.create({
                         data: {
@@ -1568,6 +1571,7 @@ function buildPollsTool(instanceId: string, remoteJid: string) {
                             isFromMe: true, messageType: 'poll',
                             content, timestamp: new Date(),
                             waMsgId: sent?.key?.id || null,
+                            pollPayload: (sent?.message ? JSON.parse(JSON.stringify(sent.message)) : null) as any,
                         },
                     }).catch(() => {});
                     logger.info({ instanceId, remoteJid, options: params.options.length }, '[poll] sent');

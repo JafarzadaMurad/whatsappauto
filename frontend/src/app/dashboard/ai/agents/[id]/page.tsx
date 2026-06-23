@@ -1859,11 +1859,9 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             rows={3}
                                                             placeholder={DEFAULT_SKILL_PROMPTS[skill.id]}
                                                             className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
-                                                        <p className="text-[10px] text-muted-foreground mt-1 italic">
-                                                            {isOverridden
-                                                                ? 'Your text is appended to the default usage rule above — the default is not replaced.'
-                                                                : 'Using default only. Write here to add custom instructions on top of the default.'}
-                                                        </p>
+                                                        {!isOverridden && (
+                                                            <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
+                                                        )}
                                                     </div>
 
                                                     {/* Tables-specific: knowledge base selector */}

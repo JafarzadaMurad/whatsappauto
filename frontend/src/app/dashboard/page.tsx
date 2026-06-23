@@ -132,26 +132,57 @@ export default function DashboardStatsPage() {
                         </Link>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {widgets.map(w => (
-                            <div key={w.id} className={`bg-card border border-border rounded-2xl p-4 ${w.size === 'lg' ? 'lg:col-span-2' : ''}`}>
-                                <div className="flex items-center justify-between gap-2 mb-3">
-                                    <h3 className="font-semibold text-sm truncate">{w.title}</h3>
-                                    <button onClick={() => removeWidget(w.id)} title="Remove"
-                                        className="text-muted-foreground hover:text-red-400 p-1">
-                                        <X className="w-4 h-4" />
-                                    </button>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {widgets.map(w => {
+                            const data = widgetData[w.id];
+                            // KPI = small big-number card. Other types render
+                            // the existing metric components and span the full
+                            // row width so charts stay readable.
+                            const isKpi = w.visualType === 'kpi';
+                            const className = isKpi
+                                ? 'bg-card border border-border rounded-2xl p-4'
+                                : 'bg-card border border-border rounded-2xl p-4 col-span-2 md:col-span-3 lg:col-span-4';
+                            return (
+                                <div key={w.id} className={className}>
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                        <h3 className="font-semibold text-xs uppercase tracking-wide text-muted-foreground truncate">{w.title}</h3>
+                                        <button onClick={() => removeWidget(w.id)} title="Remove"
+                                            className="text-muted-foreground hover:text-red-400 p-1">
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    {data ? (
+                                        isKpi ? <KpiBig data={data} /> : <MetricResult metric={w.metric} data={data} />
+                                    ) : (
+                                        <div className="text-xs text-muted-foreground py-6 text-center">Loading…</div>
+                                    )}
                                 </div>
-                                {widgetData[w.id] ? (
-                                    <MetricResult metric={w.metric} data={widgetData[w.id]} />
-                                ) : (
-                                    <div className="text-xs text-muted-foreground py-6 text-center">Loading…</div>
-                                )}
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+// Big-number KPI card. Reads { count, baseline } from the count
+// metric response. Shows the segment count loud and clear, with a
+// "of N total · X%" footer when a baseline is present so the operator
+// instantly sees what fraction of the workspace the widget covers.
+function KpiBig({ data }: { data: { count: number; baseline: number | null } }) {
+    const v = data?.count ?? 0;
+    const b = data?.baseline;
+    const pct = b && b > 0 ? (v / b) * 100 : null;
+    return (
+        <div className="flex flex-col gap-1 py-2">
+            <div className="text-4xl font-bold text-primary">{v.toLocaleString()}</div>
+            {b !== null && b !== undefined && (
+                <div className="text-[11px] text-muted-foreground">
+                    of {b.toLocaleString()} overall
+                    {pct !== null && <span className="ml-1">· {pct.toFixed(1)}%</span>}
+                </div>
+            )}
         </div>
     );
 }

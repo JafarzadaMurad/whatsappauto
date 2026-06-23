@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import {
     funnel, dailyVolume, channelSplit, tagConversion,
-    agentPerformance, dropOff, kpis,
+    agentPerformance, dropOff, kpis, contactList, count,
     AnalyticsFilters, Period,
 } from './analytics.service';
 
@@ -20,7 +20,7 @@ const filtersSchema = z.object({
 }).optional();
 
 const querySchema = z.object({
-    metric: z.enum(['funnel', 'daily_volume', 'channel_split', 'tag_conversion', 'agent_perf', 'drop_off', 'kpis']),
+    metric: z.enum(['funnel', 'daily_volume', 'channel_split', 'tag_conversion', 'agent_perf', 'drop_off', 'kpis', 'contact_list', 'count']),
     filters: filtersSchema,
     period: z.enum(['day', 'week', 'month']).optional(),
 });
@@ -52,6 +52,8 @@ export class AnalyticsController {
                 case 'agent_perf':     result = await agentPerformance(workspaceId, filters); break;
                 case 'drop_off':       result = await dropOff(workspaceId, filters); break;
                 case 'kpis':           result = await kpis(workspaceId, filters); break;
+                case 'contact_list':   result = await contactList(workspaceId, filters); break;
+                case 'count':          result = await count(workspaceId, filters); break;
             }
             return res.json({ success: true, metric: body.metric, ...result });
         } catch (e: any) {

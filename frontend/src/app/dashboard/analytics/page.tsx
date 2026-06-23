@@ -24,6 +24,7 @@ type ViewFlags = {
     agents: boolean;
     tags: boolean;
     customField: boolean;
+    contacts: boolean;
 };
 const DEFAULT_VIEW: ViewFlags = {
     statusFunnel: true,
@@ -32,6 +33,7 @@ const DEFAULT_VIEW: ViewFlags = {
     agents: true,
     tags: true,
     customField: true,
+    contacts: false,
 };
 const VIEW_STORAGE_KEY = 'analytics:view-flags:v1';
 
@@ -63,6 +65,7 @@ export default function AnalyticsPage() {
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<any>(null);
     const [kpis, setKpis] = useState<any>(null);
+    const [matchedContacts, setMatchedContacts] = useState<any>(null);
     const [userFields, setUserFields] = useState<{ key: string; label: string }[]>([]);
     const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
     const [instances, setInstances] = useState<Array<{ id: string; name: string; channel: 'whatsapp' | 'instagram' }>>([]);
@@ -135,17 +138,40 @@ export default function AnalyticsPage() {
     useEffect(() => { runQuery(active); }, [active, runQuery]);
     useEffect(() => { refreshKpis(); }, [refreshKpis]);
 
-    const pinWidget = async () => {
+    // Fetch the contact list lazily — only when the operator turns
+    // on the "Matched contacts" toggle in the View panel. Re-fetches
+    // every time filters change so the list stays in sync.
+    useEffect(() => {
+        if (active !== 'funnel' || !view.contacts) { setMatchedContacts(null); return; }
+        api.post('/analytics/query', { metric: 'contact_list', filters })
+            .then(r => { if (r.data?.success) setMatchedContacts(r.data); })
+            .catch(() => {});
+    }, [active, view.contacts, filters]);
+
+    const [pinDialog, setPinDialog] = useState<{ open: boolean; mode: 'kpi' | 'metric'; title: string }>({ open: false, mode: 'kpi', title: '' });
+
+    const openPinDialog = () => {
         const metricDef = METRICS.find(m => m.key === active);
-        if (!metricDef) return;
-        const title = prompt(`Title for the pinned widget`, metricDef.label);
-        if (!title) return;
+        setPinDialog({
+            open: true,
+            mode: 'kpi',
+            title: metricDef?.label || 'New widget',
+        });
+    };
+
+    const confirmPin = async () => {
+        if (!pinDialog.title.trim()) return;
+        const metricDef = METRICS.find(m => m.key === active);
+        const metric = pinDialog.mode === 'kpi' ? 'count' : active;
+        const visualType = pinDialog.mode === 'kpi' ? 'kpi' : (metricDef?.vis || 'table');
+        const size = pinDialog.mode === 'kpi' ? 'sm' : 'md';
         try {
             await api.post('/analytics/widgets', {
-                title, metric: active, filters, period,
-                visualType: metricDef.vis,
-                size: 'md',
+                title: pinDialog.title.trim(),
+                metric, filters,
+                visualType, size,
             });
+            setPinDialog({ open: false, mode: 'kpi', title: '' });
             alert('Pinned to Dashboard.');
         } catch (e: any) {
             alert(e.response?.data?.message || e.message);
@@ -303,7 +329,7 @@ export default function AnalyticsPage() {
                             ⚙ View
                         </button>
                     )}
-                    <button onClick={pinWidget}
+                    <button onClick={openPinDialog}
                         className="bg-primary text-primary-foreground rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5">
                         <Pin className="w-3.5 h-3.5" /> Pin to Dashboard
                     </button>
@@ -321,6 +347,7 @@ export default function AnalyticsPage() {
                                 ['agents',       'Breakdown by assigned agent'],
                                 ['tags',         'Co-occurring tags'],
                                 ['customField',  'Top custom-field values'],
+                                ['contacts',     'Matched contacts list'],
                             ] as Array<[keyof ViewFlags, string]>).map(([k, label]) => (
                                 <label key={k} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-secondary/30 p-1.5 rounded">
                                     <input type="checkbox" checked={view[k]} onChange={e => setView(v => ({ ...v, [k]: e.target.checked }))}
@@ -339,12 +366,105 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
+            {pinDialog.open && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                    <div className="bg-card border border-border rounded-2xl p-5 w-full max-w-md space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="font-semibold">Pin to Dashboard</h2>
+                            <button onClick={() => setPinDialog(p => ({ ...p, open: false }))} className="text-muted-foreground hover:text-foreground">✕</button>
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground">Widget type</label>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                                <button onClick={() => setPinDialog(p => ({ ...p, mode: 'kpi' }))}
+                                    className={`p-3 rounded-xl border text-left transition-colors ${pinDialog.mode === 'kpi' ? 'bg-primary/10 border-primary/40' : 'bg-card border-border hover:bg-secondary/30'}`}>
+                                    <div className="text-2xl font-bold">123</div>
+                                    <div className="text-[11px] text-muted-foreground mt-1">KPI — single big number with optional baseline %</div>
+                                </button>
+                                <button onClick={() => setPinDialog(p => ({ ...p, mode: 'metric' }))}
+                                    className={`p-3 rounded-xl border text-left transition-colors ${pinDialog.mode === 'metric' ? 'bg-primary/10 border-primary/40' : 'bg-card border-border hover:bg-secondary/30'}`}>
+                                    <div className="flex gap-0.5 items-end h-6">
+                                        <div className="w-2 bg-primary h-full rounded-sm" />
+                                        <div className="w-2 bg-primary h-3/4 rounded-sm" />
+                                        <div className="w-2 bg-primary h-1/2 rounded-sm" />
+                                        <div className="w-2 bg-primary h-2/3 rounded-sm" />
+                                    </div>
+                                    <div className="text-[11px] text-muted-foreground mt-1">Full chart — the current view (funnel / chart / table)</div>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium text-muted-foreground">Title</label>
+                            <input value={pinDialog.title} onChange={e => setPinDialog(p => ({ ...p, title: e.target.value }))}
+                                placeholder="e.g. Bitrix Lead contacts today"
+                                className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div className="bg-secondary/20 border border-border rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+                            <p className="font-semibold text-foreground">Current filters will be saved with this widget:</p>
+                            {filters.from && <p>From: {filters.from} → {filters.to}</p>}
+                            {filters.channel && <p>Channel: {filters.channel}</p>}
+                            {filters.status?.length && <p>Status: {filters.status.join(', ')}</p>}
+                            {filters.tags?.length && <p>Tag: {filters.tags.join(', ')}</p>}
+                            {filters.agentId && <p>Agent: {agents.find(a => a.id === filters.agentId)?.name}</p>}
+                            {filters.instanceId && <p>Instance: {instances.find(i => i.id === filters.instanceId)?.name}</p>}
+                            {filters.customField?.key && <p>{filters.customField.key} = {String(filters.customField.value)}</p>}
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => setPinDialog(p => ({ ...p, open: false }))}
+                                className="text-xs text-muted-foreground hover:text-foreground px-3 py-2">Cancel</button>
+                            <button onClick={confirmPin} disabled={!pinDialog.title.trim()}
+                                className="bg-primary text-primary-foreground rounded-lg px-4 py-2 text-xs font-medium disabled:opacity-60">
+                                Pin to Dashboard
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Result panel */}
             <section className="bg-card border border-border rounded-2xl p-5 min-h-[300px]">
                 {loading ? (
                     <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
                 ) : data ? (
-                    <MetricResult metric={active} data={data} view={view} />
+                    <>
+                        <MetricResult metric={active} data={data} view={view} />
+                        {active === 'funnel' && view.contacts && matchedContacts && (
+                            <div className="pt-4 mt-4 border-t border-border">
+                                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                                    Matched contacts ({matchedContacts.total}, showing first {matchedContacts.rows?.length || 0})
+                                </h3>
+                                <div className="border border-border rounded-xl overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-secondary/40 text-xs text-muted-foreground">
+                                            <tr>
+                                                <th className="text-left px-3 py-2 font-medium">Name</th>
+                                                <th className="text-left px-3 py-2 font-medium">Phone</th>
+                                                <th className="text-left px-3 py-2 font-medium">Status</th>
+                                                <th className="text-left px-3 py-2 font-medium">Channel</th>
+                                                <th className="text-left px-3 py-2 font-medium">Assigned</th>
+                                                <th className="text-left px-3 py-2 font-medium">Last activity</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {(matchedContacts.rows || []).map((c: any) => (
+                                                <tr key={c.id} className="border-t border-border/40 hover:bg-secondary/20">
+                                                    <td className="px-3 py-2 font-medium">{c.name || '—'}</td>
+                                                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">+{c.phone}</td>
+                                                    <td className="px-3 py-2 text-xs">{c.status}</td>
+                                                    <td className="px-3 py-2 text-xs">{c.channel || '—'}</td>
+                                                    <td className="px-3 py-2 text-xs">{c.assignedAgent?.name || <span className="text-muted-foreground italic">unassigned</span>}</td>
+                                                    <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(c.updatedAt).toLocaleString()}</td>
+                                                </tr>
+                                            ))}
+                                            {matchedContacts.rows?.length === 0 && (
+                                                <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground text-sm">No contacts match these filters.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </>
                 ) : (
                     <div className="text-center text-muted-foreground py-12 text-sm">Run a query…</div>
                 )}

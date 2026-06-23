@@ -404,7 +404,61 @@ export async function dropOff(workspaceId: string, f: AnalyticsFilters) {
     return { rows: rows.map(r => ({ reply: r.reply, times: Number(r.times), latest: r.latest })) };
 }
 
-// ─── 7) KPIs strip (small numbers for the top of the page) ───
+// ─── 7) Matched contact list (drill-down) ───
+// Returns the actual contacts behind a filter so the operator can
+// click through to the people, not just see aggregate counts.
+export async function contactList(workspaceId: string, f: AnalyticsFilters) {
+    const { from, to } = dateRange(f);
+    const where: any = {
+        ...buildClientWhere(workspaceId, f),
+        createdAt: { gte: from, lte: to },
+    };
+    if (f.instanceId) {
+        const phones = await phonesForInstance(workspaceId, f.instanceId);
+        if (phones && phones.length === 0) return { rows: [], total: 0 };
+        if (phones) where.phone = { in: phones };
+    }
+    const [total, rows] = await Promise.all([
+        prisma.client.count({ where }),
+        prisma.client.findMany({
+            where,
+            orderBy: { updatedAt: 'desc' },
+            take: 50,
+            select: {
+                id: true, phone: true, name: true, status: true, tags: true,
+                channel: true, sourceLabel: true, updatedAt: true, createdAt: true,
+                assignedAgent: { select: { name: true, isRouter: true } },
+            },
+        }),
+    ]);
+    return { rows, total };
+}
+
+// ─── 8) Single KPI count (for pinned dashboard widgets) ───
+// Returns the matched-contact count + baseline so a tiny widget can
+// render "20 / 12% of total".
+export async function count(workspaceId: string, f: AnalyticsFilters) {
+    const { from, to } = dateRange(f);
+    const where: any = {
+        ...buildClientWhere(workspaceId, f),
+        createdAt: { gte: from, lte: to },
+    };
+    if (f.instanceId) {
+        const phones = await phonesForInstance(workspaceId, f.instanceId);
+        if (phones && phones.length === 0) return { count: 0, baseline: hasAnySegmentFilter(f) ? 0 : null };
+        if (phones) where.phone = { in: phones };
+    }
+    const segment = await prisma.client.count({ where });
+    let baseline: number | null = null;
+    if (hasAnySegmentFilter(f)) {
+        baseline = await prisma.client.count({
+            where: { workspaceId, createdAt: { gte: from, lte: to } },
+        });
+    }
+    return { count: segment, baseline };
+}
+
+// ─── 9) KPIs strip (small numbers for the top of the page) ───
 // Returns BOTH a filtered view (respecting tag/status/channel/agent/
 // customField filters) and a baseline view (only workspace + date
 // range) so the UI can display "X matches · vs Y overall (Z%)".

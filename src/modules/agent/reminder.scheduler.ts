@@ -29,7 +29,7 @@ async function sweep() {
             for (const inst of agent.instances) {
                 const sock = sessions.get(inst.id);
                 if (!sock) continue; // instance not connected — skip silently
-                await sweepInstance(inst.id, agent.workspaceId || '', hours, cutoff, sock).catch(err => {
+                await sweepInstance(inst.id, agent.id, agent.workspaceId || '', hours, cutoff, sock).catch(err => {
                     logger.warn({ err: err?.message, instanceId: inst.id }, '[reminder] instance sweep failed');
                 });
             }
@@ -39,13 +39,29 @@ async function sweep() {
     }
 }
 
-async function sweepInstance(instanceId: string, workspaceId: string, idleHours: number, cutoff: Date, sock: any) {
-    // Find the most-recent message per (remoteJid) for this instance
-    // whose timestamp is older than the cutoff. We then verify it's
-    // really the latest message in that chat and that no reminder was
-    // already sent since.
+async function sweepInstance(instanceId: string, agentId: string, workspaceId: string, idleHours: number, cutoff: Date, sock: any) {
+    // Only consider contacts this specific agent has actually talked
+    // with at least once (a matching AiConversationLog row exists).
+    // Without this, attaching the reminder skill would blast every
+    // conversation on the instance — including chats from before this
+    // agent was linked or chats handled by a different specialised
+    // agent via the router.
+    const owned = await prisma.aiConversationLog.findMany({
+        where: { agentId, instanceId },
+        distinct: ['remoteJid'],
+        select: { remoteJid: true },
+        take: 5000,
+    });
+    if (owned.length === 0) return;
+    const ownedJids = owned.map(o => o.remoteJid);
+
     const candidates = await prisma.message.findMany({
-        where: { instanceId, timestamp: { lt: cutoff }, isFromMe: false },
+        where: {
+            instanceId,
+            remoteJid: { in: ownedJids },
+            timestamp: { lt: cutoff },
+            isFromMe: false,
+        },
         orderBy: { timestamp: 'desc' },
         distinct: ['remoteJid'],
         take: 200,
@@ -70,6 +86,11 @@ async function sweepInstance(instanceId: string, workspaceId: string, idleHours:
             const client = await prisma.client.findFirst({ where: { workspaceId, phone } });
             if (!client) continue;
             if (client.agentPaused) continue;
+            // Respect sticky routing: a contact bound to a different
+            // agent (via the router's handoffTo) is no longer this
+            // agent's responsibility, so reminders shouldn't fire from
+            // here either.
+            if (client.assignedAgentId && client.assignedAgentId !== agentId) continue;
 
             // Lock: if we already sent a reminder since the customer's
             // last message, skip. Plus the per-idle-state cap so we

@@ -1442,20 +1442,26 @@ export function buildMemoryTools(agentId: string, remoteJid: string) {
 
 // ─── Skill Registry ───
 export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
-    tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
-    crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
-    user_fields: 'You can read and write user-defined custom fields on the contact you are chatting with. Use listUserFields first to learn what fields exist (key + type), then setUserField to save things you learn from the conversation (age, city, purpose, budget, etc.) and getUserField when you need to recall a stored value. Use searchContactsByField when the human asks for filtering across contacts.',
-    http: 'You can call external HTTP APIs via the dedicated tools listed below.',
-    memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
-    self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
-    reminder: 'You can periodically re-engage idle contacts. A background scheduler picks customers who haven\'t replied for the configured number of hours and invokes a special "reminder turn". When you are in a reminder turn (the latest non-assistant turn will be marked [REMINDER_TURN: customer silent for Xh]) read the conversation, then write ONE short warm message that nudges the customer based on where the conversation left off — never restart the funnel, never repeat your last message verbatim, never apologise for writing again. Stay in the customer\'s language. Keep it conversational, max 2 short sentences.',
-    live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
+    tables: 'Tables: call listTables first, then searchTable or getTableRows.',
+    crm: 'CRM: upsertClient saves/updates, getClient looks up, searchClients finds existing.',
+    user_fields: 'User fields: listUserFields first to see schema, setUserField to save, getUserField to recall, searchContactsByField to filter across contacts.',
+    http: 'HTTP: call the dedicated tools listed below.',
+    memory: 'Memory: conversationStats (overview), searchMessages, getMessages (range), getMessagesAround (context). Only call when older context is actually needed.',
+    self_pause: 'Self-pause: pauseAgent({reason}) stops auto-replies for this contact until a human resumes from the inbox.',
+    reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
+    live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
+    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question. Customers tap to vote and the chosen option arrives as the next user turn.',
 };
 
+// Owner-supplied skill prompts are APPENDED to the built-in usage rules,
+// not replacing them. The model always keeps the minimum guidance on how
+// to call each tool even after the owner adds business-specific
+// instructions (tone, language, ordering, etc.).
 function resolveSkillPrompt(skillId: string, skillPrompts?: Record<string, string>): string {
-    const custom = skillPrompts?.[skillId];
-    if (custom && custom.trim().length > 0) return custom;
-    return DEFAULT_SKILL_PROMPTS[skillId] || '';
+    const builtin = DEFAULT_SKILL_PROMPTS[skillId] || '';
+    const custom = (skillPrompts?.[skillId] || '').trim();
+    if (!custom) return builtin;
+    return builtin ? `${builtin}\n\n${custom}` : custom;
 }
 
 export function buildToolsForSkills(
@@ -1517,7 +1523,62 @@ export function buildToolsForSkills(
         prompts.push(resolveSkillPrompt('http', skillPrompts) + '\n' + list);
     }
 
+    if (skills.includes('polls') && remoteJid && instanceId) {
+        tools = { ...tools, ...buildPollsTool(instanceId, remoteJid) };
+        prompts.push(resolveSkillPrompt('polls', skillPrompts));
+    }
+
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };
+}
+
+// Interactive WhatsApp poll. Customers tap to vote and the chosen
+// option arrives as a normal inbound message handled by the regular
+// vote-ingest path. Keep options ≤12; selectableCount=1 for single
+// choice, higher for multi-select.
+function buildPollsTool(instanceId: string, remoteJid: string) {
+    return {
+        sendPoll: makeTool(
+            'Send an interactive poll to the customer with a question and 2-12 options. Use it when you want the customer to pick from a discrete set (topic, city, budget tier, etc.) instead of typing free text — far less drop-off than open questions.',
+            z.object({
+                name: z.string().min(1).max(255).describe('The question shown above the options.'),
+                options: z.array(z.string().min(1).max(80)).min(2).max(12).describe('The poll options (2 to 12).'),
+                multi: z.boolean().optional().describe('Allow multiple selections (defaults to single-choice).'),
+            }),
+            async (params: { name: string; options: string[]; multi?: boolean }) => {
+                try {
+                    const { sessions } = await import('../whatsapp/instance.manager');
+                    const sock: any = sessions.get(instanceId);
+                    if (!sock) return { ok: false, error: 'Instance not connected' };
+                    const selectableCount = params.multi ? params.options.length : 1;
+                    const sent = await sock.sendMessage(remoteJid, {
+                        poll: {
+                            name: params.name,
+                            values: params.options,
+                            selectableCount,
+                        },
+                    });
+                    // Persist the poll as an assistant Message so it
+                    // shows in the inbox + history. content is the
+                    // serialized poll so the model can reference it
+                    // later if needed.
+                    const content = `📊 ${params.name}\n` + params.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+                    await prisma.message.create({
+                        data: {
+                            instanceId, remoteJid,
+                            isFromMe: true, messageType: 'poll',
+                            content, timestamp: new Date(),
+                            waMsgId: sent?.key?.id || null,
+                        },
+                    }).catch(() => {});
+                    logger.info({ instanceId, remoteJid, options: params.options.length }, '[poll] sent');
+                    return { ok: true, name: params.name, options: params.options };
+                } catch (e: any) {
+                    logger.warn({ err: e?.message }, '[poll] send failed');
+                    return { ok: false, error: e?.message };
+                }
+            },
+        ),
+    };
 }
 
 // Builds the router-specific tools: handoffTo (binds the contact to a

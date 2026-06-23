@@ -33,15 +33,19 @@ type ActivityItem = {
     durationMs: number;
 };
 
-// Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts
+// Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts.
+// Each entry is the BARE tool-usage rule — any prompt the owner writes
+// in the skill panel is APPENDED to this, not replacing it.
 const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
-    tables: 'You have access to data tables. Use listTables first, then searchTable or getTableRows.',
-    crm: 'You can manage clients in the CRM. Use upsertClient to save/update contacts, getClient to look up, searchClients to find existing clients.',
-    http: 'You can call external HTTP APIs via the dedicated tools listed below.',
-    memory: 'You have memory tools to recall earlier parts of this conversation: conversationStats (overview), searchMessages (keyword search), getMessages (fetch a range by index), getMessagesAround (context around a match). Only call them when the user references earlier topics, contradicts something they said before, or you need older context. For simple greetings or new topics, do not call them.',
-    self_pause: 'You can pause yourself for the current contact via pauseAgent({reason}). After calling this you will NOT auto-reply to this contact again until a human operator un-pauses you from the inbox. Use it only when handover to a human is the right next step: lead is fully qualified and you already pushed it to the CRM, the customer explicitly asked to speak with a person, the customer is angry or off-topic, or any other reason a live agent should take over. Do not pause for trivial reasons — every pause requires an operator to manually resume.',
-    live_operator: 'You can consult human teammates ("operators") for things only they know — pricing, special approvals, stock, exceptions. Use listOperators to see who is available, then askOperator({operatorId, question}) to ping them. The operator\'s reply is delivered to the customer automatically by the system; you do NOT need to wait. After calling askOperator, write a short holding message to the customer ("let me check and get back to you shortly") so they aren\'t left hanging. Only consult operators for genuinely human-needed questions, not for things in your data tables or general FAQ.',
-    reminder: 'You can periodically re-engage idle contacts. A background scheduler picks customers who haven\'t replied for the configured number of hours and invokes a special "reminder turn". When you are in a reminder turn (the latest non-assistant turn will be marked [REMINDER_TURN: customer silent for Xh]) read the conversation, then write ONE short warm message that nudges the customer based on where the conversation left off — never restart the funnel, never repeat your last message verbatim, never apologise for writing again. Stay in the customer\'s language. Keep it conversational, max 2 short sentences.',
+    tables: 'Tables: call listTables first, then searchTable or getTableRows.',
+    crm: 'CRM: upsertClient saves/updates, getClient looks up, searchClients finds existing.',
+    user_fields: 'User fields: listUserFields first to see schema, setUserField to save, getUserField to recall, searchContactsByField to filter across contacts.',
+    http: 'HTTP: call the dedicated tools listed below.',
+    memory: 'Memory: conversationStats (overview), searchMessages, getMessages (range), getMessagesAround (context). Only call when older context is actually needed.',
+    self_pause: 'Self-pause: pauseAgent({reason}) stops auto-replies for this contact until a human resumes from the inbox.',
+    live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
+    reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
+    polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question. Customers tap to vote and the chosen option arrives as the next user turn.',
 };
 
 type ValueSpec =
@@ -1796,6 +1800,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
                                     { id: 'live_operator', name: 'Live Operators', desc: 'Agent can ask human teammates over WhatsApp for things only they know (pricing, approvals). Replies route back to the customer automatically.' },
+                                    { id: 'polls', name: 'Polls', desc: 'Send interactive WhatsApp polls (2–12 options) so the customer can tap a choice instead of typing.' },
                                 ].map(skill => {
                                     const enabled = skills.includes(skill.id);
                                     const expanded = expandedSkills.has(skill.id);
@@ -1854,9 +1859,11 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             rows={3}
                                                             placeholder={DEFAULT_SKILL_PROMPTS[skill.id]}
                                                             className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
-                                                        {!isOverridden && (
-                                                            <p className="text-[10px] text-muted-foreground mt-1 italic">Using default</p>
-                                                        )}
+                                                        <p className="text-[10px] text-muted-foreground mt-1 italic">
+                                                            {isOverridden
+                                                                ? 'Your text is appended to the default usage rule above — the default is not replaced.'
+                                                                : 'Using default only. Write here to add custom instructions on top of the default.'}
+                                                        </p>
                                                     </div>
 
                                                     {/* Tables-specific: knowledge base selector */}

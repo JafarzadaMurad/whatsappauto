@@ -466,6 +466,36 @@ export class InstanceManager {
             sock.ev.on('messages.update', async (updates: any[]) => {
                 for (const u of updates) {
                     const waId = u?.key?.id;
+                    // Poll vote ingest. Baileys delivers vote updates here
+                    // with `pollUpdates` populated. We can't decrypt the
+                    // selected option without the original poll's encKey
+                    // (Baileys' getAggregateVotesInPollMessage needs the
+                    // sent-message store), so for now we just emit a
+                    // synthetic inbound message that tells the model the
+                    // customer voted. The model is free to ask for
+                    // confirmation; most customers also type the option
+                    // name after tapping anyway.
+                    const pollUpdates = u?.pollUpdates;
+                    if (pollUpdates && Array.isArray(pollUpdates) && pollUpdates.length > 0) {
+                        const jid = u.key?.remoteJid;
+                        if (jid && !u.key?.fromMe) {
+                            try {
+                                const { effectiveJid: rJid } = await resolveJid(instanceId, jid, { key: u.key } as any);
+                                await prisma.message.create({
+                                    data: {
+                                        instanceId, remoteJid: rJid,
+                                        isFromMe: false, messageType: 'poll_vote',
+                                        content: '[Customer voted in the poll above — ask them to confirm their choice if you need the exact option.]',
+                                        timestamp: new Date(),
+                                        waMsgId: waId || null,
+                                    },
+                                }).catch(() => {});
+                                logger.info({ instanceId, remoteJid: rJid }, '[poll] vote received');
+                                AiService.handleIncomingMessage(instanceId, rJid, sock, io).catch(() => {});
+                            } catch { /* not critical */ }
+                        }
+                        continue;
+                    }
                     const statusCode = u?.update?.status;
                     if (!waId || typeof statusCode !== 'number') continue;
                     // Baileys numeric status: 1 PENDING, 2 SENT (server ack),

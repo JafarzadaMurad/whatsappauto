@@ -351,16 +351,62 @@ export class InstanceManager {
                                 logger.warn({ pollMsgId, hasEncKey: !!pollEncKey, optionsCount: options.length }, '[poll] upsert: missing encKey or options');
                                 continue;
                             }
-                            // pollCreatorJid = our own number. sock.user.id has it
-                            // either as the raw phone (no @) or with @s.whatsapp.net.
-                            const ownId = String((sock as any)?.user?.id || '').split(':')[0];
-                            const pollCreatorJid = ownId.includes('@') ? ownId : `${ownId}@s.whatsapp.net`;
-                            const voterJid = (msg.key?.remoteJidAlt || msg.key?.remoteJid || '').replace('@lid', '@s.whatsapp.net');
+                            // WhatsApp keys the poll-vote AES-GCM AAD on the
+                            // creator and voter JIDs in the same format the
+                            // server saw them — for LID-mode chats both ends
+                            // are @lid, for legacy PN chats both are
+                            // @s.whatsapp.net. We don't know which up front,
+                            // so we try the plausible combos until the GCM
+                            // auth tag verifies.
+                            const ownIdRaw = String((sock as any)?.user?.id || '');
+                            const ownLid = String((sock as any)?.user?.lid || '');
+                            const ownPhone = (ownIdRaw.includes('@') ? ownIdRaw : `${ownIdRaw}@s.whatsapp.net`).split(':')[0].replace(/(@.+):.*/, '$1');
+                            const ownPhoneNorm = ownPhone.replace(/@.+$/, '@s.whatsapp.net');
+                            const ownLidNorm = ownLid ? (ownLid.includes('@') ? ownLid : `${ownLid}@lid`).split(':')[0].replace(/(@.+):.*/, '$1') : '';
+                            const voterPn = (msg.key?.remoteJidAlt || '').includes('@s.whatsapp.net')
+                                ? msg.key!.remoteJidAlt!
+                                : (msg.key?.remoteJid || '').replace('@lid', '@s.whatsapp.net');
+                            const voterLid = (msg.key?.remoteJid || '').includes('@lid')
+                                ? msg.key!.remoteJid!
+                                : '';
                             const voteRaw = reviveBuffers(pollUpdate.vote);
-                            const decoded = decryptPollVote(
-                                { encPayload: voteRaw.encPayload, encIv: voteRaw.encIv },
-                                { pollCreatorJid, pollMsgId, pollEncKey, voterJid } as any,
-                            );
+                            const attempts: Array<{ pollCreatorJid: string; voterJid: string; label: string }> = [];
+                            // LID combo first (poll was sent in @lid conversation, so this is the most likely match)
+                            if (ownLidNorm && voterLid) attempts.push({ pollCreatorJid: ownLidNorm, voterJid: voterLid, label: 'lid/lid' });
+                            // PN combo (legacy)
+                            if (ownPhoneNorm && voterPn) attempts.push({ pollCreatorJid: ownPhoneNorm, voterJid: voterPn, label: 'pn/pn' });
+                            // Cross combos as last resort
+                            if (ownPhoneNorm && voterLid) attempts.push({ pollCreatorJid: ownPhoneNorm, voterJid: voterLid, label: 'pn/lid' });
+                            if (ownLidNorm && voterPn) attempts.push({ pollCreatorJid: ownLidNorm, voterJid: voterPn, label: 'lid/pn' });
+                            if (process.env.POLL_DEBUG === 'true') {
+                                logger.info({
+                                    ownPhoneNorm, ownLidNorm, voterPn, voterLid,
+                                    encKeyLen: (pollEncKey as Buffer)?.length,
+                                    attempts: attempts.map(a => a.label),
+                                }, '[poll-debug] decrypt attempt setup');
+                            }
+                            let decoded: any = null;
+                            let usedLabel = '';
+                            let lastErr: string = '';
+                            for (const a of attempts) {
+                                try {
+                                    decoded = decryptPollVote(
+                                        { encPayload: voteRaw.encPayload, encIv: voteRaw.encIv },
+                                        { pollCreatorJid: a.pollCreatorJid, pollMsgId, pollEncKey, voterJid: a.voterJid } as any,
+                                    );
+                                    if (decoded?.selectedOptions?.length) { usedLabel = a.label; break; }
+                                } catch (e: any) {
+                                    lastErr = e?.message || String(e);
+                                    decoded = null;
+                                }
+                            }
+                            if (!decoded) {
+                                logger.warn({ pollMsgId, lastErr }, '[poll] upsert vote: all JID combos failed to decrypt');
+                                continue;
+                            }
+                            if (process.env.POLL_DEBUG === 'true') {
+                                logger.info({ pollMsgId, usedLabel }, '[poll-debug] decrypt succeeded');
+                            }
                             const selected: Buffer[] = (decoded?.selectedOptions || []).map((b: any) => Buffer.from(b));
                             const optionHashes = options.map(o => ({
                                 name: String(o.optionName || ''),

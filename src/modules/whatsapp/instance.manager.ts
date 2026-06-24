@@ -337,18 +337,32 @@ export class InstanceManager {
                                 continue;
                             }
                             const revived = reviveBuffers(original.pollPayload);
-                            // encKey lives on pollCreationMessage in newer
-                            // Baileys; the older field is messageContextInfo.messageSecret.
-                            const pollEncKey: Buffer | undefined =
+                            // Protobufjs's default JSON serializer encodes
+                            // `bytes` fields as base64 strings, so anything
+                            // we stored via JSON.parse(JSON.stringify(...))
+                            // comes back as a string — Buffer.from(str)
+                            // would treat it as UTF-8 and we'd hand AES-GCM
+                            // 44 ASCII bytes instead of the real 32-byte
+                            // key. Decode explicitly.
+                            const toBuf = (v: any): Buffer | null => {
+                                if (!v) return null;
+                                if (Buffer.isBuffer(v)) return v;
+                                if (v instanceof Uint8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+                                if (typeof v === 'string') return Buffer.from(v, 'base64');
+                                if (v.type === 'Buffer' && Array.isArray(v.data)) return Buffer.from(v.data);
+                                return null;
+                            };
+                            const pollEncKey: Buffer | null = toBuf(
                                 revived?.pollCreationMessage?.encKey
-                                || revived?.messageContextInfo?.messageSecret
-                                || revived?.pollCreationMessageV3?.encKey;
+                                ?? revived?.messageContextInfo?.messageSecret
+                                ?? revived?.pollCreationMessageV3?.encKey,
+                            );
                             const options: Array<{ optionName: string }> =
                                 revived?.pollCreationMessage?.options
                                 || revived?.pollCreationMessageV3?.options
                                 || [];
-                            if (!pollEncKey || options.length === 0) {
-                                logger.warn({ pollMsgId, hasEncKey: !!pollEncKey, optionsCount: options.length }, '[poll] upsert: missing encKey or options');
+                            if (!pollEncKey || pollEncKey.length !== 32 || options.length === 0) {
+                                logger.warn({ pollMsgId, encKeyLen: pollEncKey?.length, optionsCount: options.length }, '[poll] upsert: missing or wrong-size encKey / options');
                                 continue;
                             }
                             // WhatsApp keys the poll-vote AES-GCM AAD on the
@@ -358,11 +372,16 @@ export class InstanceManager {
                             // @s.whatsapp.net. We don't know which up front,
                             // so we try the plausible combos until the GCM
                             // auth tag verifies.
+                            const stripDevice = (jid: string) => {
+                                // "79809809423:5@s.whatsapp.net" -> "79809809423@s.whatsapp.net"
+                                // "231610725195937:5@lid"        -> "231610725195937@lid"
+                                const m = jid.match(/^([^:@]+)(?::\d+)?@(.+)$/);
+                                return m ? `${m[1]}@${m[2]}` : jid;
+                            };
                             const ownIdRaw = String((sock as any)?.user?.id || '');
-                            const ownLid = String((sock as any)?.user?.lid || '');
-                            const ownPhone = (ownIdRaw.includes('@') ? ownIdRaw : `${ownIdRaw}@s.whatsapp.net`).split(':')[0].replace(/(@.+):.*/, '$1');
-                            const ownPhoneNorm = ownPhone.replace(/@.+$/, '@s.whatsapp.net');
-                            const ownLidNorm = ownLid ? (ownLid.includes('@') ? ownLid : `${ownLid}@lid`).split(':')[0].replace(/(@.+):.*/, '$1') : '';
+                            const ownLidRaw = String((sock as any)?.user?.lid || '');
+                            const ownPhoneNorm = ownIdRaw ? stripDevice(ownIdRaw.includes('@') ? ownIdRaw : `${ownIdRaw}@s.whatsapp.net`) : '';
+                            const ownLidNorm = ownLidRaw ? stripDevice(ownLidRaw.includes('@') ? ownLidRaw : `${ownLidRaw}@lid`) : '';
                             const voterPn = (msg.key?.remoteJidAlt || '').includes('@s.whatsapp.net')
                                 ? msg.key!.remoteJidAlt!
                                 : (msg.key?.remoteJid || '').replace('@lid', '@s.whatsapp.net');

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon } from "lucide-react";
 import Link from "next/link";
@@ -687,6 +687,25 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         } catch (err) { console.error(err); }
         finally { setSaving(false); }
     };
+
+    // Ctrl/Cmd+S → save (only on the Settings tab, and only when a
+    // save isn't already in-flight). Using a ref so the listener always
+    // sees the latest closure without re-binding on every keystroke.
+    const saveRef = useRef(handleSave);
+    saveRef.current = handleSave;
+    const savingRef = useRef(saving);
+    savingRef.current = saving;
+    useEffect(() => {
+        if (tab !== 'settings') return;
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (!savingRef.current) saveRef.current();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [tab]);
 
     // Model catalogue is admin-managed and loaded from /ai-providers/models
     // (see `aiModels` state below). Users only get to pick from this list —
@@ -2266,12 +2285,31 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </div>
                         </div>
 
-                        <button onClick={handleSave} disabled={saving}
-                            className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-6 py-2.5 flex items-center gap-2 transition-all disabled:opacity-70">
-                            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
-                        </button>
+                        {/* Spacer so the fixed Save button doesn't overlap
+                            the last form row when the user scrolls to the
+                            bottom. Matches the button's vertical footprint
+                            plus its bottom inset. */}
+                        <div className="h-20" />
                     </div>
                 </motion.div>
+            )}
+
+            {tab === 'settings' && (
+                <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    title="Save Changes (Ctrl+S)"
+                    className="fixed bottom-6 right-6 z-40 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-5 py-3 flex items-center gap-2 shadow-lg shadow-primary/30 transition-all disabled:opacity-70"
+                >
+                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
+                    {!saving && (
+                        <span className="hidden sm:inline-flex items-center gap-1 ml-2 pl-2 border-l border-primary-foreground/30 text-[11px] opacity-80">
+                            <kbd className="px-1.5 py-0.5 rounded bg-primary-foreground/15">Ctrl</kbd>
+                            <span>+</span>
+                            <kbd className="px-1.5 py-0.5 rounded bg-primary-foreground/15">S</kbd>
+                        </span>
+                    )}
+                </button>
             )}
         </div>
     );

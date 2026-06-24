@@ -7,6 +7,12 @@ import { sessions } from '../whatsapp/instance.manager';
 import { io } from '../../server';
 import { logger } from '../../utils/logger';
 
+const chatSendSchema = z.object({
+    clientId: z.string().uuid(),
+    agentId: z.string().uuid(),
+    text: z.string().min(1).max(3000),
+});
+
 const createSchema = z.object({
     clientId: z.string().uuid(),
     agentId: z.string().uuid(),
@@ -67,12 +73,19 @@ export class DirectiveController {
                 take: 50,
             }) : [];
 
+            const chatHistory = client && resolved ? await prisma.agentChatMessage.findMany({
+                where: { clientId: client.id, agentId: resolved.id, workspaceId },
+                orderBy: { createdAt: 'asc' },
+                take: 200,
+            }) : [];
+
             return res.json({
                 success: true,
                 clientId: client?.id || null,
                 agentId: resolved?.id || null,
                 agentName: resolved?.name || null,
                 directives,
+                chatHistory,
             });
         } catch (e: any) {
             return res.status(500).json({ success: false, message: e.message });
@@ -155,6 +168,54 @@ export class DirectiveController {
             return res.json({ success: true, directive });
         } catch (e: any) {
             if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // GET /api/directives/chat?clientId=...&agentId=...
+    async chatHistory(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const clientId = String(req.query.clientId || '');
+            const agentId = String(req.query.agentId || '');
+            if (!clientId || !agentId) return res.status(400).json({ success: false, message: 'clientId and agentId are required' });
+            if (!(await ownsClient(clientId, workspaceId))) return res.status(404).json({ success: false, message: 'Client not found' });
+            if (!(await ownsAgent(agentId, workspaceId))) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const messages = await prisma.agentChatMessage.findMany({
+                where: { clientId, agentId, workspaceId },
+                orderBy: { createdAt: 'asc' },
+                take: 200,
+            });
+            return res.json({ success: true, messages });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // POST /api/directives/chat  — operator sends a turn, agent replies
+    async chatSend(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const data = chatSendSchema.parse(req.body);
+            if (!(await ownsClient(data.clientId, workspaceId))) return res.status(404).json({ success: false, message: 'Client not found' });
+            if (!(await ownsAgent(data.agentId, workspaceId))) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            const { reply, toolCalls } = await AiService.handleOperatorChat({
+                clientId: data.clientId, agentId: data.agentId, workspaceId, text: data.text,
+            });
+
+            // Return the trailing two turns the panel needs to render
+            // immediately — frontend doesn't have to re-fetch history.
+            const tail = await prisma.agentChatMessage.findMany({
+                where: { clientId: data.clientId, agentId: data.agentId, workspaceId },
+                orderBy: { createdAt: 'desc' },
+                take: 2,
+            });
+            return res.json({ success: true, reply, toolCalls, messages: tail.reverse() });
+        } catch (e: any) {
+            if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
+            logger.error({ err: e?.message }, '[directive] chatSend failed');
             return res.status(500).json({ success: false, message: e.message });
         }
     }

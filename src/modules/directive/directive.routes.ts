@@ -8,6 +8,8 @@ const controller = new DirectiveController();
 router.use(authMiddleware);
 
 router.get('/by-contact', controller.byContact.bind(controller));
+router.get('/chat', controller.chatHistory.bind(controller));
+router.post('/chat', controller.chatSend.bind(controller));
 router.get('/', controller.list.bind(controller));
 router.post('/', controller.create.bind(controller));
 router.delete('/:id', controller.remove.bind(controller));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Trash2, Zap } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
 import { usePermChatWrite } from "@/store/workspaceStore";
@@ -1053,27 +1053,28 @@ void Square; void Mic;
 
 // ─── Talk-to-agent panel ──────────────────────────────────────
 //
-// Slides out from the right of the chat panel when the operator hits
-// "Talk to agent". Lets them queue directives ("be friendlier", "push
-// to Bitrix", ...) that get injected into the agent's system prompt
-// on its next turn. Persistent directives steer every future reply
-// for this contact; one-shots fire once. "Run now" makes the agent
-// act immediately without waiting for the customer to message back.
+// Plain chat between the operator and the AI agent handling this
+// contact. Operator types in their own words; the agent decides
+// whether to message the customer (via sendToCustomerNow), persist
+// a steering note for future replies (addSteeringNote), call any
+// of its skill tools (CRM / HTTP / etc.), or just chat back. The
+// agent's text reply lands here — it never reaches the customer
+// unless the agent explicitly used sendToCustomerNow.
 
-type Directive = {
+type AgentChatTurn = {
     id: string;
+    role: 'operator' | 'agent';
     text: string;
-    persistent: boolean;
-    source: 'chat' | 'quick_action';
-    triggerNow: boolean;
+    toolCalls?: Array<{ toolName: string; args: any; result: any; ok: boolean; error?: string }> | null;
     createdAt: string;
 };
 
-const QUICK_ACTIONS: Array<{ label: string; text: string; persistent: boolean }> = [
-    { label: 'Be friendlier', text: 'Switch to a warmer, more casual tone with this contact going forward — drop the formal register.', persistent: true },
-    { label: 'Be more concise', text: 'Keep replies to this contact short — 1-2 short sentences max, no padding.', persistent: true },
-    { label: 'Summarise the chat for me', text: 'Reply ONLY to me (operator) with a one-paragraph summary of what this contact wants and where the conversation stands. Do not send anything to the customer.', persistent: false },
-    { label: 'Push to CRM', text: 'Upsert this contact into the CRM with everything you know about them right now. No customer-facing reply needed unless something is missing.', persistent: false },
+const QUICK_PROMPTS: string[] = [
+    'Müştəri ilə bir az səmimi danış',
+    'Müştəriyə yazırsan: Salam, necə kömək edə bilərəm? 😊',
+    'Bu söhbəti CRM-ə əlavə et',
+    'Müştərinin nə istədiyini mənə qısaca izah et',
+    'Bir saat sonra ona xatırlatma göndər',
 ];
 
 function AgentTalkPanel({ accountId, phone, onClose }: { accountId: string; phone: string; onClose: () => void }) {
@@ -1081,46 +1082,65 @@ function AgentTalkPanel({ accountId, phone, onClose }: { accountId: string; phon
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentName, setAgentName] = useState<string | null>(null);
     const [clientId, setClientId] = useState<string | null>(null);
-    const [directives, setDirectives] = useState<Directive[]>([]);
+    const [history, setHistory] = useState<AgentChatTurn[]>([]);
     const [draft, setDraft] = useState('');
-    const [persistent, setPersistent] = useState(true);
     const [posting, setPosting] = useState(false);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const r = await api.get(`/directives/by-contact?accountId=${accountId}&phone=${phone}`);
-            if (r.data?.success) {
-                setAgentId(r.data.agentId);
-                setAgentName(r.data.agentName);
-                setClientId(r.data.clientId);
-                setDirectives(r.data.directives || []);
-            }
-        } catch (e) { console.error(e); }
-        finally { setLoading(false); }
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const r = await api.get(`/directives/by-contact?accountId=${accountId}&phone=${phone}`);
+                if (cancelled) return;
+                if (r.data?.success) {
+                    setAgentId(r.data.agentId);
+                    setAgentName(r.data.agentName);
+                    setClientId(r.data.clientId);
+                    setHistory(r.data.chatHistory || []);
+                }
+            } catch (e) { console.error(e); }
+            finally { if (!cancelled) setLoading(false); }
+        })();
+        return () => { cancelled = true; };
     }, [accountId, phone]);
 
-    useEffect(() => { load(); }, [load]);
+    // Auto-scroll to bottom whenever history or posting state changes.
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+    }, [history, posting]);
 
-    const send = async (text: string, opts: { persistent: boolean; triggerNow: boolean; source: 'chat' | 'quick_action' }) => {
-        if (!text.trim() || !clientId || !agentId) return;
+    const send = async (text: string) => {
+        if (!text.trim() || !clientId || !agentId || posting) return;
+        // Optimistic operator bubble so the panel doesn't feel laggy
+        // while the model is generating.
+        const tempId = 'temp-' + Date.now();
+        const optimistic: AgentChatTurn = {
+            id: tempId, role: 'operator', text: text.trim(),
+            createdAt: new Date().toISOString(),
+        };
+        setHistory(prev => [...prev, optimistic]);
+        setDraft('');
         setPosting(true);
         try {
-            await api.post('/directives', {
-                clientId, agentId, text: text.trim(),
-                persistent: opts.persistent, source: opts.source, triggerNow: opts.triggerNow,
-            });
-            setDraft('');
-            await load();
-        } catch (e) { console.error(e); }
-        finally { setPosting(false); }
-    };
-
-    const remove = async (id: string) => {
-        try {
-            await api.delete(`/directives/${id}`);
-            setDirectives(prev => prev.filter(d => d.id !== id));
-        } catch (e) { console.error(e); }
+            const r = await api.post('/directives/chat', { clientId, agentId, text: text.trim() });
+            if (r.data?.success) {
+                // Replace optimistic + append agent reply using the
+                // authoritative trailing pair returned by the API.
+                const tail: AgentChatTurn[] = r.data.messages || [];
+                setHistory(prev => {
+                    const without = prev.filter(t => t.id !== tempId);
+                    return [...without, ...tail];
+                });
+            } else {
+                setHistory(prev => prev.filter(t => t.id !== tempId));
+            }
+        } catch (e: any) {
+            console.error(e);
+            setHistory(prev => prev.filter(t => t.id !== tempId));
+        } finally { setPosting(false); }
     };
 
     return (
@@ -1132,7 +1152,7 @@ function AgentTalkPanel({ accountId, phone, onClose }: { accountId: string; phon
                         Talk to agent
                     </div>
                     {agentName ? (
-                        <p className="text-[11px] text-muted-foreground truncate">Handling: <span className="text-violet-300">{agentName}</span></p>
+                        <p className="text-[11px] text-muted-foreground truncate">{agentName}</p>
                     ) : !loading && (
                         <p className="text-[11px] text-amber-400">No AI configured on this channel</p>
                     )}
@@ -1146,74 +1166,84 @@ function AgentTalkPanel({ accountId, phone, onClose }: { accountId: string; phon
                 <div className="flex-1 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
             ) : !agentId || !clientId ? (
                 <div className="flex-1 p-4 text-xs text-muted-foreground">
-                    {!agentId ? 'Bind an agent or router to this instance from the AI page to start steering replies here.' : 'No CRM record for this contact yet — send them one message so the system creates it, then come back.'}
+                    {!agentId
+                        ? 'Bind an agent or router to this instance from the AI page to start chatting with it here.'
+                        : 'No CRM record for this contact yet — send them one message so the system creates it, then come back.'}
                 </div>
             ) : (
                 <>
-                    <div className="px-4 py-3 border-b border-border flex-shrink-0">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Quick actions</p>
-                        <div className="flex flex-wrap gap-1.5">
-                            {QUICK_ACTIONS.map(qa => (
-                                <button key={qa.label} disabled={posting}
-                                    onClick={() => send(qa.text, { persistent: qa.persistent, triggerNow: !qa.persistent, source: 'quick_action' })}
-                                    className="text-[11px] px-2 py-1 rounded-md bg-secondary/60 hover:bg-secondary text-foreground border border-border disabled:opacity-50">
-                                    {qa.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto px-4 py-3">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Active directives</p>
-                        {directives.length === 0 ? (
-                            <p className="text-xs text-muted-foreground italic">No directives yet — anything you type below feeds straight into the agent's next reply.</p>
-                        ) : (
-                            <div className="space-y-2">
-                                {directives.map(d => (
-                                    <div key={d.id} className={`rounded-lg border p-2 text-xs flex items-start gap-2 ${d.persistent ? 'bg-violet-500/5 border-violet-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-foreground whitespace-pre-wrap break-words">{d.text}</p>
-                                            <p className="text-[10px] text-muted-foreground mt-1">
-                                                {d.persistent ? 'Persistent' : 'One-shot'}
-                                                {d.source === 'quick_action' && ' · Quick action'}
-                                            </p>
-                                        </div>
-                                        <button onClick={() => remove(d.id)} title="Remove directive"
-                                            className="text-muted-foreground hover:text-red-400 p-0.5 flex-shrink-0">
-                                            <Trash2 className="w-3.5 h-3.5" />
+                    <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                        {history.length === 0 && (
+                            <div className="text-xs text-muted-foreground space-y-2">
+                                <p className="italic">Yaz nə istəyirsən — agent qərar verəcək: müştəriyə mesaj yazsın, davranışını dəyişsin, CRM-ə əlavə etsin, ya sənə cavab versin.</p>
+                                <p className="text-[10px] uppercase tracking-wide pt-2">Nümunələr</p>
+                                <div className="flex flex-col gap-1">
+                                    {QUICK_PROMPTS.map(q => (
+                                        <button key={q} disabled={posting}
+                                            onClick={() => send(q)}
+                                            className="text-left text-[11px] px-2 py-1.5 rounded-md bg-secondary/40 hover:bg-secondary/70 text-foreground/80 disabled:opacity-50">
+                                            {q}
                                         </button>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {history.map(t => (
+                            <AgentChatBubble key={t.id} turn={t} />
+                        ))}
+                        {posting && (
+                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground italic">
+                                <Loader2 className="w-3 h-3 animate-spin" /> Agent düşünür…
                             </div>
                         )}
                     </div>
 
-                    <div className="px-4 py-3 border-t border-border flex-shrink-0">
-                        <textarea value={draft} onChange={e => setDraft(e.target.value)}
-                            placeholder="Tell the agent how to handle this contact…"
-                            rows={3} maxLength={2000} disabled={posting}
-                            className="w-full bg-secondary/40 border border-border rounded-lg px-2.5 py-2 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/40" />
-                        <label className="flex items-center gap-2 text-[11px] text-muted-foreground mt-2 select-none">
-                            <input type="checkbox" checked={persistent} onChange={e => setPersistent(e.target.checked)}
-                                className="rounded" />
-                            Persist — apply to every future reply (not just the next one)
-                        </label>
-                        <div className="flex gap-1.5 mt-2">
-                            <button onClick={() => send(draft, { persistent, triggerNow: false, source: 'chat' })}
-                                disabled={posting || !draft.trim()}
-                                className="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border border-violet-500/30 disabled:opacity-50">
-                                {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : 'Apply silently'}
-                            </button>
-                            <button onClick={() => send(draft, { persistent, triggerNow: true, source: 'chat' })}
-                                disabled={posting || !draft.trim()}
-                                title="Make the agent act on this immediately, without waiting for the customer to message back"
-                                className="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 flex items-center justify-center gap-1">
-                                {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Zap className="w-3.5 h-3.5" /> Run now</>}
+                    <div className="px-3 py-3 border-t border-border flex-shrink-0">
+                        <div className="flex gap-2 items-end">
+                            <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        send(draft);
+                                    }
+                                }}
+                                placeholder="Agentə nə demək istəyirsən?"
+                                rows={2} maxLength={2000} disabled={posting}
+                                className="flex-1 bg-secondary/40 border border-border rounded-lg px-2.5 py-2 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/40" />
+                            <button onClick={() => send(draft)} disabled={posting || !draft.trim()}
+                                className="bg-violet-500/80 hover:bg-violet-500 text-white rounded-lg px-3 py-2 disabled:opacity-50 flex-shrink-0">
+                                {posting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                             </button>
                         </div>
                     </div>
                 </>
             )}
         </aside>
+    );
+}
+
+function AgentChatBubble({ turn }: { turn: AgentChatTurn }) {
+    const isOp = turn.role === 'operator';
+    return (
+        <div className={`flex ${isOp ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[88%] rounded-xl px-3 py-2 text-xs ${isOp
+                ? 'bg-primary/80 text-primary-foreground rounded-tr-sm'
+                : 'bg-violet-500/10 border border-violet-500/20 text-foreground rounded-tl-sm'}`}>
+                <p className="whitespace-pre-wrap break-words">{turn.text}</p>
+                {!isOp && turn.toolCalls && turn.toolCalls.length > 0 && (
+                    <div className="mt-1.5 pt-1.5 border-t border-violet-500/20 space-y-1">
+                        {turn.toolCalls.map((tc, i) => (
+                            <div key={i} className="flex items-center gap-1 text-[10px] text-violet-300">
+                                {tc.ok
+                                    ? <Zap className="w-2.5 h-2.5 flex-shrink-0" />
+                                    : <XIcon className="w-2.5 h-2.5 flex-shrink-0 text-red-400" />}
+                                <span className="font-mono truncate">{tc.toolName}</span>
+                                {!tc.ok && tc.error && <span className="text-red-400 truncate">— {tc.error}</span>}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }

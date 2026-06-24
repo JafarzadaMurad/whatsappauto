@@ -2585,4 +2585,236 @@ export class AiService {
             logger.error({ err: err.message, operatorId: operator.id }, '[ai-operator] reply failed');
         }
     }
+
+    // ────────────────────────────────────────────────────────────
+    // "Talk to agent" inbox panel — operator ⇄ agent back-channel
+    // ────────────────────────────────────────────────────────────
+    //
+    // The operator types instructions in plain Azerbaijani/English
+    // ("send him a friendly hello", "be warmer going forward",
+    // "push this to Bitrix"). The agent has four panel-specific
+    // tools PLUS every skill tool it normally runs:
+    //
+    //   sendToCustomerNow(text)  — actually sends a WhatsApp message
+    //                              to the customer and saves it
+    //   addSteeringNote(note)    — persists guidance that will be
+    //                              re-injected on every future
+    //                              customer-driven turn
+    //   pauseCustomerAgent()     — flips Client.agentPaused → true
+    //   resumeCustomerAgent()    — flips it back to false
+    //
+    // The agent's text reply lands in the panel, NEVER on the
+    // customer's phone. If it wants to message the customer it must
+    // call sendToCustomerNow explicitly.
+    static async handleOperatorChat(opts: {
+        clientId: string;
+        agentId: string;
+        workspaceId: string;
+        text: string;
+    }): Promise<{ reply: string; toolCalls: any[] }> {
+        const { clientId, agentId, workspaceId, text } = opts;
+
+        const client = await prisma.client.findFirst({
+            where: { id: clientId, workspaceId },
+        });
+        if (!client) throw new Error('Client not found');
+
+        const agent = await prisma.agent.findFirst({
+            where: { id: agentId, workspaceId },
+            include: { provider: true },
+        });
+        if (!agent) throw new Error('Agent not found');
+        if (!agent.provider) throw new Error('Agent has no AI provider configured');
+
+        // Persist operator's turn immediately so the panel can render
+        // it without waiting for the model. The agent reply is written
+        // after generation finishes.
+        await prisma.agentChatMessage.create({
+            data: { workspaceId, clientId, agentId, role: 'operator', text },
+        });
+
+        // Resolve the instance + WhatsApp socket the customer is bound
+        // to. Needed for sendToCustomerNow; if missing, that tool
+        // refuses gracefully and the agent still gets to chat back.
+        const instance = await prisma.instance.findFirst({
+            where: { workspaceId, OR: [{ agentId }, { routerAgentId: agentId }] },
+            select: { id: true },
+        });
+        const { sessions } = await import('../whatsapp/instance.manager');
+        const { io: ioServer } = await import('../../server');
+        const sock: any = instance ? sessions.get(instance.id) : null;
+        const customerJid = `${client.phone}@s.whatsapp.net`;
+
+        // Provider model
+        const providerInfo = agent.provider;
+        let aiModel: any;
+        if (providerInfo.provider === 'OPENAI') {
+            aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
+        } else if (providerInfo.provider === 'CLAUDE') {
+            aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
+        } else if (providerInfo.provider === 'GEMINI') {
+            aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        } else {
+            throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
+        }
+
+        // Skill tools (CRM, HTTP, tables, etc.) so the operator can ask
+        // for things like "push to Bitrix" or "tag this contact VIP".
+        const skills: string[] = (agent as any).skills || [];
+        const httpTools: HttpToolTemplate[] = ((agent as any).httpTools || []) as HttpToolTemplate[];
+        const skillPrompts: Record<string, string> = ((agent as any).skillPrompts || {}) as Record<string, string>;
+        const { tools: skillTools, skillPrompt } = buildToolsForSkills(
+            skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
+            agent.id, customerJid, skillPrompts,
+            instance?.id || '', client.name,
+        );
+
+        // Chat-mode tools. Defined inline because they need the
+        // instance + sock closure and a couple of details about the
+        // active client; not generic enough to live with the skill
+        // builders.
+        const panelTools: Record<string, any> = {
+            sendToCustomerNow: makeTool(
+                'Send a WhatsApp message to the customer this conversation is about. Use this whenever the operator asks you to message the customer, however indirect ("send hi", "tell them we will follow up tomorrow", "qarşılayan mesaj göndər"). The text you pass is what the customer literally receives — write it as them, in their language, on-brand. Returns ok:true on send, or an error string.',
+                z.object({
+                    text: z.string().min(1).max(3000).describe('The polished, customer-facing message in the customer\'s language.'),
+                }),
+                async ({ text: outText }) => {
+                    if (!sock || !instance) return { ok: false, error: 'Instance not connected — cannot send right now.' };
+                    try {
+                        const sent = await sock.sendMessage(customerJid, { text: outText });
+                        await prisma.message.create({
+                            data: {
+                                instanceId: instance.id, remoteJid: customerJid,
+                                isFromMe: true, messageType: 'text',
+                                content: outText, timestamp: new Date(),
+                                waMsgId: sent?.key?.id || null,
+                                status: 'SENT',
+                            },
+                        });
+                        ioServer.emit(`message.new-${instance.id}`, {
+                            id: sent?.key?.id || null,
+                            isFromMe: true, content: outText,
+                            remoteJid: customerJid,
+                            status: 'SENT',
+                            timestamp: new Date().toISOString(),
+                        });
+                        return { ok: true, sent: outText };
+                    } catch (e: any) {
+                        return { ok: false, error: e?.message || String(e) };
+                    }
+                },
+            ),
+            addSteeringNote: makeTool(
+                'Persist a steering note for how you should handle THIS contact in future customer-driven turns. Use whenever the operator gives behavioural guidance — tone, what to mention, what to avoid, who to ask about — rather than a one-off action. The note is fed back into your system prompt on every subsequent reply to this contact until the operator removes it.',
+                z.object({
+                    note: z.string().min(1).max(800).describe('Plain-English instruction to your future self, e.g. "Use a warmer, more casual tone with this contact" or "Always ask about budget if they bring up properties."'),
+                }),
+                async ({ note }) => {
+                    const row = await prisma.operatorDirective.create({
+                        data: { workspaceId, clientId, agentId, text: note, persistent: true, source: 'chat' },
+                    });
+                    return { ok: true, noteId: row.id, note };
+                },
+            ),
+            pauseCustomerAgent: makeTool(
+                'Stop auto-replying to this customer until the operator explicitly resumes. Use when the operator says things like "stop", "pause", "I\'ll take over", "let me handle this one".',
+                z.object({}),
+                async () => {
+                    await prisma.client.update({ where: { id: clientId }, data: { agentPaused: true, pausedAt: new Date() } });
+                    return { ok: true, paused: true };
+                },
+            ),
+            resumeCustomerAgent: makeTool(
+                'Resume auto-replying to this customer.',
+                z.object({}),
+                async () => {
+                    await prisma.client.update({ where: { id: clientId }, data: { agentPaused: false } });
+                    return { ok: true, paused: false };
+                },
+            ),
+        };
+        const allTools = { ...skillTools, ...panelTools };
+
+        // Recent persistent steering notes (so the operator can ask
+        // "what are my notes?" and the agent can answer without a
+        // dedicated list tool).
+        const activeNotes = await prisma.operatorDirective.findMany({
+            where: { clientId, agentId, persistent: true, consumedAt: null },
+            orderBy: { createdAt: 'asc' },
+            take: 20,
+        });
+        const notesBlock = activeNotes.length > 0
+            ? `\n\nActive steering notes for this contact (persistent — applied on every customer turn):\n${activeNotes.map((n, i) => `${i + 1}. ${n.text}`).join('\n')}`
+            : '';
+
+        // Recent customer transcript so the agent knows what's going on.
+        let customerTranscript = '';
+        if (instance) {
+            const recent = await prisma.message.findMany({
+                where: { instanceId: instance.id, remoteJid: customerJid },
+                orderBy: { timestamp: 'desc' },
+                take: 12,
+            });
+            recent.reverse();
+            if (recent.length) {
+                customerTranscript = '\n\nRecent customer transcript (most recent last):\n' +
+                    recent.map(m => `${m.isFromMe ? 'YOU→customer' : 'CUSTOMER→you'}: ${(m.content || '[media]').slice(0, 280)}`).join('\n');
+            }
+        }
+
+        // Chat history with the operator (prior turns in this panel)
+        const prior = await prisma.agentChatMessage.findMany({
+            where: { clientId, agentId },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+        });
+        prior.reverse();
+        // The current operator turn was already written, so it'll be
+        // the last row. Map roles correctly for the SDK.
+        const chatMessages = prior.map(m => ({
+            role: (m.role === 'agent' ? 'assistant' : 'user') as 'assistant' | 'user',
+            content: m.text,
+        }));
+
+        const contactName = client.name || null;
+        const contactContext = `\n\nContact: phone ${client.phone}${contactName ? `, name ${contactName}` : ''}${client.status ? `, CRM status ${client.status}` : ''}${client.tags?.length ? `, tags: ${client.tags.join(', ')}` : ''}${client.agentPaused ? ' — AGENT CURRENTLY PAUSED for this contact' : ''}.`;
+
+        const systemPrompt = `You are ${agent.name}, the AI agent that normally handles this WhatsApp contact. RIGHT NOW you are NOT talking to the customer — you are in a private back-channel with your human inbox operator, who is supervising you.
+
+The operator gives you instructions in plain language. Decide what to do:
+
+• If they want you to MESSAGE THE CUSTOMER ("send him X", "say Y", "qarşılayan mesaj göndər", "ona xəbər ver"), call the sendToCustomerNow tool. Do NOT just write the message as your reply — your reply only lands in the operator's panel, not on the customer's phone.
+
+• If they want you to CHANGE YOUR BEHAVIOUR going forward ("be friendlier", "always ask about budget", "stop being so formal"), call addSteeringNote with a clear instruction your future self can apply on every customer turn.
+
+• If they want you to DO SOMETHING IN A BACKEND SYSTEM (push to Bitrix, update CRM, tag the contact, log to a table), call the matching skill tool. Don't ask permission — just do it.
+
+• If they want you to STOP auto-replying ("pause", "I'll take over"), call pauseCustomerAgent. Resume with resumeCustomerAgent.
+
+• Then write a SHORT reply to the OPERATOR in their language — confirm what you did (e.g. "Göndərdim ✓", "Bitrixə əlavə etdim ✓", "Yadda saxladım, indi səmimi danışacam") or, if no action was needed, just answer their question.
+
+Your text reply is for the operator. The customer never sees it. Keep it short and concrete — say what you did, not why.${contactContext}${notesBlock}${customerTranscript}${skillPrompt}`;
+
+        const result = await generateText({
+            model: aiModel,
+            system: systemPrompt,
+            messages: chatMessages,
+            tools: allTools,
+            stopWhen: stepCountIs(8),
+        } as any);
+
+        const reply = (result.text || '').trim();
+        const richToolCalls = extractRichToolCalls(result.steps as any[]);
+
+        await prisma.agentChatMessage.create({
+            data: {
+                workspaceId, clientId, agentId, role: 'agent',
+                text: reply || (richToolCalls.length ? '(tool-only turn)' : ''),
+                toolCalls: richToolCalls as any,
+            },
+        });
+
+        return { reply, toolCalls: richToolCalls };
+    }
 }

@@ -60,6 +60,7 @@ model Workspace {
   oversightAgents OversightAgent[]
   dashboardWidgets DashboardWidget[]
   operatorDirectives OperatorDirective[]
+  agentChatMessages  AgentChatMessage[]
 
   @@index([ownerId])
 }
@@ -473,6 +474,7 @@ model Agent {
   oversightWatches  OversightAgentWatch[]
   oversightSuggestions OversightSuggestion[]
   operatorDirectives OperatorDirective[]
+  agentChatMessages  AgentChatMessage[]
 }
 
 // Oversight ("meta") agent — periodically reviews one or more
@@ -791,6 +793,7 @@ model Client {
   // to Bitrix", etc.). Persistent ones get re-injected into the agent
   // context on every turn; one-shots are consumed on the next reply.
   operatorDirectives  OperatorDirective[]
+  agentChatMessages   AgentChatMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -830,6 +833,35 @@ model OperatorDirective {
   createdAt   DateTime @default(now())
 
   @@index([clientId, agentId, consumedAt])
+}
+
+// Operator ⇄ AI-agent chat backing the "Talk to agent" panel. The
+// operator types instructions in plain language ("send him hi",
+// "be friendlier going forward", "push to Bitrix") and the agent
+// decides itself whether to (a) message the customer via the
+// sendToCustomer tool, (b) persist a steering note via
+// addSteeringNote, or (c) call any of its normal skills (CRM,
+// HTTP, etc.). The agent's text reply lands here, NOT in the
+// customer chat — this gives the operator a private back-channel.
+model AgentChatMessage {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  role        String   // 'operator' | 'agent'
+  text        String   @db.Text
+  // Structured tool-call summary for display in the panel:
+  // [{ name: 'sendToCustomer', args: {...}, ok: true }, ...]. Null
+  // for plain operator messages.
+  toolCalls   Json?
+
+  createdAt   DateTime @default(now())
+
+  @@index([clientId, agentId, createdAt])
 }
 
 // Admin-defined custom field on the Client (contact) entity.

@@ -35,6 +35,11 @@ export const sessions = new Map<string, WASocket>();
 function reviveBuffers(input: any): any {
     if (input === null || input === undefined) return input;
     if (Buffer.isBuffer(input)) return input;
+    // Uint8Array (and any other TypedArray) must be promoted to Buffer
+    // BEFORE the generic-object branch — otherwise the recursive copy
+    // walks the numeric indices and produces a plain {0:..,1:..} object
+    // that fails the createCipheriv iv/key type checks downstream.
+    if (input instanceof Uint8Array) return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
     if (typeof input !== 'object') return input;
     if (input.type === 'Buffer' && Array.isArray(input.data)) return Buffer.from(input.data);
     if (Array.isArray(input)) return input.map(reviveBuffers);

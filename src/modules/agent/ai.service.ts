@@ -2112,9 +2112,14 @@ export class AiService {
                 }
             });
 
-            // Real-time emit
+            // Real-time emit. remoteJid is mandatory — the inbox
+            // socket listener filters by it to decide whether the
+            // payload belongs to the conversation the operator has
+            // open. Without it, the AI reply landed in the DB but the
+            // open chat didn't repaint until the next manual refresh.
             io.emit(`message.new-${instanceId}`, {
                 id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
+                remoteJid,
                 status: 'DELIVERED', timestamp: new Date().toISOString()
             });
 
@@ -2456,6 +2461,7 @@ export class AiService {
             }
             io.emit(`message.new-${instanceId}`, {
                 id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
+                remoteJid,
                 status: 'DELIVERED', timestamp: new Date().toISOString(),
             });
             logger.info(`[${instanceId}] [reminder] sent to ${remoteJid} (idle ${idleHours}h)`);

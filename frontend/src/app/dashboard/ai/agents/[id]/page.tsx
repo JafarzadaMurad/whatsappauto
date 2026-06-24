@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -2299,16 +2299,10 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     onClick={handleSave}
                     disabled={saving}
                     title="Save Changes (Ctrl+S)"
-                    className="fixed bottom-6 right-6 z-40 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-5 py-3 flex items-center gap-2 shadow-lg shadow-primary/30 transition-all disabled:opacity-70"
+                    aria-label="Save Changes"
+                    className="fixed bottom-6 right-6 z-40 w-12 h-12 bg-primary hover:bg-primary/90 text-primary-foreground rounded-full flex items-center justify-center shadow-lg shadow-primary/30 transition-all disabled:opacity-70"
                 >
-                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
-                    {!saving && (
-                        <span className="hidden sm:inline-flex items-center gap-1 ml-2 pl-2 border-l border-primary-foreground/30 text-[11px] opacity-80">
-                            <kbd className="px-1.5 py-0.5 rounded bg-primary-foreground/15">Ctrl</kbd>
-                            <span>+</span>
-                            <kbd className="px-1.5 py-0.5 rounded bg-primary-foreground/15">S</kbd>
-                        </span>
-                    )}
+                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                 </button>
             )}
         </div>

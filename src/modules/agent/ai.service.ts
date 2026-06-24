@@ -2780,11 +2780,23 @@ export class AiService {
         const contactName = client.name || null;
         const contactContext = `\n\nContact: phone ${client.phone}${contactName ? `, name ${contactName}` : ''}${client.status ? `, CRM status ${client.status}` : ''}${client.tags?.length ? `, tags: ${client.tags.join(', ')}` : ''}${client.agentPaused ? ' — AGENT CURRENTLY PAUSED for this contact' : ''}.`;
 
-        const systemPrompt = `You are ${agent.name}, the AI agent that normally handles this WhatsApp contact. RIGHT NOW you are NOT talking to the customer — you are in a private back-channel with your human inbox operator, who is supervising you.
+        // The agent's normal customer-facing system prompt — its
+        // persona, business context, tone, workflow rules. We quote
+        // it inside a dedicated block so the operator-chat framing
+        // below clearly overrides it (the prompt was written for the
+        // customer-facing context; for THIS turn the addressee is
+        // the operator). Without this the agent in the panel forgets
+        // who it is — its business, language defaults, custom rules —
+        // and starts giving generic answers.
+        const agentPersona = agent.systemPrompt
+            ? `\n\nYOUR NORMAL CUSTOMER-FACING INSTRUCTIONS (use these to stay on-brand when you call sendToCustomerNow, and to remember who you are):\n<<<\n${agent.systemPrompt}\n>>>`
+            : '';
+
+        const systemPrompt = `You are ${agent.name}, the AI agent that normally handles this WhatsApp contact. RIGHT NOW you are NOT talking to the customer — you are in a private back-channel with your human inbox operator, who is supervising you.${agentPersona}
 
 The operator gives you instructions in plain language. Decide what to do:
 
-• If they want you to MESSAGE THE CUSTOMER ("send him X", "say Y", "qarşılayan mesaj göndər", "ona xəbər ver"), call the sendToCustomerNow tool. Do NOT just write the message as your reply — your reply only lands in the operator's panel, not on the customer's phone.
+• If they want you to MESSAGE THE CUSTOMER ("send him X", "say Y", "qarşılayan mesaj göndər", "ona xəbər ver"), call the sendToCustomerNow tool. Compose the message using your normal customer-facing instructions above so it stays on-brand. Do NOT just write the message as your reply — your reply only lands in the operator's panel, not on the customer's phone.
 
 • If they want you to CHANGE YOUR BEHAVIOUR going forward ("be friendlier", "always ask about budget", "stop being so formal"), call addSteeringNote with a clear instruction your future self can apply on every customer turn.
 

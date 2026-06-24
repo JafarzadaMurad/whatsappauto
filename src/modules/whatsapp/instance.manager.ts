@@ -5,7 +5,9 @@ import makeWASocket, {
     WASocket,
     isJidGroup,
     getAggregateVotesInPollMessage,
+    decryptPollVote,
 } from '@whiskeysockets/baileys';
+import { createHash } from 'crypto';
 import { Boom } from '@hapi/boom';
 import { logger } from '../../utils/logger';
 import { prisma } from '../../lib/prisma';
@@ -306,11 +308,13 @@ export class InstanceManager {
                         } catch { /* not critical */ }
                     }
 
-                    // Poll-vote fallback path: some WhatsApp client versions
-                    // deliver the vote as a NEW message of type
-                    // pollUpdateMessage instead of via messages.update. Look
-                    // for that shape and run the same decode logic. Diagnostic
-                    // logs gated on POLL_DEBUG to make pinpointing easy.
+                    // Poll-vote fallback path. WhatsApp delivers votes as a
+                    // pollUpdateMessage on messages.upsert with encPayload
+                    // (encrypted vote) — getAggregateVotesInPollMessage
+                    // expects already-decrypted votes, so we manually
+                    // decrypt with decryptPollVote first, then compare
+                    // each selected option's SHA-256 against the original
+                    // poll's options to figure out which name was picked.
                     const pollUpdate = (msg.message as any)?.pollUpdateMessage;
                     if (pollUpdate && !msg.key?.fromMe) {
                         if (process.env.POLL_DEBUG === 'true') {
@@ -328,14 +332,42 @@ export class InstanceManager {
                                 continue;
                             }
                             const revived = reviveBuffers(original.pollPayload);
-                            const revivedUpdates = reviveBuffers([{ pollUpdateMessageKey: msg.key, vote: pollUpdate.vote, senderTimestampMs: pollUpdate.senderTimestampMs }]);
-                            const votes = getAggregateVotesInPollMessage({ message: revived, pollUpdates: revivedUpdates } as any);
-                            const picked: string[] = (votes || [])
-                                .filter((v: any) => Array.isArray(v.voters) && v.voters.length > 0)
-                                .map((v: any) => String(v.name || '').trim())
-                                .filter(Boolean);
+                            // encKey lives on pollCreationMessage in newer
+                            // Baileys; the older field is messageContextInfo.messageSecret.
+                            const pollEncKey: Buffer | undefined =
+                                revived?.pollCreationMessage?.encKey
+                                || revived?.messageContextInfo?.messageSecret
+                                || revived?.pollCreationMessageV3?.encKey;
+                            const options: Array<{ optionName: string }> =
+                                revived?.pollCreationMessage?.options
+                                || revived?.pollCreationMessageV3?.options
+                                || [];
+                            if (!pollEncKey || options.length === 0) {
+                                logger.warn({ pollMsgId, hasEncKey: !!pollEncKey, optionsCount: options.length }, '[poll] upsert: missing encKey or options');
+                                continue;
+                            }
+                            // pollCreatorJid = our own number. sock.user.id has it
+                            // either as the raw phone (no @) or with @s.whatsapp.net.
+                            const ownId = String((sock as any)?.user?.id || '').split(':')[0];
+                            const pollCreatorJid = ownId.includes('@') ? ownId : `${ownId}@s.whatsapp.net`;
+                            const voterJid = (msg.key?.remoteJidAlt || msg.key?.remoteJid || '').replace('@lid', '@s.whatsapp.net');
+                            const voteRaw = reviveBuffers(pollUpdate.vote);
+                            const decoded = decryptPollVote(
+                                { encPayload: voteRaw.encPayload, encIv: voteRaw.encIv },
+                                { pollCreatorJid, pollMsgId, pollEncKey, voterJid } as any,
+                            );
+                            const selected: Buffer[] = (decoded?.selectedOptions || []).map((b: any) => Buffer.from(b));
+                            const optionHashes = options.map(o => ({
+                                name: String(o.optionName || ''),
+                                hash: createHash('sha256').update(String(o.optionName || '')).digest(),
+                            }));
+                            const picked: string[] = [];
+                            for (const sel of selected) {
+                                const m2 = optionHashes.find(o => Buffer.compare(sel, o.hash) === 0);
+                                if (m2) picked.push(m2.name);
+                            }
                             if (picked.length === 0) {
-                                logger.info({ pollMsgId }, '[poll] upsert vote could not be decoded');
+                                logger.info({ pollMsgId, decodedCount: selected.length }, '[poll] upsert vote decrypted but no option hash matched');
                                 continue;
                             }
                             const { effectiveJid: rJid } = await resolveJid(instanceId, original.remoteJid, { key: { remoteJid: original.remoteJid, fromMe: false } } as any);

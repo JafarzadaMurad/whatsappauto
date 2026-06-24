@@ -59,6 +59,7 @@ model Workspace {
   mcpAuditLogs   McpAuditLog[]
   oversightAgents OversightAgent[]
   dashboardWidgets DashboardWidget[]
+  operatorDirectives OperatorDirective[]
 
   @@index([ownerId])
 }
@@ -471,6 +472,7 @@ model Agent {
   operatorRequests  OperatorRequest[]
   oversightWatches  OversightAgentWatch[]
   oversightSuggestions OversightSuggestion[]
+  operatorDirectives OperatorDirective[]
 }
 
 // Oversight ("meta") agent — periodically reviews one or more
@@ -785,10 +787,49 @@ model Client {
   // re-ping the same idle conversation on every sweep.
   lastReminderAt      DateTime?
 
+  // Inbox operator → AI agent directives ("be friendlier", "push this
+  // to Bitrix", etc.). Persistent ones get re-injected into the agent
+  // context on every turn; one-shots are consumed on the next reply.
+  operatorDirectives  OperatorDirective[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, phone])
+}
+
+// Operator → AI-agent steering message sent from the inbox while the
+// agent is handling a contact. `persistent: true` rows stay in effect
+// until the operator clears them and get injected as system context on
+// every subsequent agent turn for this contact; `persistent: false`
+// rows fire once and are consumed by the very next reply.
+model OperatorDirective {
+  id          String  @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  agentId     String
+  agent       Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  text        String  @db.Text
+  persistent  Boolean @default(true)
+  // 'chat' = free-text from operator panel; 'quick_action' = canned
+  // chip (used for the audit log and to colour them differently).
+  source      String  @default("chat")
+
+  // Set when the operator hits "Run now" — picked up by the directive
+  // ingest path so we know to fire the agent without waiting for the
+  // customer's next message. Cleared on consumption.
+  triggerNow  Boolean @default(false)
+
+  // Once a one-shot directive has been injected into a turn, mark it
+  // consumed instead of deleting (keeps the audit trail).
+  consumedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+
+  @@index([clientId, agentId, consumedAt])
 }
 
 // Admin-defined custom field on the Client (contact) entity.

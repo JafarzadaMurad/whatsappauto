@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Trash2, Zap } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
 import { usePermChatWrite } from "@/store/workspaceStore";
@@ -111,6 +111,10 @@ export default function InboxPage() {
 
     const [agentPaused, setAgentPaused] = useState<boolean | null>(null);
     const [pauseBusy, setPauseBusy] = useState(false);
+
+    // "Talk to agent" side panel — operator-typed directives that
+    // steer how the agent handles the open conversation.
+    const [agentPanelOpen, setAgentPanelOpen] = useState(false);
 
     // Pagination state for the open chat
     const [hasMore, setHasMore] = useState(false);
@@ -537,6 +541,14 @@ export default function InboxPage() {
                                         <span className="hidden sm:inline">{agentPaused ? 'Resume agent' : 'Pause agent'}</span>
                                     </button>
                                 )}
+                                <button onClick={() => setAgentPanelOpen(v => !v)}
+                                    title="Talk to the AI agent handling this chat"
+                                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 ${agentPanelOpen
+                                        ? 'bg-violet-500/15 text-violet-200 border-violet-500/40'
+                                        : 'bg-secondary/40 text-muted-foreground border-border hover:bg-secondary/70 hover:text-foreground'}`}>
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Talk to agent</span>
+                                </button>
                             </div>
 
                             {/* Messages */}
@@ -584,6 +596,17 @@ export default function InboxPage() {
                         </>
                     )}
                 </section>
+
+                {/* Talk-to-agent side drawer. Only mounted while open — its
+                    own effect fetches the directive list + agent context when
+                    the conversation changes. */}
+                {selected && agentPanelOpen && (
+                    <AgentTalkPanel
+                        accountId={selected.accountId}
+                        phone={selected.phone}
+                        onClose={() => setAgentPanelOpen(false)}
+                    />
+                )}
             </div>
         </div>
     );
@@ -1027,3 +1050,170 @@ function Composer(props: {
 }
 
 void Square; void Mic;
+
+// ─── Talk-to-agent panel ──────────────────────────────────────
+//
+// Slides out from the right of the chat panel when the operator hits
+// "Talk to agent". Lets them queue directives ("be friendlier", "push
+// to Bitrix", ...) that get injected into the agent's system prompt
+// on its next turn. Persistent directives steer every future reply
+// for this contact; one-shots fire once. "Run now" makes the agent
+// act immediately without waiting for the customer to message back.
+
+type Directive = {
+    id: string;
+    text: string;
+    persistent: boolean;
+    source: 'chat' | 'quick_action';
+    triggerNow: boolean;
+    createdAt: string;
+};
+
+const QUICK_ACTIONS: Array<{ label: string; text: string; persistent: boolean }> = [
+    { label: 'Be friendlier', text: 'Switch to a warmer, more casual tone with this contact going forward — drop the formal register.', persistent: true },
+    { label: 'Be more concise', text: 'Keep replies to this contact short — 1-2 short sentences max, no padding.', persistent: true },
+    { label: 'Summarise the chat for me', text: 'Reply ONLY to me (operator) with a one-paragraph summary of what this contact wants and where the conversation stands. Do not send anything to the customer.', persistent: false },
+    { label: 'Push to CRM', text: 'Upsert this contact into the CRM with everything you know about them right now. No customer-facing reply needed unless something is missing.', persistent: false },
+];
+
+function AgentTalkPanel({ accountId, phone, onClose }: { accountId: string; phone: string; onClose: () => void }) {
+    const [loading, setLoading] = useState(true);
+    const [agentId, setAgentId] = useState<string | null>(null);
+    const [agentName, setAgentName] = useState<string | null>(null);
+    const [clientId, setClientId] = useState<string | null>(null);
+    const [directives, setDirectives] = useState<Directive[]>([]);
+    const [draft, setDraft] = useState('');
+    const [persistent, setPersistent] = useState(true);
+    const [posting, setPosting] = useState(false);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const r = await api.get(`/directives/by-contact?accountId=${accountId}&phone=${phone}`);
+            if (r.data?.success) {
+                setAgentId(r.data.agentId);
+                setAgentName(r.data.agentName);
+                setClientId(r.data.clientId);
+                setDirectives(r.data.directives || []);
+            }
+        } catch (e) { console.error(e); }
+        finally { setLoading(false); }
+    }, [accountId, phone]);
+
+    useEffect(() => { load(); }, [load]);
+
+    const send = async (text: string, opts: { persistent: boolean; triggerNow: boolean; source: 'chat' | 'quick_action' }) => {
+        if (!text.trim() || !clientId || !agentId) return;
+        setPosting(true);
+        try {
+            await api.post('/directives', {
+                clientId, agentId, text: text.trim(),
+                persistent: opts.persistent, source: opts.source, triggerNow: opts.triggerNow,
+            });
+            setDraft('');
+            await load();
+        } catch (e) { console.error(e); }
+        finally { setPosting(false); }
+    };
+
+    const remove = async (id: string) => {
+        try {
+            await api.delete(`/directives/${id}`);
+            setDirectives(prev => prev.filter(d => d.id !== id));
+        } catch (e) { console.error(e); }
+    };
+
+    return (
+        <aside className="hidden md:flex w-80 border-l border-border bg-card flex-col min-h-0">
+            <div className="px-4 py-3 border-b border-border flex-shrink-0 flex items-center justify-between">
+                <div className="min-w-0">
+                    <div className="text-sm font-semibold flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-violet-400" />
+                        Talk to agent
+                    </div>
+                    {agentName ? (
+                        <p className="text-[11px] text-muted-foreground truncate">Handling: <span className="text-violet-300">{agentName}</span></p>
+                    ) : !loading && (
+                        <p className="text-[11px] text-amber-400">No AI configured on this channel</p>
+                    )}
+                </div>
+                <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground rounded-md">
+                    <XIcon className="w-4 h-4" />
+                </button>
+            </div>
+
+            {loading ? (
+                <div className="flex-1 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+            ) : !agentId || !clientId ? (
+                <div className="flex-1 p-4 text-xs text-muted-foreground">
+                    {!agentId ? 'Bind an agent or router to this instance from the AI page to start steering replies here.' : 'No CRM record for this contact yet — send them one message so the system creates it, then come back.'}
+                </div>
+            ) : (
+                <>
+                    <div className="px-4 py-3 border-b border-border flex-shrink-0">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Quick actions</p>
+                        <div className="flex flex-wrap gap-1.5">
+                            {QUICK_ACTIONS.map(qa => (
+                                <button key={qa.label} disabled={posting}
+                                    onClick={() => send(qa.text, { persistent: qa.persistent, triggerNow: !qa.persistent, source: 'quick_action' })}
+                                    className="text-[11px] px-2 py-1 rounded-md bg-secondary/60 hover:bg-secondary text-foreground border border-border disabled:opacity-50">
+                                    {qa.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-4 py-3">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Active directives</p>
+                        {directives.length === 0 ? (
+                            <p className="text-xs text-muted-foreground italic">No directives yet — anything you type below feeds straight into the agent's next reply.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {directives.map(d => (
+                                    <div key={d.id} className={`rounded-lg border p-2 text-xs flex items-start gap-2 ${d.persistent ? 'bg-violet-500/5 border-violet-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-foreground whitespace-pre-wrap break-words">{d.text}</p>
+                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                {d.persistent ? 'Persistent' : 'One-shot'}
+                                                {d.source === 'quick_action' && ' · Quick action'}
+                                            </p>
+                                        </div>
+                                        <button onClick={() => remove(d.id)} title="Remove directive"
+                                            className="text-muted-foreground hover:text-red-400 p-0.5 flex-shrink-0">
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="px-4 py-3 border-t border-border flex-shrink-0">
+                        <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                            placeholder="Tell the agent how to handle this contact…"
+                            rows={3} maxLength={2000} disabled={posting}
+                            className="w-full bg-secondary/40 border border-border rounded-lg px-2.5 py-2 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/40" />
+                        <label className="flex items-center gap-2 text-[11px] text-muted-foreground mt-2 select-none">
+                            <input type="checkbox" checked={persistent} onChange={e => setPersistent(e.target.checked)}
+                                className="rounded" />
+                            Persist — apply to every future reply (not just the next one)
+                        </label>
+                        <div className="flex gap-1.5 mt-2">
+                            <button onClick={() => send(draft, { persistent, triggerNow: false, source: 'chat' })}
+                                disabled={posting || !draft.trim()}
+                                className="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border border-violet-500/30 disabled:opacity-50">
+                                {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : 'Apply silently'}
+                            </button>
+                            <button onClick={() => send(draft, { persistent, triggerNow: true, source: 'chat' })}
+                                disabled={posting || !draft.trim()}
+                                title="Make the agent act on this immediately, without waiting for the customer to message back"
+                                className="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 flex items-center justify-center gap-1">
+                                {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Zap className="w-3.5 h-3.5" /> Run now</>}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
+        </aside>
+    );
+}

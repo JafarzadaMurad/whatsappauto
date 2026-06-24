@@ -1681,7 +1681,8 @@ export class AiService {
         instanceId: string,
         remoteJid: string,
         sock: WASocket,
-        io: Server
+        io: Server,
+        opts?: { operatorTriggered?: boolean }
     ) {
         try {
             const instance = await prisma.instance.findUnique({
@@ -1858,7 +1859,11 @@ export class AiService {
                 };
             });
 
-            if (messages.length === 0) return;
+            // Operator-triggered run: we want to fire the agent even
+            // when the last bubble is from us — the empty-message guard
+            // would otherwise short-circuit a fresh "do X now" command
+            // for contacts whose only history is our own outbound msg.
+            if (messages.length === 0 && !opts?.operatorTriggered) return;
 
             // Get contact info
             const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
@@ -1911,7 +1916,38 @@ export class AiService {
                 }
             }
 
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt + routerPrompt;
+            // Operator directives: unconsumed steering messages the
+            // inbox operator queued for this contact. They override
+            // stylistic defaults in the base system prompt and are
+            // injected with a strong frame so the model treats them as
+            // priority instructions, not free-form advice.
+            const activeDirectives = client?.id ? await prisma.operatorDirective.findMany({
+                where: { clientId: client.id, agentId: agent.id, consumedAt: null },
+                orderBy: { createdAt: 'asc' },
+                take: 20,
+            }).catch(() => []) : [];
+            const directivesBlock = activeDirectives.length > 0
+                ? `\n\n📌 OPERATOR DIRECTIVES (live instructions from the human operator handling this conversation — these OVERRIDE any conflicting style or behavior in your base instructions):\n${activeDirectives.map(d => `- ${d.text}`).join('\n')}`
+                : '';
+
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt + routerPrompt + directivesBlock;
+
+            // When the operator hit "Run now", inject a synthetic user
+            // turn so the model has something to react to even if the
+            // last real message was our own outbound one. The framing
+            // tells the model that a fully-silent run (e.g. just a CRM
+            // write) is fine — it should reply only if a customer-facing
+            // message actually makes sense right now.
+            if (opts?.operatorTriggered) {
+                const triggerNowDirectives = activeDirectives.filter(d => d.triggerNow);
+                const triggerText = triggerNowDirectives.length > 0
+                    ? triggerNowDirectives.map(d => `- ${d.text}`).join('\n')
+                    : '- Apply the operator directives above.';
+                messages.push({
+                    role: 'user',
+                    content: `[OPERATOR TRIGGER — not from the customer]\nThe inbox operator just asked you to act now:\n${triggerText}\n\nIf this requires sending the customer a message, send it. If it's purely backend work (CRM update, tool call, etc.), do the tools and reply with an empty string so we don't ping the customer needlessly.`,
+                });
+            }
 
             // Set AGENT_DEBUG=true to dump the exact provider request
             // (system prompt, message turns, tool names) and the
@@ -2020,6 +2056,32 @@ export class AiService {
                     durationMs,
                 }
             }).catch(err => logger.warn({ err: err.message }, `[${instanceId}] AgentActivityLog write failed`));
+
+            // Directive bookkeeping after the turn applied them:
+            //   persistent=false  → consume (one-shot is spent regardless
+            //                       of whether triggerNow was set)
+            //   persistent=true   → keep, but always clear triggerNow so
+            //                       a "run now" persistent directive only
+            //                       force-fires once, then quietly steers
+            //                       future customer-driven turns.
+            if (activeDirectives.length > 0) {
+                const consumeIds = activeDirectives.filter(d => !d.persistent).map(d => d.id);
+                if (consumeIds.length > 0) {
+                    await prisma.operatorDirective.updateMany({
+                        where: { id: { in: consumeIds } },
+                        data: { consumedAt: new Date(), triggerNow: false },
+                    }).catch(() => {});
+                }
+                const clearTriggerOnly = activeDirectives
+                    .filter(d => d.persistent && d.triggerNow)
+                    .map(d => d.id);
+                if (clearTriggerOnly.length > 0) {
+                    await prisma.operatorDirective.updateMany({
+                        where: { id: { in: clearTriggerOnly } },
+                        data: { triggerNow: false },
+                    }).catch(() => {});
+                }
+            }
 
             if (!text) {
                 logger.warn(`[${instanceId}] AI produced no reply text — nothing to send to ${remoteJid}`);

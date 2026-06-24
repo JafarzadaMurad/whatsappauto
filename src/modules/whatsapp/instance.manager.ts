@@ -24,6 +24,23 @@ import { maybeRefreshProfilePicAsync } from './profile-pic';
 
 export const sessions = new Map<string, WASocket>();
 
+// JSON.stringify turns a Buffer into { type: 'Buffer', data: [..] }, and
+// JSON.parse restores it as that same plain object — not a Buffer. The
+// Baileys poll-vote helpers (getAggregateVotesInPollMessage,
+// decryptPollVote, …) rely on real Node Buffers for the poll's encKey
+// and the messageSecret, so any saved pollPayload has to be walked and
+// the placeholder shapes promoted back into Buffers before use.
+function reviveBuffers(input: any): any {
+    if (input === null || input === undefined) return input;
+    if (Buffer.isBuffer(input)) return input;
+    if (typeof input !== 'object') return input;
+    if (input.type === 'Buffer' && Array.isArray(input.data)) return Buffer.from(input.data);
+    if (Array.isArray(input)) return input.map(reviveBuffers);
+    const out: Record<string, any> = {};
+    for (const k of Object.keys(input)) out[k] = reviveBuffers(input[k]);
+    return out;
+}
+
 export class InstanceManager {
     static async startInstance(instanceId: string) {
         try {
@@ -72,7 +89,8 @@ export class InstanceManager {
                             where: { instanceId, waMsgId },
                             select: { pollPayload: true },
                         });
-                        return (row?.pollPayload as any) || undefined;
+                        if (!row?.pollPayload) return undefined;
+                        return reviveBuffers(row.pollPayload as any);
                     } catch { return undefined; }
                 },
             });
@@ -288,6 +306,56 @@ export class InstanceManager {
                         } catch { /* not critical */ }
                     }
 
+                    // Poll-vote fallback path: some WhatsApp client versions
+                    // deliver the vote as a NEW message of type
+                    // pollUpdateMessage instead of via messages.update. Look
+                    // for that shape and run the same decode logic. Diagnostic
+                    // logs gated on POLL_DEBUG to make pinpointing easy.
+                    const pollUpdate = (msg.message as any)?.pollUpdateMessage;
+                    if (pollUpdate && !msg.key?.fromMe) {
+                        if (process.env.POLL_DEBUG === 'true') {
+                            try { logger.info(`[poll-debug] upsert vote ${JSON.stringify(msg)}`); } catch { /* ignore */ }
+                        }
+                        try {
+                            const pollMsgId = pollUpdate?.pollCreationMessageKey?.id;
+                            if (!pollMsgId) { logger.warn('[poll] vote upsert missing pollCreationMessageKey'); continue; }
+                            const original = await prisma.message.findFirst({
+                                where: { instanceId, waMsgId: pollMsgId, messageType: 'poll' },
+                                select: { remoteJid: true, pollPayload: true },
+                            });
+                            if (!original?.pollPayload) {
+                                logger.warn({ pollMsgId }, '[poll] upsert vote: original poll not stored');
+                                continue;
+                            }
+                            const revived = reviveBuffers(original.pollPayload);
+                            const revivedUpdates = reviveBuffers([{ pollUpdateMessageKey: msg.key, vote: pollUpdate.vote, senderTimestampMs: pollUpdate.senderTimestampMs }]);
+                            const votes = getAggregateVotesInPollMessage({ message: revived, pollUpdates: revivedUpdates } as any);
+                            const picked: string[] = (votes || [])
+                                .filter((v: any) => Array.isArray(v.voters) && v.voters.length > 0)
+                                .map((v: any) => String(v.name || '').trim())
+                                .filter(Boolean);
+                            if (picked.length === 0) {
+                                logger.info({ pollMsgId }, '[poll] upsert vote could not be decoded');
+                                continue;
+                            }
+                            const { effectiveJid: rJid } = await resolveJid(instanceId, original.remoteJid, { key: { remoteJid: original.remoteJid, fromMe: false } } as any);
+                            await prisma.message.create({
+                                data: {
+                                    instanceId, remoteJid: rJid,
+                                    isFromMe: false, messageType: 'poll_vote',
+                                    content: picked.join(', '),
+                                    timestamp: new Date(),
+                                    waMsgId: msg.key?.id || null,
+                                },
+                            }).catch(() => {});
+                            logger.info({ instanceId, remoteJid: rJid, picked }, '[poll] upsert vote decoded');
+                            AiService.handleIncomingMessage(instanceId, rJid, sock, io).catch(() => {});
+                        } catch (e: any) {
+                            logger.warn({ err: e?.message }, '[poll] upsert vote ingest failed');
+                        }
+                        continue;
+                    }
+
                     // Translate any @lid jid to its canonical phone form
                     // (when senderPn is in the payload, or a previous
                     // mapping was cached). Everything below uses the
@@ -490,6 +558,15 @@ export class InstanceManager {
                     // name as a normal inbound Message so the agent
                     // reacts to "Vətəndaşlıq" instead of a generic
                     // "vote received" placeholder.
+                    // Diagnostic: dump every messages.update we see so
+                    // we can confirm vote events land here at all. Set
+                    // POLL_DEBUG=true in env to enable.
+                    if (process.env.POLL_DEBUG === 'true') {
+                        try {
+                            logger.info({ instanceId, u: JSON.parse(JSON.stringify(u)) }, '[poll-debug] update');
+                        } catch { /* ignore */ }
+                    }
+
                     const pollUpdates = u?.pollUpdates;
                     if (pollUpdates && Array.isArray(pollUpdates) && pollUpdates.length > 0) {
                         const jid = u.key?.remoteJid;
@@ -507,9 +584,11 @@ export class InstanceManager {
                                     logger.warn({ pollMsgId }, '[poll] vote arrived but original poll not stored');
                                     continue;
                                 }
+                                const revived = reviveBuffers(original.pollPayload);
+                                const revivedUpdates = reviveBuffers(pollUpdates);
                                 const votes = getAggregateVotesInPollMessage({
-                                    message: original.pollPayload as any,
-                                    pollUpdates,
+                                    message: revived,
+                                    pollUpdates: revivedUpdates,
                                 } as any);
                                 const picked: string[] = (votes || [])
                                     .filter((v: any) => Array.isArray(v.voters) && v.voters.length > 0)

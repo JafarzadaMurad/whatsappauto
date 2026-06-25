@@ -424,7 +424,26 @@ export class InboxController {
                     default:         return '📎 Media';
                 }
             };
+            // Aggregate poll votes per (parent poll waMsgId, option). Each
+            // vote row stores the picked option name(s) in `content` and
+            // links back to the poll via `inReplyToWaMsgId`. We tally
+            // them here and attach the result to each poll bubble so the
+            // chat renders WhatsApp-style option bars instead of two
+            // disconnected bubbles (the poll and the vote).
+            const voteTallyByPoll = new Map<string, Map<string, number>>();
+            for (const r of rawMessages) {
+                if (r.messageType !== 'poll_vote' || !r.inReplyToWaMsgId) continue;
+                let tally = voteTallyByPoll.get(r.inReplyToWaMsgId);
+                if (!tally) { tally = new Map(); voteTallyByPoll.set(r.inReplyToWaMsgId, tally); }
+                for (const name of String(r.content || '').split(',').map(s => s.trim()).filter(Boolean)) {
+                    tally.set(name, (tally.get(name) || 0) + 1);
+                }
+            }
+
             const projected = rawMessages
+                // Drop vote rows — they're folded into their parent
+                // poll's pollOptions tally above.
+                .filter(r => r.messageType !== 'poll_vote')
                 .filter(r => {
                     const key = r.isFromMe ? `a:${r.content}` : `u:${r.content}`;
                     return !logTexts.has(key);
@@ -432,6 +451,29 @@ export class InboxController {
                 .map(r => {
                     const text = prettifyContent(r.content)
                         || (r.mediaUrl ? placeholderFor(r.messageType, r.mediaName) : '');
+
+                    // For poll rows, surface a structured pollName +
+                    // pollOptions[] so the chat can render a card. The
+                    // pollPayload struct stores options under either
+                    // pollCreationMessage or pollCreationMessageV3
+                    // depending on Baileys version.
+                    let pollName: string | undefined;
+                    let pollOptions: Array<{ name: string; votes: number }> | undefined;
+                    let pollMulti: boolean | undefined;
+                    if (r.messageType === 'poll' && r.pollPayload) {
+                        const pp: any = r.pollPayload;
+                        const pmsg = pp?.pollCreationMessage || pp?.pollCreationMessageV3 || null;
+                        if (pmsg) {
+                            pollName = String(pmsg.name || '').trim();
+                            const tally = r.waMsgId ? voteTallyByPoll.get(r.waMsgId) : null;
+                            pollOptions = (pmsg.options || []).map((o: any) => ({
+                                name: String(o.optionName || ''),
+                                votes: tally?.get(String(o.optionName || '')) || 0,
+                            }));
+                            pollMulti = Number(pmsg.selectableOptionsCount || 1) !== 1;
+                        }
+                    }
+
                     return {
                     id: r.id,
                     userMessage: r.isFromMe ? '' : text,
@@ -452,6 +494,7 @@ export class InboxController {
                     mediaName: r.mediaName,
                     waMsgId: r.waMsgId,
                     deliveryStatus: r.status, // SENT | DELIVERED | READ
+                    ...(pollName ? { pollName, pollOptions, pollMulti } : {}),
                 };});
 
             const cleanedLogs = logs.map(l => ({

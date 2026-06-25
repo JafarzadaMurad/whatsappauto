@@ -448,9 +448,40 @@ export class InstanceManager {
                                     content: picked.join(', '),
                                     timestamp: new Date(),
                                     waMsgId: msg.key?.id || null,
+                                    // Link to the original poll so the
+                                    // inbox can render the vote as a
+                                    // tally underneath instead of as a
+                                    // standalone bubble.
+                                    inReplyToWaMsgId: pollMsgId,
                                 },
                             }).catch(() => {});
                             logger.info({ instanceId, remoteJid: rJid, picked }, '[poll] upsert vote decoded');
+
+                            // Recompute aggregated tallies and push them
+                            // to the open chat so the poll card animates
+                            // without a refresh.
+                            try {
+                                const allVotes = await prisma.message.findMany({
+                                    where: { instanceId, messageType: 'poll_vote', inReplyToWaMsgId: pollMsgId },
+                                    select: { content: true },
+                                });
+                                const tally = new Map<string, number>();
+                                for (const v of allVotes) {
+                                    for (const name of String(v.content || '').split(',').map(s => s.trim()).filter(Boolean)) {
+                                        tally.set(name, (tally.get(name) || 0) + 1);
+                                    }
+                                }
+                                const optionNames = options.map(o => String(o.optionName || ''));
+                                const pollOptions = optionNames.map(name => ({ name, votes: tally.get(name) || 0 }));
+                                io.emit(`poll.update-${instanceId}`, {
+                                    remoteJid: rJid,
+                                    pollWaMsgId: pollMsgId,
+                                    pollOptions,
+                                });
+                            } catch (err: any) {
+                                logger.warn({ err: err?.message }, '[poll] tally emit failed');
+                            }
+
                             AiService.handleIncomingMessage(instanceId, rJid, sock, io).catch(() => {});
                         } catch (e: any) {
                             logger.warn({ err: e?.message }, '[poll] upsert vote ingest failed');

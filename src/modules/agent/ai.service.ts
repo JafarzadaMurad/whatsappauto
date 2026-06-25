@@ -1565,7 +1565,7 @@ function buildPollsTool(instanceId: string, remoteJid: string) {
                     // the customer's vote via
                     // getAggregateVotesInPollMessage.
                     const content = `📊 ${params.name}\n` + params.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
-                    await prisma.message.create({
+                    const saved = await prisma.message.create({
                         data: {
                             instanceId, remoteJid,
                             isFromMe: true, messageType: 'poll',
@@ -1573,7 +1573,27 @@ function buildPollsTool(instanceId: string, remoteJid: string) {
                             waMsgId: sent?.key?.id || null,
                             pollPayload: (sent?.message ? JSON.parse(JSON.stringify(sent.message)) : null) as any,
                         },
-                    }).catch(() => {});
+                    });
+                    // Realtime push to the open inbox chat. The poll
+                    // card needs the structured options + the multi
+                    // flag to render correctly — content alone is
+                    // just the fallback plain-text.
+                    try {
+                        const { io: ioSrv } = await import('../../server');
+                        ioSrv.emit(`message.new-${instanceId}`, {
+                            id: sent?.key?.id || saved.id,
+                            isFromMe: true,
+                            content,
+                            remoteJid,
+                            messageType: 'poll',
+                            pollName: params.name,
+                            pollOptions: params.options.map(o => ({ name: o, votes: 0 })),
+                            pollMulti: !!params.multi,
+                            status: 'SENT',
+                            timestamp: new Date().toISOString(),
+                            waMsgId: sent?.key?.id || null,
+                        });
+                    } catch { /* ignore — best-effort UI nudge */ }
                     logger.info({ instanceId, remoteJid, options: params.options.length }, '[poll] sent');
                     return { ok: true, name: params.name, options: params.options };
                 } catch (e: any) {

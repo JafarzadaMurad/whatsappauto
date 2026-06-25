@@ -315,6 +315,12 @@ model Message {
   // fires. Null for every other message type.
   pollPayload Json?
 
+  // Links a reply / reaction / poll-vote message back to the row it
+  // refers to. Set to the parent's waMsgId. The inbox UI uses this
+  // to render replies (and aggregate poll votes) under the original
+  // message instead of as separate bubbles.
+  inReplyToWaMsgId String?
+
   timestamp DateTime
   createdAt DateTime @default(now())
 

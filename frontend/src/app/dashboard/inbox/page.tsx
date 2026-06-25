@@ -92,6 +92,11 @@ type Message = {
     mediaName?: string | null;
     waMsgId?: string | null;
     deliveryStatus?: 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' | string;
+    // Interactive poll rendered as a card (question + options + tallies)
+    // instead of plain text. Pulled in by the backend for messageType==='poll'.
+    pollName?: string;
+    pollOptions?: Array<{ name: string; votes: number }>;
+    pollMulti?: boolean;
 };
 
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram';
@@ -232,6 +237,11 @@ export default function InboxPage() {
                         mediaName: payload.mediaName || null,
                         waMsgId: payload.waMsgId || payload.id,
                         deliveryStatus: payload.isFromMe ? (payload.status || 'SENT') : undefined,
+                        ...(payload.messageType === 'poll' ? {
+                            pollName: payload.pollName,
+                            pollOptions: payload.pollOptions,
+                            pollMulti: payload.pollMulti,
+                        } : {}),
                     }];
                 });
                 if (!payload.isFromMe) {
@@ -265,9 +275,23 @@ export default function InboxPage() {
             ));
         };
 
+        // Poll-vote tallies stream in via a dedicated event so a vote
+        // landing on an existing poll card animates the bars in place
+        // instead of appending a new bubble.
+        const onPollUpdate = (accountId: string) => (payload: any) => {
+            const cur = selectedRef.current;
+            if (!cur || cur.accountId !== accountId || cur.remoteJid !== payload.remoteJid) return;
+            setMessages(prev => prev.map(m =>
+                m.waMsgId === payload.pollWaMsgId
+                    ? { ...m, pollOptions: payload.pollOptions }
+                    : m
+            ));
+        };
+
         for (const id of unique) {
             socket.on(`message.new-${id}`, onMsgNew(id));
             socket.on(`message.status-${id}`, onMsgStatus(id));
+            socket.on(`poll.update-${id}`, onPollUpdate(id));
         }
         return () => { socket.disconnect(); };
     }, [conversations.map(c => c.accountId).join(',')]);
@@ -806,6 +830,46 @@ function MessageBubble({ msg }: { msg: Message }) {
             </a>
         );
     };
+
+    // Interactive poll: render a card with bars per option + live
+    // vote tallies instead of the raw "📊 Q\n1. a\n2. b" content
+    // text. The agent only ever sends polls (isFromMe=true), so the
+    // card always sits on the right side.
+    if (msg.messageType === 'poll' && msg.pollName && msg.pollOptions) {
+        const totalVotes = msg.pollOptions.reduce((s, o) => s + (o.votes || 0), 0);
+        return (
+            <div className="flex justify-end">
+                <div className="bg-primary/10 border border-primary/30 rounded-2xl rounded-br-md px-3 py-2.5 max-w-[85%] sm:max-w-[70%] text-sm space-y-2">
+                    <div>
+                        <div className="font-medium whitespace-pre-wrap break-words leading-tight">{msg.pollName}</div>
+                        <div className="text-[10px] text-muted-foreground/70 mt-0.5">{msg.pollMulti ? 'Select one or more' : 'Select one'}</div>
+                    </div>
+                    <div className="space-y-1.5">
+                        {msg.pollOptions.map((opt, i) => {
+                            const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+                            const won = opt.votes > 0 && opt.votes === Math.max(...msg.pollOptions!.map(o => o.votes));
+                            return (
+                                <div key={i} className="space-y-0.5">
+                                    <div className="flex items-center justify-between gap-2 text-xs">
+                                        <span className="break-words flex-1">{opt.name}</span>
+                                        <span className={`tabular-nums text-[11px] ${won ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>{opt.votes}</span>
+                                    </div>
+                                    <div className="h-1.5 rounded-full bg-secondary/40 overflow-hidden">
+                                        <div className={`h-full transition-all duration-500 ${won ? 'bg-primary' : 'bg-primary/40'}`} style={{ width: `${pct}%` }} />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/70 mt-1 text-right flex items-center justify-end gap-1">
+                        {totalVotes > 0 && <span>{totalVotes} vote{totalVotes === 1 ? '' : 's'} ·</span>}
+                        {time}
+                        <DeliveryTick status={msg.deliveryStatus} />
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const hasMedia = !!msg.mediaUrl;
     // Drop the auto-generated "🖼️ Photo" / "🎤 Voice message" text when

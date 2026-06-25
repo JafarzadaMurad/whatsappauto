@@ -23,7 +23,24 @@ const PROVIDERS: Provider[] = [
                 hint: 'Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs. Public — exposed to the frontend so the button can render.' },
         ]
     },
-    // Future providers (Facebook, GitHub, Apple, etc.) plug in here
+    {
+        id: 'meta',
+        label: 'Meta (Facebook + Instagram)',
+        description: 'Powers Instagram Business Login + Facebook Ads connect. Both share the same Meta Developer App.',
+        helpUrl: 'https://developers.facebook.com/apps',
+        keys: [
+            { key: 'META_APP_ID', label: 'App ID', placeholder: '14XXXXXXXXXXX', isSecret: false,
+                hint: 'Meta Developer Console → App settings → Basic → App ID. Same value used for FB Login and IG Login.' },
+            { key: 'META_APP_SECRET', label: 'App Secret', placeholder: '', isSecret: true,
+                hint: 'Meta Developer Console → App settings → Basic → App Secret. Server-only; never sent to the browser.' },
+            { key: 'META_IG_APP_ID', label: 'Instagram App ID', placeholder: '', isSecret: false,
+                hint: 'Required only when the app uses a separate Instagram product app. Leave blank to fall back to META_APP_ID.' },
+            { key: 'META_IG_APP_SECRET', label: 'Instagram App Secret', placeholder: '', isSecret: true,
+                hint: 'Same situation as META_IG_APP_ID — leave blank when there is no dedicated IG app.' },
+            { key: 'META_ADS_CONFIG_ID', label: 'Facebook Login for Business — Configuration ID', placeholder: '27555078400775474', isSecret: false,
+                hint: 'Required for the Facebook Ads connect button. Created in Meta console → Facebook Login for Business → Configurations. Without this, the Ads OAuth URL falls back to classic scope= and Meta will reject it on the new product.' },
+        ]
+    },
 ];
 
 const ALL_KEYS = PROVIDERS.flatMap(p => p.keys);

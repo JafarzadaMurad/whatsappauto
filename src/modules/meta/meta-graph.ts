@@ -7,14 +7,21 @@ import { logger } from '../../utils/logger';
 const GRAPH_VERSION = 'v20.0';
 const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
-export async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string } | null> {
+export async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string; adsConfigId: string | null } | null> {
     const rows = await prisma.systemConfig.findMany({
-        where: { key: { in: ['META_APP_ID', 'META_APP_SECRET'] } },
+        where: { key: { in: ['META_APP_ID', 'META_APP_SECRET', 'META_ADS_CONFIG_ID'] } },
     });
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
     if (!map.META_APP_ID || !map.META_APP_SECRET) return null;
-    return { appId: map.META_APP_ID, appSecret: map.META_APP_SECRET };
+    return {
+        appId: map.META_APP_ID,
+        appSecret: map.META_APP_SECRET,
+        // Optional — only set when admin has wired a Facebook Login
+        // for Business Configuration. When present, the OAuth URL
+        // uses config_id (new product) instead of scope= (classic).
+        adsConfigId: map.META_ADS_CONFIG_ID || null,
+    };
 }
 
 // Exchange the short-lived auth code for a short-lived user token.

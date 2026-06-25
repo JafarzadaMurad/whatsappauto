@@ -44,12 +44,23 @@ export class MetaController {
             const creds = await getMetaAppCreds();
             if (!creds) return res.status(500).json({ success: false, message: 'Meta App ID / Secret are not configured in System Config.' });
             const redirectUri = getRedirectUri();
-            const url =
-                `https://www.facebook.com/v20.0/dialog/oauth` +
-                `?client_id=${creds.appId}` +
-                `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                `&response_type=code` +
-                `&scope=${encodeURIComponent(META_OAUTH_SCOPE)}`;
+            // New "Facebook Login for Business" product requires
+            // config_id (which encapsulates scope + redirect URIs +
+            // login type set up in the Meta console). When the admin
+            // has wired META_ADS_CONFIG_ID we use that URL shape.
+            // Falls back to the classic scope= URL for apps still on
+            // the legacy "Facebook Login" product.
+            const url = creds.adsConfigId
+                ? `https://www.facebook.com/v20.0/dialog/oauth` +
+                    `?client_id=${creds.appId}` +
+                    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                    `&response_type=code` +
+                    `&config_id=${creds.adsConfigId}`
+                : `https://www.facebook.com/v20.0/dialog/oauth` +
+                    `?client_id=${creds.appId}` +
+                    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                    `&response_type=code` +
+                    `&scope=${encodeURIComponent(META_OAUTH_SCOPE)}`;
             return res.json({ success: true, url });
         } catch (e: any) {
             return res.status(500).json({ success: false, message: e.message });

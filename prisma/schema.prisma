@@ -62,6 +62,7 @@ model Workspace {
   operatorDirectives OperatorDirective[]
   agentChatMessages  AgentChatMessage[]
   adRoutes           AdRoute[]
+  metaAdAccounts     MetaAdAccount[]
 
   @@index([ownerId])
 }
@@ -491,6 +492,43 @@ model Agent {
   operatorDirectives OperatorDirective[]
   agentChatMessages  AgentChatMessage[]
   adRoutes           AdRoute[]
+}
+
+// Facebook ad account connected via OAuth. One workspace can connect
+// multiple ad accounts (large businesses run several from the same
+// Business Manager). The accessToken is a long-lived FB user token —
+// usable for ~60 days, after which the operator must reconnect.
+//
+// Stored fields:
+//  · fbUserId / fbUserName — who granted access, for the UI
+//  · accessToken           — used on every Marketing API call
+//  · tokenExpiresAt        — when to start showing the "reconnect" CTA
+//  · adAccountId           — Meta's "act_XXXXXXX" form
+//  · accountName, currency — cached for fast UI render without a roundtrip
+//  · lastError             — last sync error, surfaced inline so the
+//                            operator can see WHY the account stopped
+model MetaAdAccount {
+  id              String   @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  fbUserId        String?
+  fbUserName      String?
+  accessToken     String   @db.Text
+  tokenExpiresAt  DateTime?
+
+  adAccountId     String
+  accountName     String
+  currency        String?
+
+  status          String   @default("active")
+  lastError       String?
+  lastSyncedAt    DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([workspaceId, adAccountId])
 }
 
 // Oversight ("meta") agent — periodically reviews one or more

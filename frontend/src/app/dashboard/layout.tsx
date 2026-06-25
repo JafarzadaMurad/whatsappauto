@@ -123,8 +123,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             icon: Megaphone,
             isGroup: true,
             children: [
-                { name: 'Sources & Routing', href: '/dashboard/ads', icon: Target, section: 'ads' },
-                { name: 'Facebook Ads', href: '/dashboard/ads/meta', icon: Megaphone, section: 'ads' },
+                // No section key — owner-defined role permissions don't
+                // yet include 'ads', so gating would hide the whole
+                // group on shared workspaces. Owner-only writes are
+                // already enforced on the backend.
+                { name: 'Sources & Routing', href: '/dashboard/ads', icon: Target },
+                { name: 'Facebook Ads', href: '/dashboard/ads/meta', icon: Megaphone },
             ]
         },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key, section: 'apikeys' },

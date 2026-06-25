@@ -47,25 +47,25 @@ export default function MetaCallbackPage() {
                 {stage === 'exchanging' && (
                     <>
                         <Loader2 className="w-7 h-7 text-primary animate-spin mx-auto mb-3" />
-                        <h2 className="font-semibold">Facebook hesabı qoşulur…</h2>
-                        <p className="text-xs text-muted-foreground mt-1">Reklam hesabların yüklənir.</p>
+                        <h2 className="font-semibold">Connecting your Facebook account…</h2>
+                        <p className="text-xs text-muted-foreground mt-1">Loading your ad accounts.</p>
                     </>
                 )}
                 {stage === 'success' && (
                     <>
                         <CheckCircle2 className="w-7 h-7 text-emerald-400 mx-auto mb-3" />
-                        <h2 className="font-semibold">Uğurlu</h2>
-                        <p className="text-xs text-muted-foreground mt-1">Reklam hesabı seçiminə yönləndirilirsən…</p>
+                        <h2 className="font-semibold">Connected</h2>
+                        <p className="text-xs text-muted-foreground mt-1">Redirecting you to pick an ad account…</p>
                     </>
                 )}
                 {stage === 'error' && (
                     <>
                         <XCircle className="w-7 h-7 text-red-400 mx-auto mb-3" />
-                        <h2 className="font-semibold">Qoşulma alınmadı</h2>
+                        <h2 className="font-semibold">Connection failed</h2>
                         <p className="text-xs text-muted-foreground mt-2 break-words">{errorMsg}</p>
                         <button onClick={() => router.replace('/dashboard/ads/meta')}
                             className="mt-4 text-xs px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border">
-                            Geri qayıt
+                            Go back
                         </button>
                     </>
                 )}

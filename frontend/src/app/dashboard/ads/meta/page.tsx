@@ -137,7 +137,7 @@ export default function MetaAdsPage() {
     };
 
     const onDeleteAccount = async (id: string) => {
-        if (!confirm('Bu hesabı ayırsaq, onun reklamlarına bağlı agent qaydaları silinmir — sadəcə hesabın özü silinir.')) return;
+        if (!confirm('Disconnecting this account will not delete the agent rules bound to its ads — only the account itself is removed.')) return;
         try {
             await api.delete(`/meta/accounts/${id}`);
             await loadAccounts();
@@ -153,13 +153,13 @@ export default function MetaAdsPage() {
                 </div>
                 <div className="flex-1">
                     <h1 className="text-xl sm:text-2xl font-semibold">Facebook Ads</h1>
-                    <p className="text-xs text-muted-foreground">Reklam hesabını qoş, hər reklama agent bağla, statistika gör.</p>
+                    <p className="text-xs text-muted-foreground">Connect an ad account, bind agents to ads, monitor performance.</p>
                 </div>
                 {accounts.length > 0 && (
                     <button onClick={onConnect} disabled={connecting}
                         className="text-xs px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border flex items-center gap-1.5 disabled:opacity-60">
                         {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                        Başqa hesab qoş
+                        Connect another account
                     </button>
                 )}
             </motion.div>
@@ -194,16 +194,16 @@ function EmptyConnectCard({ onConnect, connecting }: { onConnect: () => void; co
             <div className="w-12 h-12 rounded-2xl bg-blue-500/15 text-blue-400 mx-auto mb-4 flex items-center justify-center">
                 <Megaphone className="w-6 h-6" />
             </div>
-            <h3 className="font-semibold">Facebook hesabını qoş</h3>
+            <h3 className="font-semibold">Connect your Facebook account</h3>
             <p className="text-xs text-muted-foreground max-w-md mx-auto mt-2 mb-5">
-                Facebook hesabınızı qoşduqdan sonra reklamlarınız burada görünəcək. Hər reklama ayrı agent bağlaya, reklamın xərc / impression / klik statistikasını canlı göstərə bilərsiniz.
+                Once connected, your ads will show up here. You can bind a different agent to each ad and watch live spend, impressions and click statistics.
             </p>
             <button onClick={onConnect} disabled={connecting}
                 className="bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg px-4 py-2.5 flex items-center gap-2 mx-auto disabled:opacity-60">
                 {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
-                Facebook ilə qoş
+                Connect with Facebook
             </button>
-            <p className="text-[10px] text-muted-foreground/70 mt-3">Tələb olunan icazələr: ads_read, business_management.</p>
+            <p className="text-[10px] text-muted-foreground/70 mt-3">Required permissions: ads_read, business_management.</p>
         </div>
     );
 }
@@ -248,8 +248,8 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
                         {account.currency && <span className="text-[10px] text-muted-foreground">{account.currency}</span>}
                     </div>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {account.fbUserName ? `${account.fbUserName} tərəfindən qoşuldu` : 'Connected'}
-                        {account.lastSyncedAt && ` · son sync ${new Date(account.lastSyncedAt).toLocaleString()}`}
+                        {account.fbUserName ? `Connected by ${account.fbUserName}` : 'Connected'}
+                        {account.lastSyncedAt && ` · last sync ${new Date(account.lastSyncedAt).toLocaleString()}`}
                     </p>
                 </div>
                 <button onClick={load} disabled={loading} title="Refresh ads"
@@ -274,7 +274,7 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
             ) : error ? (
                 <div className="px-4 py-8 text-xs text-red-400 text-center break-words">{error}</div>
             ) : ads.length === 0 ? (
-                <div className="px-4 py-8 text-xs text-muted-foreground text-center">Bu hesabda reklam yoxdur.</div>
+                <div className="px-4 py-8 text-xs text-muted-foreground text-center">No ads in this account.</div>
             ) : (
                 <div>
                     {ads.map(ad => (
@@ -366,7 +366,7 @@ function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: str
                     <select value={ad.route?.agentId || ''} onChange={e => onBind(e.target.value)}
                         disabled={binding}
                         className="bg-secondary/50 border border-border rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50 min-w-[140px]">
-                        <option value="">— bağlanmayıb —</option>
+                        <option value="">— not bound —</option>
                         {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                     </select>
                     {ad.route && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
@@ -375,11 +375,11 @@ function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: str
             {open && (
                 <div className="px-3 sm:px-4 pb-4 pl-12 sm:pl-14 space-y-3">
                     <div className="flex items-center gap-2 text-xs">
-                        <span className="text-muted-foreground">Tarix:</span>
+                        <span className="text-muted-foreground">Range:</span>
                         {(['last_7d', 'last_30d', 'maximum'] as const).map(p => (
                             <button key={p} onClick={() => { setInsights(null); setDatePreset(p); loadInsights(p); }}
                                 className={`px-2 py-1 rounded ${datePreset === p ? 'bg-primary/20 text-primary' : 'bg-secondary/40 text-muted-foreground hover:bg-secondary/70'}`}>
-                                {p === 'last_7d' ? 'Son 7 gün' : p === 'last_30d' ? 'Son 30 gün' : 'Bütün vaxt'}
+                                {p === 'last_7d' ? 'Last 7 days' : p === 'last_30d' ? 'Last 30 days' : 'All time'}
                             </button>
                         ))}
                     </div>
@@ -388,12 +388,12 @@ function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: str
                     ) : insightsError ? (
                         <p className="text-xs text-amber-300">{insightsError}</p>
                     ) : !insights ? (
-                        <p className="text-xs text-muted-foreground">Bu dövr üçün məlumat yoxdur.</p>
+                        <p className="text-xs text-muted-foreground">No data for this range.</p>
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            <Stat label="Xərc" value={insights.spend} suffix="" />
+                            <Stat label="Spend" value={insights.spend} suffix="" />
                             <Stat label="Impressions" value={insights.impressions} />
-                            <Stat label="Klik" value={insights.clicks} />
+                            <Stat label="Clicks" value={insights.clicks} />
                             <Stat label="CTR" value={insights.ctr} suffix="%" />
                             <Stat label="CPM" value={insights.cpm} />
                             <Stat label="CPC" value={insights.cpc} />
@@ -444,8 +444,8 @@ function PickerModal({ payload, onClose, onSave }: {
             <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                     <div>
-                        <h3 className="font-semibold">Reklam hesabını seç</h3>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{payload.fbUserName} hesabından əldə olunan {payload.accounts.length} hesab</p>
+                        <h3 className="font-semibold">Pick ad accounts to connect</h3>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{payload.accounts.length} account{payload.accounts.length === 1 ? '' : 's'} available from {payload.fbUserName}</p>
                     </div>
                     <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground rounded">
                         <XIcon className="w-4 h-4" />
@@ -453,7 +453,7 @@ function PickerModal({ payload, onClose, onSave }: {
                 </div>
                 <div className="overflow-y-auto px-5 py-3">
                     {payload.accounts.length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-6 text-center">Bu hesabda heç bir reklam hesabı tapılmadı.</p>
+                        <p className="text-xs text-muted-foreground py-6 text-center">No ad accounts found on this profile.</p>
                     ) : (
                         <div className="space-y-1.5">
                             {payload.accounts.map(a => {
@@ -481,10 +481,10 @@ function PickerModal({ payload, onClose, onSave }: {
                     </a>
                     <div className="flex gap-2">
                         <button onClick={onClose}
-                            className="text-sm px-3 py-2 rounded-lg bg-secondary/40 hover:bg-secondary border border-border">Ləğv</button>
+                            className="text-sm px-3 py-2 rounded-lg bg-secondary/40 hover:bg-secondary border border-border">Cancel</button>
                         <button onClick={() => onSave(chosen)} disabled={chosen.length === 0}
                             className="text-sm px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 font-medium">
-                            {chosen.length === 0 ? 'Seç' : `Qoş (${chosen.length})`}
+                            {chosen.length === 0 ? 'Pick' : `Connect (${chosen.length})`}
                         </button>
                     </div>
                 </div>

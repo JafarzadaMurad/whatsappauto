@@ -33,9 +33,9 @@ type RecentAd = {
 type AgentLite = { id: string; name: string };
 
 const MATCH_TYPE_LABELS: Record<AdRoute['matchType'], string> = {
-    headline:    'Reklam başlığı (substring)',
+    headline:    'Ad headline (substring)',
     source_url:  'Source URL (substring)',
-    ad_id:       'Reklam ID (dəqiq)',
+    ad_id:       'Ad ID (exact)',
     ctwa_prefix: 'CTWA Click ID (prefix)',
 };
 
@@ -95,7 +95,7 @@ export default function AdsPage() {
     };
 
     const onDelete = async (id: string) => {
-        if (!confirm('Bu qaydanı silmək istədiyinizə əminsiniz?')) return;
+        if (!confirm('Are you sure you want to delete this rule?')) return;
         try {
             await api.delete(`/ads/routes/${id}`);
             await loadRoutes();
@@ -117,17 +117,17 @@ export default function AdsPage() {
                 </div>
                 <div>
                     <h1 className="text-xl sm:text-2xl font-semibold">Ads</h1>
-                    <p className="text-xs text-muted-foreground">Click-to-WhatsApp reklamlarını agentlərə yönləndir, hər reklamın trafikinə bax.</p>
+                    <p className="text-xs text-muted-foreground">Route click-to-WhatsApp ads to specific agents and see traffic per ad.</p>
                 </div>
             </motion.div>
 
             <div className="flex gap-1 border-b border-border mb-4">
                 <TabButton active={tab === 'routing'} onClick={() => setTab('routing')}>
-                    Routing qaydaları
+                    Routing rules
                     {routes.length > 0 && <span className="ml-1.5 text-[10px] opacity-60">{routes.length}</span>}
                 </TabButton>
                 <TabButton active={tab === 'recent'} onClick={() => setTab('recent')}>
-                    Son reklamlar
+                    Recent ads
                     {recent.length > 0 && <span className="ml-1.5 text-[10px] opacity-60">{recent.length}</span>}
                 </TabButton>
             </div>
@@ -136,11 +136,11 @@ export default function AdsPage() {
                 <div>
                     <div className="mb-3 flex items-center justify-between">
                         <p className="text-xs text-muted-foreground max-w-xl">
-                            Bu qaydalar yalnız <span className="text-foreground">ilk mesajda</span> tətbiq olunur. Müştəri reklamdan gəldikdə uyğun qaydanın agentinə bağlanır və bundan sonra həmin agentlə danışır.
+                            Rules apply only on the <span className="text-foreground">first message</span>. When a customer arrives from an ad, they're bound to the matching rule's agent and stick with that agent from then on.
                         </p>
                         <button onClick={() => setEditing({ matchType: 'headline', priority: 0, isActive: true })}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-lg px-3 py-2 flex items-center gap-2 text-sm flex-shrink-0">
-                            <Plus className="w-4 h-4" /> Yeni qayda
+                            <Plus className="w-4 h-4" /> New rule
                         </button>
                     </div>
 
@@ -148,8 +148,8 @@ export default function AdsPage() {
                         <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
                     ) : routes.length === 0 ? (
                         <EmptyHint
-                            title="Hələ ki, routing qaydası yoxdur"
-                            body="Reklamlardan müştərilər gəlir, amma hamısı eyni default agentə düşür. Yeni qayda ilə hansı reklamın hansı agentə getməsini təyin et."
+                            title="No routing rules yet"
+                            body="Customers arrive from ads but all land on the same default agent. Add a rule to decide which ad goes to which agent."
                         />
                     ) : (
                         <div className="border border-border rounded-xl overflow-hidden bg-card">
@@ -173,7 +173,7 @@ export default function AdsPage() {
                                         </p>
                                         <p className="text-[11px] text-muted-foreground mt-0.5">
                                             → <span className="text-violet-300">{r.agent.name}</span>
-                                            {r.hitCount > 0 && <span className="ml-2 opacity-60">{r.hitCount} dəfə işlədi{r.lastHitAt && ` · son ${new Date(r.lastHitAt).toLocaleDateString()}`}</span>}
+                                            {r.hitCount > 0 && <span className="ml-2 opacity-60">fired {r.hitCount}×{r.lastHitAt && ` · last on ${new Date(r.lastHitAt).toLocaleDateString()}`}</span>}
                                         </p>
                                     </div>
                                     <button onClick={() => setEditing({ ...r, agentId: r.agent.id } as any)}
@@ -194,23 +194,23 @@ export default function AdsPage() {
             {tab === 'recent' && (
                 <div>
                     <div className="mb-3 grid grid-cols-3 gap-3">
-                        <Stat label="Unikal reklam" value={recentTotals.ads} />
-                        <Stat label="Gələn müştərilər" value={recentTotals.contacts} />
-                        <Stat label="Won statusda" value={recentTotals.won} />
+                        <Stat label="Unique ads" value={recentTotals.ads} />
+                        <Stat label="Contacts arrived" value={recentTotals.contacts} />
+                        <Stat label="In Won status" value={recentTotals.won} />
                     </div>
                     {loadingRecent ? (
                         <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
                     ) : recent.length === 0 ? (
                         <EmptyHint
-                            title="Hələ ki, click-to-WhatsApp reklamından trafik gəlməyib"
-                            body="Reklamdan klik edib WhatsApp-da yazan ilk müştəri olduqda burada hansı reklamdan gəldiyi avtomatik görünəcək."
+                            title="No click-to-WhatsApp traffic yet"
+                            body="Once a customer taps an ad and messages you on WhatsApp, the ad they came from will show up here automatically."
                         />
                     ) : (
                         <div className="border border-border rounded-xl overflow-hidden bg-card">
                             {recent.map(a => (
                                 <RecentAdRow key={a.key} ad={a}
                                     onCreateRule={() => setEditing({
-                                        name: a.title || a.sourceUrl || 'Yeni qayda',
+                                        name: a.title || a.sourceUrl || 'New rule',
                                         matchType: a.title ? 'headline' : 'source_url',
                                         matchValue: a.title || a.sourceUrl || '',
                                         priority: 0,
@@ -274,24 +274,24 @@ function RecentAdRow({ ad, onCreateRule }: { ad: RecentAd; onCreateRule: () => v
                 className="w-full flex items-center gap-3 px-3 sm:px-4 py-3 hover:bg-secondary/30 text-left">
                 <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
                 <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{ad.title || '(başlıqsız)'}</p>
+                    <p className="text-sm font-medium truncate">{ad.title || '(no title)'}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{ad.sourceUrl || '—'}</p>
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground flex-shrink-0">
-                    <span className="tabular-nums"><b className="text-foreground">{ad.contacts}</b> contact</span>
+                    <span className="tabular-nums"><b className="text-foreground">{ad.contacts}</b> contacts</span>
                     {ad.wonCount > 0 && <span className="tabular-nums text-emerald-400"><b>{ad.wonCount}</b> won</span>}
                 </div>
             </button>
             {open && (
                 <div className="px-10 sm:px-12 pb-3 space-y-2 text-xs">
-                    <KV label="Reklam ID" value={ad.sourceId} mono />
+                    <KV label="Ad ID" value={ad.sourceId} mono />
                     <KV label="Media" value={ad.mediaType} />
-                    <KV label="Son gələn" value={new Date(ad.lastSeenAt).toLocaleString()} />
-                    <KV label="Nümunə müştəri" value={ad.sample.name ? `${ad.sample.name} (+${ad.sample.phone})` : `+${ad.sample.phone}`} />
+                    <KV label="Last arrival" value={new Date(ad.lastSeenAt).toLocaleString()} />
+                    <KV label="Sample contact" value={ad.sample.name ? `${ad.sample.name} (+${ad.sample.phone})` : `+${ad.sample.phone}`} />
                     <div className="flex gap-2 pt-1">
                         <button onClick={onCreateRule}
                             className="text-[11px] px-2.5 py-1.5 rounded-md bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 flex items-center gap-1.5">
-                            <Plus className="w-3 h-3" /> Bu reklamdan qayda yarat
+                            <Plus className="w-3 h-3" /> Create rule from this ad
                         </button>
                         {ad.sourceUrl && (
                             <a href={ad.sourceUrl} target="_blank" rel="noreferrer"
@@ -329,18 +329,18 @@ function RouteEditorModal({ initial, agents, onClose, onSave }: {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                    <h3 className="font-semibold">{draft.id ? 'Routing qaydası — redaktə' : 'Yeni routing qaydası'}</h3>
+                    <h3 className="font-semibold">{draft.id ? 'Edit routing rule' : 'New routing rule'}</h3>
                     <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground rounded">
                         <XIcon className="w-4 h-4" />
                     </button>
                 </div>
                 <div className="px-5 py-4 space-y-3">
-                    <Field label="Qaydanın adı">
+                    <Field label="Rule name">
                         <input type="text" value={draft.name || ''} onChange={e => set({ name: e.target.value })}
-                            placeholder="məs. Türkiyə əmlakı kampaniyası"
+                            placeholder="e.g. Turkey real estate campaign"
                             className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
                     </Field>
-                    <Field label="Uyğunluq növü">
+                    <Field label="Match type">
                         <select value={draft.matchType || 'headline'} onChange={e => set({ matchType: e.target.value })}
                             className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
                             {(Object.keys(MATCH_TYPE_LABELS) as AdRoute['matchType'][]).map(k => (
@@ -348,41 +348,41 @@ function RouteEditorModal({ initial, agents, onClose, onSave }: {
                             ))}
                         </select>
                     </Field>
-                    <Field label={draft.matchType === 'ad_id' ? 'Reklam ID' : draft.matchType === 'ctwa_prefix' ? 'Click ID prefix' : 'Axtarılan mətn'}>
+                    <Field label={draft.matchType === 'ad_id' ? 'Ad ID' : draft.matchType === 'ctwa_prefix' ? 'Click ID prefix' : 'Match text'}>
                         <input type="text" value={draft.matchValue || ''} onChange={e => set({ matchValue: e.target.value })}
                             placeholder={
-                                draft.matchType === 'headline'    ? 'Türkiyə əmlakı' :
+                                draft.matchType === 'headline'    ? 'turkey real estate' :
                                 draft.matchType === 'source_url'  ? 'utm_campaign=turkey-real-estate' :
                                 draft.matchType === 'ad_id'       ? '120211234567890123' :
                                                                     'fb.1.1234'
                             }
                             className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
                         <p className="text-[10px] text-muted-foreground mt-1">
-                            {draft.matchType === 'headline'   && 'Reklam başlığında bu mətnin keçdiyi yerlər (case-insensitive).'}
-                            {draft.matchType === 'source_url' && 'Source URL-də (landing page) bu mətnin olduğu reklamlar.'}
-                            {draft.matchType === 'ad_id'      && 'Meta-nın verdiyi dəqiq ad-creative ID.'}
-                            {draft.matchType === 'ctwa_prefix' && 'WhatsApp Click ID-nin başlığı bununla başlayan reklamlar.'}
+                            {draft.matchType === 'headline'   && 'Ad headlines that contain this text (case-insensitive).'}
+                            {draft.matchType === 'source_url' && 'Ads whose landing/source URL contains this text.'}
+                            {draft.matchType === 'ad_id'      && "Exact ad creative ID from Meta."}
+                            {draft.matchType === 'ctwa_prefix' && 'Ads whose WhatsApp Click ID starts with this prefix.'}
                         </p>
                     </Field>
-                    <Field label="Hansı agentə getsin?">
+                    <Field label="Target agent">
                         <select value={draft.agentId || draft.agent?.id || ''} onChange={e => set({ agentId: e.target.value })}
                             className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
-                            <option value="">— seç —</option>
+                            <option value="">— select —</option>
                             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
                     </Field>
                     <div className="grid grid-cols-2 gap-3">
-                        <Field label="Prioritet">
+                        <Field label="Priority">
                             <input type="number" value={draft.priority ?? 0} onChange={e => set({ priority: Number(e.target.value) })}
                                 min={0} max={1000}
                                 className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                            <p className="text-[10px] text-muted-foreground mt-1">Yüksək prioritet birinci yoxlanır.</p>
+                            <p className="text-[10px] text-muted-foreground mt-1">Higher priority is evaluated first.</p>
                         </Field>
                         <Field label="Status">
                             <label className="flex items-center gap-2 mt-2 text-sm select-none">
                                 <input type="checkbox" checked={draft.isActive ?? true} onChange={e => set({ isActive: e.target.checked })}
                                     className="rounded" />
-                                Aktiv
+                                Active
                             </label>
                         </Field>
                     </div>
@@ -390,11 +390,11 @@ function RouteEditorModal({ initial, agents, onClose, onSave }: {
                 <div className="px-5 py-4 border-t border-border flex justify-end gap-2">
                     <button onClick={onClose}
                         className="text-sm px-3 py-2 rounded-lg bg-secondary/40 hover:bg-secondary text-foreground border border-border">
-                        Ləğv
+                        Cancel
                     </button>
                     <button onClick={() => onSave(draft)} disabled={!canSave}
                         className="text-sm px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 font-medium">
-                        {draft.id ? 'Yadda saxla' : 'Yarat'}
+                        {draft.id ? 'Save' : 'Create'}
                     </button>
                 </div>
             </div>

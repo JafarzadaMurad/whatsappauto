@@ -9,7 +9,10 @@ import {
     getMe, listUserAdAccounts, listAdsInAccount, getAdInsights, formatMetaError,
 } from './meta-graph';
 
-const META_OAUTH_SCOPE = ['ads_read', 'business_management', 'public_profile', 'email'].join(',');
+// `email` was here originally but Marketing API doesn't need it,
+// and including a scope the app isn't configured for triggers FB's
+// dev-only "Invalid Scopes" warning. Only ads-required scopes here.
+const META_OAUTH_SCOPE = ['ads_read', 'business_management', 'public_profile'].join(',');
 
 function getRedirectUri(): string {
     const base = config.FRONTEND_URL || 'https://chatbot.tur.al';

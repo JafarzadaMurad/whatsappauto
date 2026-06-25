@@ -17,6 +17,7 @@ import { webhookQueue } from '../webhook/webhook.dispatcher';
 import { AiService } from '../agent/ai.service';
 import { upsertCrmContact } from '../client/client.service';
 import { extractMessageContent } from './message-content';
+import { extractAdReferrer } from '../ads/ad-referrer';
 import { resolveJid } from './lid-resolver';
 import { findOperatorByPhone, handleOperatorMessage } from '../operator/operator.service';
 import { downloadAndSaveMedia } from './media-downloader';
@@ -587,6 +588,14 @@ export class InstanceManager {
                         }).catch(() => {});
                     }
 
+                    // Click-to-WhatsApp ad metadata, if any. Saved on
+                    // the Message row so the ads page can show every
+                    // arrival per ad, and forwarded into the CRM upsert
+                    // so the Client gets its first-touch attribution +
+                    // the AdRoute rules a chance to claim the contact
+                    // before the AI is even called.
+                    const adRef = extractAdReferrer(msg);
+
                     await prisma.message.create({
                         data: {
                             instanceId,
@@ -597,28 +606,38 @@ export class InstanceManager {
                             timestamp: ts,
                             waMsgId: msg.key?.id || null,
                             ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
+                            ...(adRef ? { adReferrer: adRef as any } : {}),
                         },
                     });
 
-                    // Auto-add the sender to CRM with channel info
-                    prisma.instance.findUnique({
-                        where: { id: instanceId },
-                        select: { userId: true, name: true, workspaceId: true },
-                    }).then(async (inst: any) => {
-                        if (!inst) return;
-                        const wsId = inst.workspaceId
-                            || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
-                        const c = await upsertCrmContact({
-                            userId: inst.userId,
-                            workspaceId: wsId,
-                            phone: resolvedPhone,
-                            name: msg.pushName || null,
-                            channel: 'whatsapp',
-                            sourceLabel: inst.name,
-                            isAnonymous,
+                    // Auto-add the sender to CRM with channel info. Ad
+                    // routing runs SYNCHRONOUSLY here (awaited) so that
+                    // if a rule matches, Client.assignedAgentId is set
+                    // before handleIncomingMessage reads the client row
+                    // a few lines down — otherwise the AI dispatch
+                    // would race the route lookup and the rule's first
+                    // hit wouldn't take effect.
+                    try {
+                        const inst = await prisma.instance.findUnique({
+                            where: { id: instanceId },
+                            select: { userId: true, name: true, workspaceId: true },
                         });
-                        if (c) maybeRefreshProfilePicAsync({ instanceId, clientId: c.id, jid: remoteJid, profilePicUpdatedAt: c.profilePicUpdatedAt });
-                    }).catch(() => {});
+                        if (inst) {
+                            const wsId = inst.workspaceId
+                                || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
+                            const c = await upsertCrmContact({
+                                userId: inst.userId,
+                                workspaceId: wsId,
+                                phone: resolvedPhone,
+                                name: msg.pushName || null,
+                                channel: 'whatsapp',
+                                sourceLabel: inst.name,
+                                isAnonymous,
+                                adReferrer: adRef,
+                            });
+                            if (c) maybeRefreshProfilePicAsync({ instanceId, clientId: c.id, jid: remoteJid, profilePicUpdatedAt: c.profilePicUpdatedAt });
+                        }
+                    } catch { /* never block message handling on CRM upsert */ }
 
                     webhookQueue.add('new-message', {
                         instanceId,

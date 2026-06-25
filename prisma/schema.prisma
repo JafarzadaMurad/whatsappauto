@@ -61,6 +61,7 @@ model Workspace {
   dashboardWidgets DashboardWidget[]
   operatorDirectives OperatorDirective[]
   agentChatMessages  AgentChatMessage[]
+  adRoutes           AdRoute[]
 
   @@index([ownerId])
 }
@@ -321,6 +322,14 @@ model Message {
   // message instead of as separate bubbles.
   inReplyToWaMsgId String?
 
+  // Click-to-WhatsApp ad metadata that arrived with this message.
+  // Pulled from Baileys' message.contextInfo.externalAdReply when the
+  // customer reached us by tapping a Facebook/Instagram ad. Shape:
+  //   { sourceUrl, title, body, mediaType, ctwaClid, sourceType, sourceId,
+  //     thumbnailUrl }
+  // Null on every message that didn't come via an ad click.
+  adReferrer Json?
+
   timestamp DateTime
   createdAt DateTime @default(now())
 
@@ -481,6 +490,7 @@ model Agent {
   oversightSuggestions OversightSuggestion[]
   operatorDirectives OperatorDirective[]
   agentChatMessages  AgentChatMessage[]
+  adRoutes           AdRoute[]
 }
 
 // Oversight ("meta") agent — periodically reviews one or more
@@ -801,6 +811,14 @@ model Client {
   operatorDirectives  OperatorDirective[]
   agentChatMessages   AgentChatMessage[]
 
+  // Click-to-WhatsApp first-touch attribution: the ad metadata
+  // captured the first time we saw this contact arrive via an
+  // externalAdReply. Same shape as Message.adReferrer. Lets the ads
+  // analytics page group contacts by source ad without scanning
+  // every Message row, and lets the ad-routing rule lock the agent
+  // on first contact.
+  adReferrer Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -868,6 +886,46 @@ model AgentChatMessage {
   createdAt   DateTime @default(now())
 
   @@index([clientId, agentId, createdAt])
+}
+
+// Routes click-to-WhatsApp ad clicks to a specific agent. Lets one
+// WhatsApp number host many ads, each handed off to its own agent
+// based on what the customer just clicked. Matched on first contact
+// only — once an agent is assigned (Client.assignedAgentId), the
+// sticky assignment wins on subsequent messages.
+//
+// matchType  → what part of externalAdReply we test:
+//   'headline'    — case-insensitive substring of externalAdReply.title
+//   'source_url'  — case-insensitive substring of externalAdReply.sourceUrl
+//   'ad_id'       — exact externalAdReply.sourceId (Meta's ad-creative id)
+//   'ctwa_prefix' — externalAdReply.ctwaClid startsWith (campaigns
+//                   sometimes encode an id prefix in the click token)
+//
+// priority   → highest wins. Within the same priority, oldest rule
+//              wins so the operator can predictably layer rules.
+model AdRoute {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String   // human label, e.g. "Türkiyə əmlakı kampaniyası"
+  matchType   String   // see comment above
+  matchValue  String   // the literal substring / id / prefix to test
+
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  priority    Int      @default(0)
+  isActive    Boolean  @default(true)
+
+  // Bookkeeping so the UI can show "this rule fired 47 times".
+  hitCount    Int      @default(0)
+  lastHitAt   DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, isActive, priority])
 }
 
 // Admin-defined custom field on the Client (contact) entity.

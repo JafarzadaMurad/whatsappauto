@@ -427,7 +427,15 @@ function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: 
             await api.post(`${objectPath}/status`, { status: next });
             onStatusChange(next);
         } catch (e: any) {
-            alert(e?.response?.data?.message || e.message);
+            const raw = String(e?.response?.data?.message || e.message || '');
+            // Meta error 100 on a status POST almost always means the
+            // connected access token doesn't have ads_management. Tell
+            // the operator what to do instead of dumping the raw Graph
+            // error.
+            const friendly = /code\s*100|does not support this operation|missing permissions/i.test(raw)
+                ? "Your Facebook access token is read-only. Add the 'ads_management' permission to your Facebook Login for Business Configuration in the Meta developer console, then disconnect and reconnect this account."
+                : raw;
+            alert(friendly);
         } finally { setTogglingStatus(false); }
     };
 

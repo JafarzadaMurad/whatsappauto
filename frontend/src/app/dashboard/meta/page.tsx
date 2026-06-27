@@ -277,7 +277,11 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
             ) : (
                 <div>
                     {ads.map(ad => (
-                        <AdRow key={ad.id} ad={ad} accountId={account.id} agents={agents} onBindChange={load} />
+                        <AdRow key={ad.id} ad={ad} accountId={account.id} agents={agents}
+                            // Local patch — avoids re-fetching the whole
+                            // ad list (and flashing the spinner) every
+                            // time the operator picks an agent.
+                            onRouteChange={route => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, route } : a))} />
                     ))}
                 </div>
             )}
@@ -287,7 +291,12 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
 
 // ─── Single ad row ────────────────────────────────────────────
 
-function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: string; agents: AgentLite[]; onBindChange: () => void }) {
+function AdRow({ ad, accountId, agents, onRouteChange }: {
+    ad: Ad;
+    accountId: string;
+    agents: AgentLite[];
+    onRouteChange: (route: Ad['route']) => void;
+}) {
     const [open, setOpen] = useState(false);
     const [insights, setInsights] = useState<AdInsights | null>(null);
     const [loadingInsights, setLoadingInsights] = useState(false);
@@ -316,12 +325,23 @@ function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: str
         try {
             if (!agentId) {
                 await api.delete(`/meta/accounts/${accountId}/ads/${ad.id}/bind`);
+                onRouteChange(null);
             } else {
-                await api.post(`/meta/accounts/${accountId}/ads/${ad.id}/bind`, {
+                const r = await api.post(`/meta/accounts/${accountId}/ads/${ad.id}/bind`, {
                     agentId, adName: ad.name,
                 });
+                // The bind endpoint returns the saved AdRoute incl. the
+                // populated `agent` relation, so we can patch the row
+                // locally without re-pulling the whole ad list from
+                // Marketing API.
+                const newRoute = r.data?.route ? {
+                    id: r.data.route.id,
+                    agentId: r.data.route.agentId,
+                    agent: { name: r.data.route.agent?.name || agents.find(a => a.id === agentId)?.name || '' },
+                    isActive: r.data.route.isActive ?? true,
+                } : null;
+                onRouteChange(newRoute);
             }
-            onBindChange();
         } catch (e: any) {
             alert(e?.response?.data?.message || e.message);
         } finally { setBinding(false); }

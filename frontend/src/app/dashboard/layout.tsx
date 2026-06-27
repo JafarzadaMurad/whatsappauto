@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Target } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -93,7 +93,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare, section: 'whatsapp' },
-                { name: 'Instagram', href: '/dashboard/instagram', icon: Camera, section: 'instagram' }
+                { name: 'Instagram', href: '/dashboard/instagram', icon: Camera, section: 'instagram' },
+                // No section key — owner-defined role permissions don't
+                // yet include this; gating would hide it on shared
+                // workspaces. Owner-only writes are enforced backend-side.
+                { name: 'Facebook Ads', href: '/dashboard/meta', icon: Megaphone },
             ]
         },
         {
@@ -118,19 +122,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         },
         { name: 'Automations', href: '/dashboard/automations', icon: Workflow, section: 'automations' },
         { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send, section: 'campaigns' },
-        {
-            name: 'Ads',
-            icon: Megaphone,
-            isGroup: true,
-            children: [
-                // No section key — owner-defined role permissions don't
-                // yet include 'ads', so gating would hide the whole
-                // group on shared workspaces. Owner-only writes are
-                // already enforced on the backend.
-                { name: 'Sources & Routing', href: '/dashboard/ads', icon: Target },
-                { name: 'Facebook Ads', href: '/dashboard/ads/meta', icon: Megaphone },
-            ]
-        },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key, section: 'apikeys' },
         { name: 'MCP', href: '/dashboard/mcp', icon: Plug, section: 'mcp' },
         { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon, section: 'webhooks' },

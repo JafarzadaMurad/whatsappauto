@@ -9,7 +9,7 @@ import api from "@/lib/api";
 // Exchanges the code through the backend (server-side has the
 // app secret), receives the long-lived token + the user's
 // ad-account list, and stashes both in sessionStorage so the
-// /dashboard/ads/meta page can render the picker without
+// /dashboard/meta page can render the picker without
 // re-running OAuth.
 export default function MetaCallbackPage() {
     const router = useRouter();
@@ -33,7 +33,7 @@ export default function MetaCallbackPage() {
                 }
                 sessionStorage.setItem('meta:connect:payload', JSON.stringify(r.data));
                 setStage('success');
-                setTimeout(() => router.replace('/dashboard/ads/meta?picker=1'), 800);
+                setTimeout(() => router.replace('/dashboard/meta?picker=1'), 800);
             } catch (e: any) {
                 setStage('error');
                 setErrorMsg(e?.response?.data?.message || e.message);
@@ -63,7 +63,7 @@ export default function MetaCallbackPage() {
                         <XCircle className="w-7 h-7 text-red-400 mx-auto mb-3" />
                         <h2 className="font-semibold">Connection failed</h2>
                         <p className="text-xs text-muted-foreground mt-2 break-words">{errorMsg}</p>
-                        <button onClick={() => router.replace('/dashboard/ads/meta')}
+                        <button onClick={() => router.replace('/dashboard/meta')}
                             className="mt-4 text-xs px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border">
                             Go back
                         </button>

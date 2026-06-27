@@ -129,7 +129,7 @@ export default function MetaAdsPage() {
             });
             sessionStorage.removeItem('meta:connect:payload');
             setPicker(null);
-            router.replace('/dashboard/ads/meta');
+            router.replace('/dashboard/meta');
             await loadAccounts();
         } catch (e: any) {
             alert(e?.response?.data?.message || e.message);
@@ -179,7 +179,7 @@ export default function MetaAdsPage() {
 
             {picker && (
                 <PickerModal payload={picker}
-                    onClose={() => { setPicker(null); sessionStorage.removeItem('meta:connect:payload'); router.replace('/dashboard/ads/meta'); }}
+                    onClose={() => { setPicker(null); sessionStorage.removeItem('meta:connect:payload'); router.replace('/dashboard/meta'); }}
                     onSave={onPickerSave} />
             )}
         </div>
@@ -203,7 +203,6 @@ function EmptyConnectCard({ onConnect, connecting }: { onConnect: () => void; co
                 {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
                 Connect with Facebook
             </button>
-            <p className="text-[10px] text-muted-foreground/70 mt-3">Required permissions: ads_read, business_management.</p>
         </div>
     );
 }

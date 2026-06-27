@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Bot } from "lucide-react";
+import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Bot, Pause, Play } from "lucide-react";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
@@ -20,7 +20,9 @@ type ConnectedAccount = {
     createdAt: string;
 };
 
-type Ad = {
+type Level = 'campaign' | 'adset' | 'ad';
+
+type AdObject = {
     id: string;
     name: string;
     status: string;
@@ -29,11 +31,23 @@ type Ad = {
     campaign?: { id: string; name: string };
     adset?: { id: string; name: string };
     thumbnailUrl: string | null;
+    // Optional level-specific metadata
+    objective?: string;
+    optimizationGoal?: string;
+    dailyBudget?: string;
+    lifetimeBudget?: string;
+    // Direct binding on this object (its own AdRoute)
     route: null | {
         id: string;
         agentId: string;
         agent: { name: string };
         isActive: boolean;
+    };
+    // Set when a higher level (campaign/adset) already owns the
+    // binding — UI disables this row's bind dropdown.
+    inheritedRoute?: null | {
+        agent: { name: string };
+        level: 'campaign' | 'adset';
     };
 };
 
@@ -210,7 +224,8 @@ function EmptyConnectCard({ onConnect, connecting }: { onConnect: () => void; co
 // ─── Ad-account section ──────────────────────────────────────
 
 function ConnectedAccountSection({ account, agents, onDelete }: { account: ConnectedAccount; agents: AgentLite[]; onDelete: () => void }) {
-    const [ads, setAds] = useState<Ad[]>([]);
+    const [level, setLevel] = useState<Level>('ad');
+    const [ads, setAds] = useState<AdObject[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -218,13 +233,25 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
         setLoading(true);
         setError(null);
         try {
-            const r = await api.get(`/meta/accounts/${account.id}/ads`);
-            if (r.data?.success) setAds(r.data.ads);
-            else setError(r.data?.message || 'Could not load ads');
+            // Each level has its own endpoint; the response shape is
+            // normalised to AdObject downstream so ObjectRow stays
+            // generic.
+            const path =
+                level === 'campaign' ? `/meta/accounts/${account.id}/campaigns` :
+                level === 'adset'    ? `/meta/accounts/${account.id}/adsets`    :
+                                       `/meta/accounts/${account.id}/ads`;
+            const r = await api.get(path);
+            if (r.data?.success) {
+                const arr: AdObject[] =
+                    level === 'campaign' ? (r.data.campaigns || []) :
+                    level === 'adset'    ? (r.data.adsets    || []) :
+                                           (r.data.ads       || []);
+                setAds(arr);
+            } else setError(r.data?.message || 'Could not load');
         } catch (e: any) {
             setError(e?.response?.data?.message || e.message);
         } finally { setLoading(false); }
-    }, [account.id]);
+    }, [account.id, level]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -268,20 +295,37 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
                 </div>
             )}
 
+            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 text-xs bg-secondary/20">
+                <span className="text-muted-foreground uppercase tracking-wide text-[10px] font-semibold">View</span>
+                <div className="inline-flex bg-secondary/40 rounded-md p-0.5">
+                    {(['campaign', 'adset', 'ad'] as Level[]).map(l => (
+                        <button key={l} onClick={() => setLevel(l)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${level === l
+                                ? 'bg-primary text-primary-foreground'
+                                : 'text-muted-foreground hover:text-foreground'}`}>
+                            {l === 'campaign' ? 'Campaigns' : l === 'adset' ? 'Ad Sets' : 'Ads'}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {loading ? (
                 <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
             ) : error ? (
                 <div className="px-4 py-8 text-xs text-red-400 text-center break-words">{error}</div>
             ) : ads.length === 0 ? (
-                <div className="px-4 py-8 text-xs text-muted-foreground text-center">No ads in this account.</div>
+                <div className="px-4 py-8 text-xs text-muted-foreground text-center">
+                    No {level === 'campaign' ? 'campaigns' : level === 'adset' ? 'ad sets' : 'ads'} in this account.
+                </div>
             ) : (
                 <div>
                     {ads.map(ad => (
-                        <AdRow key={ad.id} ad={ad} accountId={account.id} agents={agents}
+                        <AdRow key={ad.id} ad={ad} accountId={account.id} agents={agents} level={level}
                             // Local patch — avoids re-fetching the whole
-                            // ad list (and flashing the spinner) every
-                            // time the operator picks an agent.
-                            onRouteChange={route => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, route } : a))} />
+                            // list (and flashing the spinner) every time
+                            // the operator picks an agent.
+                            onRouteChange={route => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, route } : a))}
+                            onStatusChange={status => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, effectiveStatus: status, status } : a))} />
                     ))}
                 </div>
             )}
@@ -291,43 +335,48 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
 
 // ─── Single ad row ────────────────────────────────────────────
 
-function AdRow({ ad, accountId, agents, onRouteChange }: {
-    ad: Ad;
+function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: {
+    ad: AdObject;
     accountId: string;
     agents: AgentLite[];
-    onRouteChange: (route: Ad['route']) => void;
+    level: Level;
+    onRouteChange: (route: AdObject['route']) => void;
+    onStatusChange: (status: string) => void;
 }) {
     const [open, setOpen] = useState(false);
     const [insights, setInsights] = useState<AdInsights | null>(null);
     const [loadingInsights, setLoadingInsights] = useState(false);
     const [insightsError, setInsightsError] = useState<string | null>(null);
     const [binding, setBinding] = useState(false);
+    const [togglingStatus, setTogglingStatus] = useState(false);
     const [datePreset, setDatePreset] = useState<'last_7d' | 'last_30d' | 'maximum'>('last_7d');
     const [contactsTotal, setContactsTotal] = useState<number | null>(null);
     const [contactsModalOpen, setContactsModalOpen] = useState(false);
+
+    const objectPath = `/meta/accounts/${accountId}/objects/${level}/${ad.id}`;
+    const inherited = ad.inheritedRoute || null;
+    const bindLocked = !!inherited;
 
     const loadInsights = useCallback(async (preset: string) => {
         setLoadingInsights(true);
         setInsightsError(null);
         try {
-            const r = await api.get(`/meta/accounts/${accountId}/ads/${ad.id}/insights`, { params: { preset } });
+            const r = await api.get(`${objectPath}/insights`, { params: { preset } });
             if (r.data?.success) setInsights(r.data.insights);
             else setInsightsError(r.data?.message || 'No insights');
         } catch (e: any) {
             setInsightsError(e?.response?.data?.message || e.message);
         } finally { setLoadingInsights(false); }
-    }, [accountId, ad.id]);
+    }, [objectPath]);
 
-    // First-page contact lookup is just used to populate the count
-    // tile. The modal does its own paginated fetch.
     const loadContactsCount = useCallback(async (preset: string) => {
         try {
-            const r = await api.get(`/meta/accounts/${accountId}/ads/${ad.id}/contacts`, {
+            const r = await api.get(`${objectPath}/contacts`, {
                 params: { preset, page: 1, pageSize: 1 },
             });
             if (r.data?.success) setContactsTotal(r.data.total);
         } catch { setContactsTotal(null); }
-    }, [accountId, ad.id]);
+    }, [objectPath]);
 
     useEffect(() => {
         if (open && !insights && !insightsError) loadInsights(datePreset);
@@ -348,16 +397,12 @@ function AdRow({ ad, accountId, agents, onRouteChange }: {
         setBinding(true);
         try {
             if (!agentId) {
-                await api.delete(`/meta/accounts/${accountId}/ads/${ad.id}/bind`);
+                await api.delete(`${objectPath}/bind`);
                 onRouteChange(null);
             } else {
-                const r = await api.post(`/meta/accounts/${accountId}/ads/${ad.id}/bind`, {
+                const r = await api.post(`${objectPath}/bind`, {
                     agentId, adName: ad.name,
                 });
-                // The bind endpoint returns the saved AdRoute incl. the
-                // populated `agent` relation, so we can patch the row
-                // locally without re-pulling the whole ad list from
-                // Marketing API.
                 const newRoute = r.data?.route ? {
                     id: r.data.route.id,
                     agentId: r.data.route.agentId,
@@ -371,10 +416,26 @@ function AdRow({ ad, accountId, agents, onRouteChange }: {
         } finally { setBinding(false); }
     };
 
+    // Pause / Resume toggle. The Marketing API uses the same
+    // status field everywhere so one helper drives all 3 levels.
+    const isPaused = (ad.effectiveStatus || ad.status) === 'PAUSED'
+        || (ad.effectiveStatus || ad.status || '').endsWith('_PAUSED'); // ADSET_PAUSED, CAMPAIGN_PAUSED
+    const toggleStatus = async () => {
+        const next: 'ACTIVE' | 'PAUSED' = isPaused ? 'ACTIVE' : 'PAUSED';
+        setTogglingStatus(true);
+        try {
+            await api.post(`${objectPath}/status`, { status: next });
+            onStatusChange(next);
+        } catch (e: any) {
+            alert(e?.response?.data?.message || e.message);
+        } finally { setTogglingStatus(false); }
+    };
+
+    const eff = ad.effectiveStatus || ad.status || '';
     const statusColour =
-        ad.effectiveStatus === 'ACTIVE'  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' :
-        ad.effectiveStatus === 'PAUSED'  ? 'text-amber-300 bg-amber-500/10 border-amber-500/30' :
-                                            'text-muted-foreground bg-secondary/60 border-border';
+        eff === 'ACTIVE'              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' :
+        eff.includes('PAUSED')        ? 'text-amber-300 bg-amber-500/10 border-amber-500/30' :
+                                        'text-muted-foreground bg-secondary/60 border-border';
 
     return (
         <div className="border-b border-border last:border-0">
@@ -387,23 +448,50 @@ function AdRow({ ad, accountId, agents, onRouteChange }: {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={ad.thumbnailUrl} alt="" className="w-12 h-12 rounded-lg object-cover bg-secondary/50 flex-shrink-0" />
                 ) : (
-                    <div className="w-12 h-12 rounded-lg bg-secondary/40 flex-shrink-0" />
+                    <div className={`w-12 h-12 rounded-lg flex-shrink-0 flex items-center justify-center ${level === 'campaign' ? 'bg-blue-500/10 text-blue-300/60' : level === 'adset' ? 'bg-violet-500/10 text-violet-300/60' : 'bg-secondary/40'}`}>
+                        <Megaphone className="w-4 h-4" />
+                    </div>
                 )}
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium truncate">{ad.name}</span>
                         <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${statusColour}`}>
-                            {ad.effectiveStatus || ad.status}
+                            {eff || '—'}
                         </span>
                     </div>
                     <p className="text-[11px] text-muted-foreground truncate">
-                        {ad.campaign?.name || '—'}{ad.adset?.name && ` · ${ad.adset.name}`}
+                        {level === 'campaign'
+                            ? (ad.objective || '—')
+                            : level === 'adset'
+                                ? `${ad.campaign?.name || '—'}${ad.optimizationGoal ? ` · ${ad.optimizationGoal}` : ''}`
+                                : `${ad.campaign?.name || '—'}${ad.adset?.name ? ` · ${ad.adset.name}` : ''}`}
                     </p>
+                    {inherited && (
+                        <p className="text-[10px] text-violet-300/80 mt-0.5 flex items-center gap-1">
+                            <Bot className="w-2.5 h-2.5" />
+                            Inherited from {inherited.level}: <span className="text-violet-300 font-medium">{inherited.agent.name}</span>
+                        </p>
+                    )}
                 </div>
-                {/* AI-agent binding control — the most important
-                    interaction on this row, so it gets its own
-                    labelled block with colour-coded states so
-                    operators don't miss what the dropdown is for. */}
+
+                {/* Pause / Resume — Marketing API status toggle. Pill-style
+                    switch on the right side so it reads as the analogue of
+                    the on/off switch in Ads Manager. */}
+                <button onClick={toggleStatus} disabled={togglingStatus}
+                    title={isPaused ? 'Resume' : 'Pause'}
+                    className={`flex-shrink-0 relative w-12 h-6 rounded-full border transition-colors disabled:opacity-50 ${isPaused
+                        ? 'bg-secondary/40 border-border'
+                        : 'bg-emerald-500/30 border-emerald-500/40'}`}>
+                    <span className={`absolute top-0.5 w-5 h-5 rounded-full transition-all flex items-center justify-center ${isPaused
+                        ? 'left-0.5 bg-muted-foreground/70 text-card'
+                        : 'left-[26px] bg-emerald-400 text-emerald-950'}`}>
+                        {togglingStatus
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : isPaused ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
+                    </span>
+                </button>
+
+                {/* AI-agent binding control */}
                 <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
                         <Bot className="w-2.5 h-2.5" />
@@ -412,18 +500,21 @@ function AdRow({ ad, accountId, agents, onRouteChange }: {
                     <div className="flex items-center gap-1.5">
                         {binding && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
                         <select value={ad.route?.agentId || ''} onChange={e => onBind(e.target.value)}
-                            disabled={binding}
-                            className={`text-xs px-2.5 py-1.5 rounded-md border-2 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:opacity-50 min-w-[170px] transition-colors font-medium cursor-pointer ${ad.route
-                                ? 'bg-violet-500/15 border-violet-500/50 text-violet-200'
-                                : 'bg-amber-500/5 border-amber-500/40 border-dashed text-amber-300 hover:bg-amber-500/10'}`}>
+                            disabled={binding || bindLocked}
+                            title={bindLocked ? `Bound at ${inherited?.level} level — unbind there first` : ''}
+                            className={`text-xs px-2.5 py-1.5 rounded-md border-2 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:cursor-not-allowed min-w-[170px] transition-colors font-medium cursor-pointer ${bindLocked
+                                ? 'bg-secondary/30 border-border/40 text-muted-foreground/60'
+                                : ad.route
+                                    ? 'bg-violet-500/15 border-violet-500/50 text-violet-200'
+                                    : 'bg-amber-500/5 border-amber-500/40 border-dashed text-amber-300 hover:bg-amber-500/10'}`}>
                             <option value="" className="bg-card text-foreground">
-                                {ad.route ? '✕  Unbind' : 'Choose an agent…'}
+                                {bindLocked ? `Locked by ${inherited?.level}` : ad.route ? '✕  Unbind' : 'Choose an agent…'}
                             </option>
                             {agents.map(a => (
                                 <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>
                             ))}
                         </select>
-                        {ad.route && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                        {ad.route && !bindLocked && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
                     </div>
                 </div>
             </div>
@@ -474,8 +565,9 @@ function AdRow({ ad, accountId, agents, onRouteChange }: {
                     {contactsModalOpen && (
                         <AdContactsModal
                             accountId={accountId}
-                            adId={ad.id}
-                            adName={ad.name}
+                            level={level}
+                            objectId={ad.id}
+                            objectName={ad.name}
                             preset={datePreset}
                             onClose={() => setContactsModalOpen(false)}
                         />
@@ -589,10 +681,11 @@ type AdContact = {
 
 const CONTACTS_PAGE_SIZE = 15;
 
-function AdContactsModal({ accountId, adId, adName, preset, onClose }: {
+function AdContactsModal({ accountId, level, objectId, objectName, preset, onClose }: {
     accountId: string;
-    adId: string;
-    adName: string;
+    level: Level;
+    objectId: string;
+    objectName: string;
     preset: 'last_7d' | 'last_30d' | 'maximum';
     onClose: () => void;
 }) {
@@ -606,7 +699,7 @@ function AdContactsModal({ accountId, adId, adName, preset, onClose }: {
         setLoading(true);
         setError(null);
         try {
-            const r = await api.get(`/meta/accounts/${accountId}/ads/${adId}/contacts`, {
+            const r = await api.get(`/meta/accounts/${accountId}/objects/${level}/${objectId}/contacts`, {
                 params: { preset, page: p, pageSize: CONTACTS_PAGE_SIZE },
             });
             if (r.data?.success) {
@@ -618,7 +711,7 @@ function AdContactsModal({ accountId, adId, adName, preset, onClose }: {
         } catch (e: any) {
             setError(e?.response?.data?.message || e.message);
         } finally { setLoading(false); }
-    }, [accountId, adId, preset]);
+    }, [accountId, level, objectId, preset]);
 
     useEffect(() => { load(page); }, [load, page]);
 
@@ -632,7 +725,7 @@ function AdContactsModal({ accountId, adId, adName, preset, onClose }: {
                     <div className="min-w-0">
                         <h3 className="font-semibold truncate">Contacts from this ad</h3>
                         <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                            {adName} · {presetLabel} · {total.toLocaleString()} total
+                            {objectName} · {presetLabel} · {total.toLocaleString()} total
                         </p>
                     </div>
                     <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground rounded flex-shrink-0">

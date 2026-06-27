@@ -528,7 +528,36 @@ model MetaAdAccount {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  metaAds         MetaAd[]
+
   @@unique([workspaceId, adAccountId])
+}
+
+// Lazy-populated cache of Meta ad → adset → campaign hierarchy.
+// Used at runtime so a click-to-WhatsApp arrival (which only carries
+// the ad id in externalAdReply.sourceId) can be routed against
+// campaign-level or adset-level AdRoute rules. Upserted on every
+// /meta/accounts/:id/ads call.
+model MetaAd {
+  id              String   @id @default(uuid())
+  metaAdAccountId String
+  metaAdAccount   MetaAdAccount @relation(fields: [metaAdAccountId], references: [id], onDelete: Cascade)
+
+  adId            String   @unique
+  name            String?
+  adsetId         String?
+  adsetName       String?
+  campaignId      String?
+  campaignName    String?
+  status          String?
+  effectiveStatus String?
+  thumbnailUrl    String?
+  createdTime     DateTime?
+  lastSyncedAt    DateTime?
+
+  @@index([metaAdAccountId])
+  @@index([campaignId])
+  @@index([adsetId])
 }
 
 // Oversight ("meta") agent — periodically reviews one or more

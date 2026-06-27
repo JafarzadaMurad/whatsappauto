@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
 
-const MATCH_TYPES = ['headline', 'source_url', 'ad_id', 'ctwa_prefix'] as const;
+const MATCH_TYPES = ['headline', 'source_url', 'ad_id', 'ctwa_prefix', 'campaign_id', 'adset_id'] as const;
 
 const createSchema = z.object({
     name: z.string().min(1).max(120),

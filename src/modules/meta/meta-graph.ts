@@ -102,6 +102,62 @@ export async function listAdsInAccount(accessToken: string, adAccountId: string,
     return (res.data?.data || []) as FbAd[];
 }
 
+export type FbCampaign = {
+    id: string;
+    name: string;
+    status?: string;
+    effective_status?: string;
+    objective?: string;
+    daily_budget?: string;
+    lifetime_budget?: string;
+    created_time?: string;
+};
+
+export async function listCampaignsInAccount(accessToken: string, adAccountId: string, limit = 200): Promise<FbCampaign[]> {
+    const res = await axios.get(`${BASE}/${adAccountId}/campaigns`, {
+        params: {
+            access_token: accessToken,
+            fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,created_time',
+            limit,
+        },
+    });
+    return (res.data?.data || []) as FbCampaign[];
+}
+
+export type FbAdSet = {
+    id: string;
+    name: string;
+    status?: string;
+    effective_status?: string;
+    daily_budget?: string;
+    lifetime_budget?: string;
+    optimization_goal?: string;
+    created_time?: string;
+    campaign_id?: string;
+    campaign?: { id: string; name: string };
+};
+
+export async function listAdSetsInAccount(accessToken: string, adAccountId: string, limit = 200): Promise<FbAdSet[]> {
+    const res = await axios.get(`${BASE}/${adAccountId}/adsets`, {
+        params: {
+            access_token: accessToken,
+            fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,optimization_goal,created_time,campaign_id,campaign{id,name}',
+            limit,
+        },
+    });
+    return (res.data?.data || []) as FbAdSet[];
+}
+
+// Flip the status of a campaign / ad set / ad. The Marketing API
+// uses the same POST {status:'ACTIVE'|'PAUSED'} shape for every
+// level — the only thing that differs is the node id you POST to.
+export async function setObjectStatus(accessToken: string, objectId: string, status: 'ACTIVE' | 'PAUSED'): Promise<{ success: boolean }> {
+    const res = await axios.post(`${BASE}/${objectId}`, null, {
+        params: { access_token: accessToken, status },
+    });
+    return res.data;
+}
+
 export type AdInsights = {
     impressions?: string;
     clicks?: string;

@@ -52,29 +52,57 @@ export function extractAdReferrer(msg: any): AdReferrer | null {
 // same priority the oldest rule wins so layered rules stay
 // predictable. Returns null when no rule matches (caller falls back
 // to the instance's primary or router agent).
+//
+// campaign_id and adset_id matches need the Meta hierarchy: the
+// externalAdReply only carries the ad id, so we look up the cached
+// MetaAd row to resolve which campaign / adset the ad belongs to.
 export async function matchAdRoute(workspaceId: string, ref: AdReferrer): Promise<{ id: string; agentId: string; name: string } | null> {
     const rules = await prisma.adRoute.findMany({
         where: { workspaceId, isActive: true },
         orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
         select: { id: true, agentId: true, name: true, matchType: true, matchValue: true },
     });
+    if (rules.length === 0) return null;
+
+    // Resolve the ad's campaign / adset only when we actually have a
+    // sourceId AND at least one rule cares about them — saves a DB
+    // hit on most arrivals.
+    const needsHierarchy = ref.sourceId && rules.some(r => r.matchType === 'campaign_id' || r.matchType === 'adset_id');
+    let campaignId: string | null = null;
+    let adsetId: string | null = null;
+    if (needsHierarchy) {
+        const metaAd = await prisma.metaAd.findFirst({
+            where: { adId: ref.sourceId as string, metaAdAccount: { workspaceId } },
+            select: { campaignId: true, adsetId: true },
+        }).catch(() => null);
+        campaignId = metaAd?.campaignId || null;
+        adsetId = metaAd?.adsetId || null;
+    }
+
     for (const r of rules) {
-        if (testAdRoute(r.matchType, r.matchValue, ref)) {
+        if (testAdRoute(r.matchType, r.matchValue, ref, { campaignId, adsetId })) {
             return { id: r.id, agentId: r.agentId, name: r.name };
         }
     }
     return null;
 }
 
-export function testAdRoute(matchType: string, matchValue: string, ref: AdReferrer): boolean {
+export function testAdRoute(
+    matchType: string,
+    matchValue: string,
+    ref: AdReferrer,
+    hierarchy?: { campaignId?: string | null; adsetId?: string | null },
+): boolean {
     const needle = String(matchValue || '').trim();
     if (!needle) return false;
     switch (matchType) {
-        case 'headline':    return (ref.title || '').toLowerCase().includes(needle.toLowerCase());
-        case 'source_url':  return (ref.sourceUrl || '').toLowerCase().includes(needle.toLowerCase());
-        case 'ad_id':       return (ref.sourceId || '') === needle;
-        case 'ctwa_prefix': return (ref.ctwaClid || '').startsWith(needle);
-        default:            return false;
+        case 'headline':     return (ref.title || '').toLowerCase().includes(needle.toLowerCase());
+        case 'source_url':   return (ref.sourceUrl || '').toLowerCase().includes(needle.toLowerCase());
+        case 'ad_id':        return (ref.sourceId || '') === needle;
+        case 'ctwa_prefix':  return (ref.ctwaClid || '').startsWith(needle);
+        case 'campaign_id':  return !!hierarchy?.campaignId && hierarchy.campaignId === needle;
+        case 'adset_id':     return !!hierarchy?.adsetId && hierarchy.adsetId === needle;
+        default:             return false;
     }
 }
 

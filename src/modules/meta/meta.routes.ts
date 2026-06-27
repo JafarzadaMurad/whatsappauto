@@ -13,6 +13,7 @@ router.post('/exchange', controller.exchange.bind(controller));
 router.get('/accounts', controller.listAccounts.bind(controller));
 router.post('/accounts', controller.saveAccounts.bind(controller));
 router.delete('/accounts/:id', controller.deleteAccount.bind(controller));
+router.get('/accounts/:id/permissions', controller.tokenPermissions.bind(controller));
 
 router.get('/accounts/:id/ads', controller.listAds.bind(controller));
 router.get('/accounts/:id/campaigns', controller.listCampaigns.bind(controller));

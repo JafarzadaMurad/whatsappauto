@@ -151,11 +151,28 @@ export async function listAdSetsInAccount(accessToken: string, adAccountId: stri
 // Flip the status of a campaign / ad set / ad. The Marketing API
 // uses the same POST {status:'ACTIVE'|'PAUSED'} shape for every
 // level — the only thing that differs is the node id you POST to.
+// The Graph API rejects status when it arrives via query string on
+// some campaign updates (error 100, \"does not support this
+// operation\"); url-encoded body is the documented form, so we use
+// that and pass the token through the query.
 export async function setObjectStatus(accessToken: string, objectId: string, status: 'ACTIVE' | 'PAUSED'): Promise<{ success: boolean }> {
-    const res = await axios.post(`${BASE}/${objectId}`, null, {
-        params: { access_token: accessToken, status },
+    const body = new URLSearchParams({ status });
+    const res = await axios.post(`${BASE}/${objectId}`, body.toString(), {
+        params: { access_token: accessToken },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     return res.data;
+}
+
+// /me/permissions — what the connected user actually granted on
+// THIS token. Useful for debugging \"you have ads_management in
+// the Configuration but the Graph still rejects you\" situations:
+// the token might be older than the Configuration update.
+export async function listGrantedPermissions(accessToken: string): Promise<Array<{ permission: string; status: string }>> {
+    const res = await axios.get(`${BASE}/me/permissions`, {
+        params: { access_token: accessToken },
+    });
+    return (res.data?.data || []) as Array<{ permission: string; status: string }>;
 }
 
 export type AdInsights = {

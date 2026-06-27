@@ -282,6 +282,20 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
                     className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary disabled:opacity-50">
                     <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                 </button>
+                <button onClick={async () => {
+                    try {
+                        const r = await api.get(`/meta/accounts/${account.id}/permissions`);
+                        if (r.data?.success) {
+                            const lines = (r.data.permissions || []).map((p: any) => `${p.status === 'granted' ? '✓' : '✗'} ${p.permission}`).join('\n');
+                            alert(`Token permissions:\n\n${lines || '(none)'}\n\nIf 'ads_management' is missing or not 'granted', disconnect this account and reconnect to refresh the token.`);
+                        } else alert(r.data?.message || 'Could not fetch permissions');
+                    } catch (e: any) {
+                        alert(e?.response?.data?.message || e.message);
+                    }
+                }} title="Check token permissions"
+                    className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-secondary">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                </button>
                 <button onClick={onDelete} title="Disconnect"
                     className="p-1.5 text-muted-foreground hover:text-red-400 rounded-md hover:bg-secondary">
                     <Trash2 className="w-3.5 h-3.5" />

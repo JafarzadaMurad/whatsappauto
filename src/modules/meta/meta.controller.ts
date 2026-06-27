@@ -7,7 +7,7 @@ import { logger } from '../../utils/logger';
 import {
     getMetaAppCreds, exchangeCodeForToken, exchangeForLongLivedToken,
     getMe, listUserAdAccounts, listAdsInAccount, listCampaignsInAccount,
-    listAdSetsInAccount, getAdInsights, setObjectStatus, formatMetaError,
+    listAdSetsInAccount, getAdInsights, setObjectStatus, listGrantedPermissions, formatMetaError,
 } from './meta-graph';
 
 // `email` was here originally but Marketing API doesn't need it,
@@ -165,6 +165,26 @@ export class MetaController {
             return res.json({ success: true, accounts: created });
         } catch (e: any) {
             if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // GET /api/meta/accounts/:id/permissions — what the stored
+    // token actually has. Use it when a write call fails with code
+    // 100 to find out whether the scope is actually attached.
+    async tokenPermissions(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = String(req.params.id);
+            const acc = await prisma.metaAdAccount.findFirst({ where: { id, workspaceId } });
+            if (!acc) return res.status(404).json({ success: false, message: 'Account not found' });
+            try {
+                const perms = await listGrantedPermissions(acc.accessToken);
+                return res.json({ success: true, permissions: perms });
+            } catch (apiErr: any) {
+                return res.status(502).json({ success: false, message: formatMetaError(apiErr) });
+            }
+        } catch (e: any) {
             return res.status(500).json({ success: false, message: e.message });
         }
     }

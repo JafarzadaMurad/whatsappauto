@@ -252,6 +252,59 @@ export class MetaController {
         }
     }
 
+    // GET /api/meta/accounts/:id/ads/:adId/contacts?preset=&page=&pageSize=
+    //
+    // Paginated list of CRM contacts whose first-touch attribution
+    // points at this exact Meta ad (Client.adReferrer.sourceId === adId).
+    // Honours the same date-preset as the insights endpoint so the
+    // count next to the stat tile always lines up with the displayed
+    // ranges (Last 7 days / Last 30 days / All time).
+    async adContacts(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = String(req.params.id);
+            const adId = String(req.params.adId);
+            const preset = String(req.query.preset || 'maximum');
+            const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+            const pageSize = Math.min(50, Math.max(1, parseInt(String(req.query.pageSize || '15'), 10) || 15));
+
+            const acc = await prisma.metaAdAccount.findFirst({ where: { id, workspaceId }, select: { id: true } });
+            if (!acc) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            const dateFilter =
+                preset === 'last_7d'  ? { createdAt: { gte: new Date(Date.now() - 7  * 24 * 3600 * 1000) } } :
+                preset === 'last_30d' ? { createdAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } } :
+                                        {};
+
+            const where: any = {
+                workspaceId,
+                ...dateFilter,
+                // Postgres JSON path filter — pulls only contacts whose
+                // captured adReferrer.sourceId matches this Meta ad id.
+                adReferrer: { path: ['sourceId'], equals: adId },
+            };
+
+            const [contacts, total] = await Promise.all([
+                prisma.client.findMany({
+                    where,
+                    orderBy: { createdAt: 'desc' },
+                    skip: (page - 1) * pageSize,
+                    take: pageSize,
+                    select: {
+                        id: true, name: true, phone: true, status: true,
+                        tags: true, createdAt: true, isAnonymous: true,
+                        assignedAgent: { select: { id: true, name: true } },
+                    },
+                }),
+                prisma.client.count({ where }),
+            ]);
+
+            return res.json({ success: true, contacts, total, page, pageSize });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
     // POST /api/meta/accounts/:id/ads/:adId/bind — creates (or
     // updates) an AdRoute that maps this specific Meta ad ID to
     // an agent. Reuses the existing ad-routing engine instead of

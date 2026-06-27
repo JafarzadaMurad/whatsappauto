@@ -16,6 +16,7 @@ router.delete('/accounts/:id', controller.deleteAccount.bind(controller));
 
 router.get('/accounts/:id/ads', controller.listAds.bind(controller));
 router.get('/accounts/:id/ads/:adId/insights', controller.adInsights.bind(controller));
+router.get('/accounts/:id/ads/:adId/contacts', controller.adContacts.bind(controller));
 router.post('/accounts/:id/ads/:adId/bind', controller.bindAd.bind(controller));
 router.delete('/accounts/:id/ads/:adId/bind', controller.unbindAd.bind(controller));
 

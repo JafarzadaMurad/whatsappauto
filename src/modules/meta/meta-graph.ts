@@ -4,7 +4,11 @@ import { logger } from '../../utils/logger';
 
 // Marketing API is versioned — pin so a Meta v-bump doesn't silently
 // change behaviour. Bump intentionally when we want new fields.
-const GRAPH_VERSION = 'v20.0';
+// v21.0 matches the reference PHP integration that's known to
+// successfully POST status updates against existing campaigns;
+// earlier versions started rejecting some campaign updates with
+// "does not support this operation".
+const GRAPH_VERSION = 'v21.0';
 const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 export async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string; adsConfigId: string | null } | null> {
@@ -149,16 +153,15 @@ export async function listAdSetsInAccount(accessToken: string, adAccountId: stri
 }
 
 // Flip the status of a campaign / ad set / ad. The Marketing API
-// uses the same POST {status:'ACTIVE'|'PAUSED'} shape for every
-// level — the only thing that differs is the node id you POST to.
-// The Graph API rejects status when it arrives via query string on
-// some campaign updates (error 100, \"does not support this
-// operation\"); url-encoded body is the documented form, so we use
-// that and pass the token through the query.
+// uses the same POST shape at every level — only the node id
+// differs. Both the access_token AND the status must go in the
+// urlencoded body; passing the token via query string while POSTing
+// status in the body was triggering Meta's "does not support this
+// operation" rejection on some campaigns. Matches the layout of
+// the known-working PHP reference implementation.
 export async function setObjectStatus(accessToken: string, objectId: string, status: 'ACTIVE' | 'PAUSED'): Promise<{ success: boolean }> {
-    const body = new URLSearchParams({ status });
+    const body = new URLSearchParams({ status, access_token: accessToken });
     const res = await axios.post(`${BASE}/${objectId}`, body.toString(), {
-        params: { access_token: accessToken },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     return res.data;

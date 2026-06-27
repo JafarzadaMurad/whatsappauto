@@ -7,7 +7,8 @@ import { logger } from '../../utils/logger';
 import {
     getMetaAppCreds, exchangeCodeForToken, exchangeForLongLivedToken,
     getMe, listUserAdAccounts, listAdsInAccount, listCampaignsInAccount,
-    listAdSetsInAccount, getAdInsights, setObjectStatus, listGrantedPermissions, formatMetaError,
+    listAdSetsInAccount, getAdInsights, setObjectStatus, listGrantedPermissions,
+    revokeAppAccess, formatMetaError,
 } from './meta-graph';
 
 // `email` was here originally but Marketing API doesn't need it,
@@ -193,8 +194,22 @@ export class MetaController {
         try {
             const workspaceId = getWorkspaceId(req);
             const id = String(req.params.id);
-            const owns = await prisma.metaAdAccount.findFirst({ where: { id, workspaceId }, select: { id: true } });
-            if (!owns) return res.status(404).json({ success: false, message: 'Account not found' });
+            const acc = await prisma.metaAdAccount.findFirst({ where: { id, workspaceId } });
+            if (!acc) return res.status(404).json({ success: false, message: 'Account not found' });
+
+            // Revoke the OAuth grant on Facebook's side so the next
+            // Connect button click forces a fresh consent screen.
+            // Without this, Meta silently reuses the prior grant —
+            // newly-added scopes (e.g. ads_management added after the
+            // user first authorised) never make it onto the new token.
+            // Best-effort; we don't fail the delete if Meta is down.
+            try {
+                await revokeAppAccess(acc.accessToken);
+                logger.info({ id }, '[meta] revoked Facebook app access on disconnect');
+            } catch (err: any) {
+                logger.warn({ err: err?.response?.data || err?.message, id }, '[meta] revoke on disconnect failed (continuing with local delete)');
+            }
+
             await prisma.metaAdAccount.delete({ where: { id } });
             return res.json({ success: true });
         } catch (e: any) {

@@ -178,6 +178,20 @@ export async function listGrantedPermissions(accessToken: string): Promise<Array
     return (res.data?.data || []) as Array<{ permission: string; status: string }>;
 }
 
+// Revoke the app's access on the Facebook side so the next OAuth
+// pass forces a brand-new consent — including any new scopes
+// (e.g. ads_management) that were added to the Configuration after
+// the user last authorised the app. Without this, Meta silently
+// reuses the old grant and ads_management never appears on the
+// token. Best-effort: errors swallowed by the caller.
+export async function revokeAppAccess(accessToken: string): Promise<void> {
+    const body = new URLSearchParams({ access_token: accessToken });
+    await axios.delete(`${BASE}/me/permissions`, {
+        data: body.toString(),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+}
+
 export type AdInsights = {
     impressions?: string;
     clicks?: string;

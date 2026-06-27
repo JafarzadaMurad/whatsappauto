@@ -432,9 +432,31 @@ function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: 
 
     // Pause / Resume toggle. The Marketing API uses the same
     // status field everywhere so one helper drives all 3 levels.
-    const isPaused = (ad.effectiveStatus || ad.status) === 'PAUSED'
-        || (ad.effectiveStatus || ad.status || '').endsWith('_PAUSED'); // ADSET_PAUSED, CAMPAIGN_PAUSED
+    // Meta's effective_status rolls in parent pauses (an Ad with a
+    // paused campaign shows effective_status='CAMPAIGN_PAUSED' even
+    // though its own status field may be 'ACTIVE'). We treat any
+    // *_PAUSED other than the bare 'PAUSED' as a parent pause and
+    // disable the toggle — flipping our own status while the
+    // ancestor is paused is what triggers Meta's \"does not support
+    // this operation\" rejection, and even if it succeeded the row
+    // would still not be running.
+    const effStatus = ad.effectiveStatus || ad.status || '';
+    const isOwnPaused = effStatus === 'PAUSED';
+    const isParentPaused = effStatus.endsWith('_PAUSED') && effStatus !== 'PAUSED';
+    const isPaused = isOwnPaused || isParentPaused;
+    const parentLevelLabel =
+        effStatus.includes('CAMPAIGN') ? 'campaign' :
+        effStatus.includes('ADSET')    ? 'ad set'   :
+                                          'parent';
+    const parentTab =
+        effStatus.includes('CAMPAIGN') ? 'Campaigns' :
+        effStatus.includes('ADSET')    ? 'Ad Sets'   :
+                                          '';
     const toggleStatus = async () => {
+        if (isParentPaused) {
+            alert(`This ${level}'s ${parentLevelLabel} is paused. Switch to the ${parentTab} view and resume it — the children will follow automatically.`);
+            return;
+        }
         const next: 'ACTIVE' | 'PAUSED' = isPaused ? 'ACTIVE' : 'PAUSED';
         setTogglingStatus(true);
         try {
@@ -498,15 +520,23 @@ function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: 
 
                 {/* Pause / Resume — Marketing API status toggle. Pill-style
                     switch on the right side so it reads as the analogue of
-                    the on/off switch in Ads Manager. */}
-                <button onClick={toggleStatus} disabled={togglingStatus}
-                    title={isPaused ? 'Resume' : 'Pause'}
-                    className={`flex-shrink-0 relative w-12 h-6 rounded-full border transition-colors disabled:opacity-50 ${isPaused
-                        ? 'bg-secondary/40 border-border'
-                        : 'bg-emerald-500/30 border-emerald-500/40'}`}>
-                    <span className={`absolute top-0.5 w-5 h-5 rounded-full transition-all flex items-center justify-center ${isPaused
-                        ? 'left-0.5 bg-muted-foreground/70 text-card'
-                        : 'left-[26px] bg-emerald-400 text-emerald-950'}`}>
+                    the on/off switch in Ads Manager. Locked when a parent
+                    level is paused — Meta will reject the call and the
+                    flip wouldn't make the row actually run anyway. */}
+                <button onClick={toggleStatus} disabled={togglingStatus || isParentPaused}
+                    title={isParentPaused
+                        ? `${parentLevelLabel} above is paused — resume it from the ${parentTab} view first`
+                        : isPaused ? 'Resume' : 'Pause'}
+                    className={`flex-shrink-0 relative w-12 h-6 rounded-full border transition-colors ${isParentPaused
+                        ? 'bg-secondary/20 border-border/40 cursor-not-allowed'
+                        : isPaused
+                            ? 'bg-secondary/40 border-border'
+                            : 'bg-emerald-500/30 border-emerald-500/40'}`}>
+                    <span className={`absolute top-0.5 w-5 h-5 rounded-full transition-all flex items-center justify-center ${isParentPaused
+                        ? 'left-0.5 bg-muted-foreground/30 text-muted-foreground/60'
+                        : isPaused
+                            ? 'left-0.5 bg-muted-foreground/70 text-card'
+                            : 'left-[26px] bg-emerald-400 text-emerald-950'}`}>
                         {togglingStatus
                             ? <Loader2 className="w-3 h-3 animate-spin" />
                             : isPaused ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Bot } from "lucide-react";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
@@ -355,20 +355,32 @@ function AdRow({ ad, accountId, agents, onBindChange }: { ad: Ad; accountId: str
                     <p className="text-[11px] text-muted-foreground truncate">
                         {ad.campaign?.name || '—'}{ad.adset?.name && ` · ${ad.adset.name}`}
                     </p>
-                    {ad.route && (
-                        <p className="text-[11px] text-violet-300 mt-0.5">
-                            → {ad.route.agent.name}
-                        </p>
-                    )}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                    <select value={ad.route?.agentId || ''} onChange={e => onBind(e.target.value)}
-                        disabled={binding}
-                        className="bg-secondary/50 border border-border rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50 min-w-[140px]">
-                        <option value="">— not bound —</option>
-                        {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                    {ad.route && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                {/* AI-agent binding control — the most important
+                    interaction on this row, so it gets its own
+                    labelled block with colour-coded states so
+                    operators don't miss what the dropdown is for. */}
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                        <Bot className="w-2.5 h-2.5" />
+                        AI Agent
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                        {binding && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+                        <select value={ad.route?.agentId || ''} onChange={e => onBind(e.target.value)}
+                            disabled={binding}
+                            className={`text-xs px-2.5 py-1.5 rounded-md border-2 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:opacity-50 min-w-[170px] transition-colors font-medium cursor-pointer ${ad.route
+                                ? 'bg-violet-500/15 border-violet-500/50 text-violet-200'
+                                : 'bg-amber-500/5 border-amber-500/40 border-dashed text-amber-300 hover:bg-amber-500/10'}`}>
+                            <option value="" className="bg-card text-foreground">
+                                {ad.route ? '✕  Unbind' : 'Choose an agent…'}
+                            </option>
+                            {agents.map(a => (
+                                <option key={a.id} value={a.id} className="bg-card text-foreground">{a.name}</option>
+                            ))}
+                        </select>
+                        {ad.route && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                    </div>
                 </div>
             </div>
             {open && (

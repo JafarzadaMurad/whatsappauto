@@ -24,6 +24,5 @@ router.get('/accounts/:id/objects/:level/:objectId/insights', controller.objectI
 router.get('/accounts/:id/objects/:level/:objectId/contacts', controller.objectContacts.bind(controller));
 router.post('/accounts/:id/objects/:level/:objectId/bind', controller.bindObject.bind(controller));
 router.delete('/accounts/:id/objects/:level/:objectId/bind', controller.unbindObject.bind(controller));
-router.post('/accounts/:id/objects/:level/:objectId/status', controller.setObjectStatus.bind(controller));
 
 export default router;

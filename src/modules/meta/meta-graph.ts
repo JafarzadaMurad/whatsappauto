@@ -152,21 +152,6 @@ export async function listAdSetsInAccount(accessToken: string, adAccountId: stri
     return (res.data?.data || []) as FbAdSet[];
 }
 
-// Flip the status of a campaign / ad set / ad. The Marketing API
-// uses the same POST shape at every level — only the node id
-// differs. Both the access_token AND the status must go in the
-// urlencoded body; passing the token via query string while POSTing
-// status in the body was triggering Meta's "does not support this
-// operation" rejection on some campaigns. Matches the layout of
-// the known-working PHP reference implementation.
-export async function setObjectStatus(accessToken: string, objectId: string, status: 'ACTIVE' | 'PAUSED'): Promise<{ success: boolean }> {
-    const body = new URLSearchParams({ status, access_token: accessToken });
-    const res = await axios.post(`${BASE}/${objectId}`, body.toString(), {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
-    return res.data;
-}
-
 // /me/permissions — what the connected user actually granted on
 // THIS token. Useful for debugging \"you have ads_management in
 // the Configuration but the Graph still rejects you\" situations:

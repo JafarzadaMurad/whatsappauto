@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Bot, Pause, Play } from "lucide-react";
+import { Megaphone, Loader2, Plus, Trash2, ExternalLink, ChevronRight, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Bot } from "lucide-react";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
 
@@ -338,8 +338,7 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
                             // Local patch — avoids re-fetching the whole
                             // list (and flashing the spinner) every time
                             // the operator picks an agent.
-                            onRouteChange={route => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, route } : a))}
-                            onStatusChange={status => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, effectiveStatus: status, status } : a))} />
+                            onRouteChange={route => setAds(prev => prev.map(a => a.id === ad.id ? { ...a, route } : a))} />
                     ))}
                 </div>
             )}
@@ -349,20 +348,18 @@ function ConnectedAccountSection({ account, agents, onDelete }: { account: Conne
 
 // ─── Single ad row ────────────────────────────────────────────
 
-function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: {
+function AdRow({ ad, accountId, agents, level, onRouteChange }: {
     ad: AdObject;
     accountId: string;
     agents: AgentLite[];
     level: Level;
     onRouteChange: (route: AdObject['route']) => void;
-    onStatusChange: (status: string) => void;
 }) {
     const [open, setOpen] = useState(false);
     const [insights, setInsights] = useState<AdInsights | null>(null);
     const [loadingInsights, setLoadingInsights] = useState(false);
     const [insightsError, setInsightsError] = useState<string | null>(null);
     const [binding, setBinding] = useState(false);
-    const [togglingStatus, setTogglingStatus] = useState(false);
     const [datePreset, setDatePreset] = useState<'last_7d' | 'last_30d' | 'maximum'>('last_7d');
     const [contactsTotal, setContactsTotal] = useState<number | null>(null);
     const [contactsModalOpen, setContactsModalOpen] = useState(false);
@@ -430,50 +427,6 @@ function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: 
         } finally { setBinding(false); }
     };
 
-    // Pause / Resume toggle. The Marketing API uses the same
-    // status field everywhere so one helper drives all 3 levels.
-    // Meta's effective_status rolls in parent pauses (an Ad with a
-    // paused campaign shows effective_status='CAMPAIGN_PAUSED' even
-    // though its own status field may be 'ACTIVE'). We treat any
-    // *_PAUSED other than the bare 'PAUSED' as a parent pause and
-    // disable the toggle — flipping our own status while the
-    // ancestor is paused is what triggers Meta's \"does not support
-    // this operation\" rejection, and even if it succeeded the row
-    // would still not be running.
-    const effStatus = ad.effectiveStatus || ad.status || '';
-    const isOwnPaused = effStatus === 'PAUSED';
-    const isParentPaused = effStatus.endsWith('_PAUSED') && effStatus !== 'PAUSED';
-    const isPaused = isOwnPaused || isParentPaused;
-    const parentLevelLabel =
-        effStatus.includes('CAMPAIGN') ? 'campaign' :
-        effStatus.includes('ADSET')    ? 'ad set'   :
-                                          'parent';
-    const parentTab =
-        effStatus.includes('CAMPAIGN') ? 'Campaigns' :
-        effStatus.includes('ADSET')    ? 'Ad Sets'   :
-                                          '';
-    const toggleStatus = async () => {
-        if (isParentPaused) {
-            alert(`This ${level}'s ${parentLevelLabel} is paused. Switch to the ${parentTab} view and resume it — the children will follow automatically.`);
-            return;
-        }
-        const next: 'ACTIVE' | 'PAUSED' = isPaused ? 'ACTIVE' : 'PAUSED';
-        setTogglingStatus(true);
-        try {
-            await api.post(`${objectPath}/status`, { status: next });
-            onStatusChange(next);
-        } catch (e: any) {
-            const raw = String(e?.response?.data?.message || e.message || '');
-            // Meta error 100 on a status POST almost always means the
-            // connected access token doesn't have ads_management. Tell
-            // the operator what to do instead of dumping the raw Graph
-            // error.
-            const friendly = /code\s*100|does not support this operation|missing permissions/i.test(raw)
-                ? "Your Facebook access token is read-only. Add the 'ads_management' permission to your Facebook Login for Business Configuration in the Meta developer console, then disconnect and reconnect this account."
-                : raw;
-            alert(friendly);
-        } finally { setTogglingStatus(false); }
-    };
 
     const eff = ad.effectiveStatus || ad.status || '';
     const statusColour =
@@ -517,31 +470,6 @@ function AdRow({ ad, accountId, agents, level, onRouteChange, onStatusChange }: 
                         </p>
                     )}
                 </div>
-
-                {/* Pause / Resume — Marketing API status toggle. Pill-style
-                    switch on the right side so it reads as the analogue of
-                    the on/off switch in Ads Manager. Locked when a parent
-                    level is paused — Meta will reject the call and the
-                    flip wouldn't make the row actually run anyway. */}
-                <button onClick={toggleStatus} disabled={togglingStatus || isParentPaused}
-                    title={isParentPaused
-                        ? `${parentLevelLabel} above is paused — resume it from the ${parentTab} view first`
-                        : isPaused ? 'Resume' : 'Pause'}
-                    className={`flex-shrink-0 relative w-12 h-6 rounded-full border transition-colors ${isParentPaused
-                        ? 'bg-secondary/20 border-border/40 cursor-not-allowed'
-                        : isPaused
-                            ? 'bg-secondary/40 border-border'
-                            : 'bg-emerald-500/30 border-emerald-500/40'}`}>
-                    <span className={`absolute top-0.5 w-5 h-5 rounded-full transition-all flex items-center justify-center ${isParentPaused
-                        ? 'left-0.5 bg-muted-foreground/30 text-muted-foreground/60'
-                        : isPaused
-                            ? 'left-0.5 bg-muted-foreground/70 text-card'
-                            : 'left-[26px] bg-emerald-400 text-emerald-950'}`}>
-                        {togglingStatus
-                            ? <Loader2 className="w-3 h-3 animate-spin" />
-                            : isPaused ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
-                    </span>
-                </button>
 
                 {/* AI-agent binding control */}
                 <div className="flex flex-col items-end gap-1 flex-shrink-0">

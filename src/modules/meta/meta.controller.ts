@@ -7,7 +7,7 @@ import { logger } from '../../utils/logger';
 import {
     getMetaAppCreds, exchangeCodeForToken, exchangeForLongLivedToken,
     getMe, listUserAdAccounts, listAdsInAccount, listCampaignsInAccount,
-    listAdSetsInAccount, getAdInsights, setObjectStatus, listGrantedPermissions,
+    listAdSetsInAccount, getAdInsights, listGrantedPermissions,
     revokeAppAccess, formatMetaError,
 } from './meta-graph';
 
@@ -583,62 +583,4 @@ export class MetaController {
         }
     }
 
-    // POST /api/meta/accounts/:id/objects/:level/:objectId/status
-    // body: { status: 'ACTIVE' | 'PAUSED' }
-    async setObjectStatus(req: Request, res: Response) {
-        try {
-            const workspaceId = getWorkspaceId(req);
-            const id = String(req.params.id);
-            const level = String(req.params.level);
-            const objectId = String(req.params.objectId);
-            const status = String(req.body?.status || '');
-            if (status !== 'ACTIVE' && status !== 'PAUSED') {
-                return res.status(400).json({ success: false, message: "status must be 'ACTIVE' or 'PAUSED'" });
-            }
-            const acc = await prisma.metaAdAccount.findFirst({ where: { id, workspaceId } });
-            if (!acc) return res.status(404).json({ success: false, message: 'Account not found' });
-
-            try {
-                await setObjectStatus(acc.accessToken, objectId, status as 'ACTIVE' | 'PAUSED');
-                return res.json({ success: true, status });
-            } catch (apiErr: any) {
-                // Dump every Meta error field we can grab so the
-                // operator (and we, in pm2 logs) can see the actual
-                // root cause — code 100 is overloaded between
-                // \"object missing\", \"permission denied\" and
-                // \"operation unsupported\" and the headline message
-                // doesn't distinguish.
-                const errBody = apiErr?.response?.data?.error || {};
-                logger.warn({
-                    level, objectId, status,
-                    code: errBody.code,
-                    subcode: errBody.error_subcode,
-                    type: errBody.type,
-                    message: errBody.message,
-                    userTitle: errBody.error_user_title,
-                    userMsg: errBody.error_user_msg,
-                    fbtrace_id: errBody.fbtrace_id,
-                    httpStatus: apiErr?.response?.status,
-                }, '[meta] status update failed');
-                const detail = [
-                    errBody.message,
-                    errBody.error_subcode ? `subcode ${errBody.error_subcode}` : null,
-                    errBody.error_user_title || errBody.error_user_msg,
-                    errBody.fbtrace_id ? `trace ${errBody.fbtrace_id}` : null,
-                ].filter(Boolean).join(' · ');
-                return res.status(502).json({
-                    success: false,
-                    message: detail || formatMetaError(apiErr),
-                    meta: {
-                        code: errBody.code,
-                        subcode: errBody.error_subcode,
-                        type: errBody.type,
-                        fbtrace_id: errBody.fbtrace_id,
-                    },
-                });
-            }
-        } catch (e: any) {
-            return res.status(500).json({ success: false, message: e.message });
-        }
-    }
 }

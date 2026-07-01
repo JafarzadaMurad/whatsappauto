@@ -44,6 +44,10 @@ export class DirectiveController {
             const phone = String(req.query.phone || '').replace(/[^0-9]/g, '');
             if (!accountId || !phone) return res.status(400).json({ success: false, message: 'accountId and phone are required' });
 
+            // The accountId can be either a WhatsApp Instance.id or an
+            // InstagramAccount.id — both are UUIDs, unique across
+            // tables. Try each in turn so the panel loads for either
+            // channel's conversations.
             const instance = await prisma.instance.findFirst({
                 where: { id: accountId, workspaceId },
                 select: {
@@ -52,20 +56,27 @@ export class DirectiveController {
                     routerAgent: { select: { id: true, name: true } },
                 },
             });
-            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+            const igAccount = instance ? null : await prisma.instagramAccount.findFirst({
+                where: { id: accountId, workspaceId },
+                select: {
+                    id: true, agentId: true, routerAgentId: true,
+                    agent: { select: { id: true, name: true } },
+                    routerAgent: { select: { id: true, name: true } },
+                },
+            });
+            if (!instance && !igAccount) return res.status(404).json({ success: false, message: 'Account not found' });
 
             const client = await prisma.client.findFirst({
                 where: { workspaceId, phone },
                 select: { id: true, assignedAgentId: true, assignedAgent: { select: { id: true, name: true } } },
             });
 
-            // Sticky assignment wins; otherwise fall back to the instance's
-            // primary agent, then the router. If none are set, this channel
-            // has no AI behind it.
+            const primaryAgent = instance?.agent || igAccount?.agent || null;
+            const routerAgent = instance?.routerAgent || igAccount?.routerAgent || null;
             const resolved =
                 (client?.assignedAgent ? { id: client.assignedAgent.id, name: client.assignedAgent.name } : null)
-                || (instance.agent ? { id: instance.agent.id, name: instance.agent.name } : null)
-                || (instance.routerAgent ? { id: instance.routerAgent.id, name: instance.routerAgent.name } : null);
+                || (primaryAgent ? { id: primaryAgent.id, name: primaryAgent.name } : null)
+                || (routerAgent ? { id: routerAgent.id, name: routerAgent.name } : null);
 
             const directives = client && resolved ? await prisma.operatorDirective.findMany({
                 where: { clientId: client.id, agentId: resolved.id, workspaceId, consumedAt: null },

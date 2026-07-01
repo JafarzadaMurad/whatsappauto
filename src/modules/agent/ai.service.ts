@@ -2673,17 +2673,35 @@ export class AiService {
             data: { workspaceId, clientId, agentId, role: 'operator', text },
         });
 
-        // Resolve the instance + WhatsApp socket the customer is bound
-        // to. Needed for sendToCustomerNow; if missing, that tool
+        // Resolve the channel + send target. Client.channel decides
+        // whether sendToCustomerNow speaks to Baileys (WhatsApp) or
+        // the IG Messaging API. When neither can be resolved the tool
         // refuses gracefully and the agent still gets to chat back.
-        const instance = await prisma.instance.findFirst({
-            where: { workspaceId, OR: [{ agentId }, { routerAgentId: agentId }] },
-            select: { id: true },
-        });
-        const { sessions } = await import('../whatsapp/instance.manager');
+        const clientChannel = (client.channel === 'instagram') ? 'instagram' : 'whatsapp';
         const { io: ioServer } = await import('../../server');
-        const sock: any = instance ? sessions.get(instance.id) : null;
-        const customerJid = `${client.phone}@s.whatsapp.net`;
+
+        // WhatsApp resolution
+        let instance: { id: string } | null = null;
+        let sock: any = null;
+        let customerJid = '';
+        // Instagram resolution
+        let igAccount: { id: string; igUserId: string; accessToken: string } | null = null;
+
+        if (clientChannel === 'whatsapp') {
+            instance = await prisma.instance.findFirst({
+                where: { workspaceId, OR: [{ agentId }, { routerAgentId: agentId }] },
+                select: { id: true },
+            });
+            const { sessions } = await import('../whatsapp/instance.manager');
+            sock = instance ? sessions.get(instance.id) : null;
+            customerJid = `${client.phone}@s.whatsapp.net`;
+        } else {
+            igAccount = await prisma.instagramAccount.findFirst({
+                where: { workspaceId, OR: [{ agentId }, { routerAgentId: agentId }], isActive: true },
+                select: { id: true, igUserId: true, accessToken: true },
+            });
+            customerJid = `ig:${client.phone}`;
+        }
 
         // Provider model
         const providerInfo = agent.provider;
@@ -2715,27 +2733,42 @@ export class AiService {
         // builders.
         const panelTools: Record<string, any> = {
             sendToCustomerNow: makeTool(
-                'Send a WhatsApp message to the customer this conversation is about. Use this whenever the operator asks you to message the customer, however indirect ("send hi", "tell them we will follow up tomorrow", "qarşılayan mesaj göndər"). The text you pass is what the customer literally receives — write it as them, in their language, on-brand. Returns ok:true on send, or an error string.',
+                'Send a message to the customer this conversation is about — WhatsApp or Instagram DM depending on which channel the contact is on. Use this whenever the operator asks you to message the customer, however indirect ("send hi", "tell them we will follow up tomorrow", "qarşılayan mesaj göndər"). The text you pass is what the customer literally receives — write it as them, in their language, on-brand. Returns ok:true on send, or an error string.',
                 z.object({
                     text: z.string().min(1).max(3000).describe('The polished, customer-facing message in the customer\'s language.'),
                 }),
                 async ({ text: outText }) => {
-                    if (!sock || !instance) return { ok: false, error: 'Instance not connected — cannot send right now.' };
                     try {
-                        const sent = await sock.sendMessage(customerJid, { text: outText });
-                        await prisma.message.create({
-                            data: {
-                                instanceId: instance.id, remoteJid: customerJid,
-                                isFromMe: true, messageType: 'text',
-                                content: outText, timestamp: new Date(),
-                                waMsgId: sent?.key?.id || null,
+                        if (clientChannel === 'whatsapp') {
+                            if (!sock || !instance) return { ok: false, error: 'WhatsApp instance not connected — cannot send right now.' };
+                            const sent = await sock.sendMessage(customerJid, { text: outText });
+                            await prisma.message.create({
+                                data: {
+                                    instanceId: instance.id, remoteJid: customerJid,
+                                    isFromMe: true, messageType: 'text',
+                                    content: outText, timestamp: new Date(),
+                                    waMsgId: sent?.key?.id || null,
+                                    status: 'SENT',
+                                },
+                            });
+                            ioServer.emit(`message.new-${instance.id}`, {
+                                id: sent?.key?.id || null,
+                                isFromMe: true, content: outText,
+                                remoteJid: customerJid,
                                 status: 'SENT',
-                            },
-                        });
-                        ioServer.emit(`message.new-${instance.id}`, {
-                            id: sent?.key?.id || null,
+                                timestamp: new Date().toISOString(),
+                            });
+                            return { ok: true, sent: outText };
+                        }
+                        // Instagram path
+                        if (!igAccount) return { ok: false, error: 'No Instagram account tied to this agent for the contact.' };
+                        const { sendIgMessage } = await import('../instagram/instagram.ai.service');
+                        await sendIgMessage(igAccount.igUserId, client.phone, outText, igAccount.accessToken);
+                        ioServer.emit(`message.new-${igAccount.id}`, {
+                            id: `ig-panel-${Date.now()}`,
                             isFromMe: true, content: outText,
                             remoteJid: customerJid,
+                            messageType: 'text',
                             status: 'SENT',
                             timestamp: new Date().toISOString(),
                         });
@@ -2788,9 +2821,11 @@ export class AiService {
             ? `\n\nActive steering notes for this contact (persistent — applied on every customer turn):\n${activeNotes.map((n, i) => `${i + 1}. ${n.text}`).join('\n')}`
             : '';
 
-        // Recent customer transcript so the agent knows what's going on.
+        // Recent customer transcript so the agent knows what's going
+        // on. WA stores messages in prisma.message; IG stores them
+        // as aiConversationLog rows keyed on remoteJid=ig:{sender}.
         let customerTranscript = '';
-        if (instance) {
+        if (clientChannel === 'whatsapp' && instance) {
             const recent = await prisma.message.findMany({
                 where: { instanceId: instance.id, remoteJid: customerJid },
                 orderBy: { timestamp: 'desc' },
@@ -2800,6 +2835,22 @@ export class AiService {
             if (recent.length) {
                 customerTranscript = '\n\nRecent customer transcript (most recent last):\n' +
                     recent.map(m => `${m.isFromMe ? 'YOU→customer' : 'CUSTOMER→you'}: ${(m.content || '[media]').slice(0, 280)}`).join('\n');
+            }
+        } else if (clientChannel === 'instagram') {
+            const recentLogs = await prisma.aiConversationLog.findMany({
+                where: { agentId, remoteJid: customerJid },
+                orderBy: { createdAt: 'desc' },
+                take: 6, // pairs are user+assistant, so 6 rows ≈ 12 turns
+                select: { userMessage: true, agentReply: true },
+            });
+            recentLogs.reverse();
+            if (recentLogs.length) {
+                const lines: string[] = [];
+                for (const log of recentLogs) {
+                    if (log.userMessage) lines.push(`CUSTOMER→you: ${log.userMessage.slice(0, 280)}`);
+                    if (log.agentReply) lines.push(`YOU→customer: ${log.agentReply.slice(0, 280)}`);
+                }
+                if (lines.length) customerTranscript = '\n\nRecent customer transcript (most recent last):\n' + lines.join('\n');
             }
         }
 

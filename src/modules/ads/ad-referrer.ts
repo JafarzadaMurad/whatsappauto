@@ -47,6 +47,45 @@ export function extractAdReferrer(msg: any): AdReferrer | null {
     };
 }
 
+// Extract ad metadata from an Instagram Messenger webhook payload.
+// Meta ships it under messaging.referral (top level, next to the
+// message field) when the DM arrived from a click-to-Instagram ad
+// or the "Send Message" CTA on a boosted post. Structure at the
+// time of writing:
+//   referral: {
+//     ref: '<optional referral hash>',
+//     source: 'ADS',                        // or 'SHORTLINK', 'BUSINESS_INBOX'
+//     type: 'OPEN_THREAD',
+//     ads_context_data: {
+//       ad_title: '...',
+//       photo_url: '...',
+//       video_url: '...',
+//       product_id: '...',
+//     },
+//     // For CTWA-style flows Meta additionally exposes the ad id
+//     ad_id: '...',
+//   }
+// Returns null when the DM did not arrive from an ad.
+export function extractIgReferrer(messaging: any): AdReferrer | null {
+    const ref = messaging?.referral;
+    if (!ref) return null;
+    const ctx = ref.ads_context_data || {};
+    // We only consider ad-sourced referrals worth attributing;
+    // shortlink / business inbox referrals aren't useful for
+    // AdRoute matching.
+    if (ref.source && String(ref.source).toUpperCase() !== 'ADS') return null;
+    return {
+        sourceUrl: ctx.photo_url || ctx.video_url || null,
+        title: ctx.ad_title ? String(ctx.ad_title) : null,
+        body: null,
+        mediaType: ctx.video_url ? 'video' : ctx.photo_url ? 'image' : null,
+        ctwaClid: ref.ref ? String(ref.ref) : null,
+        sourceType: 'ad',
+        sourceId: ref.ad_id ? String(ref.ad_id) : null,
+        thumbnailUrl: ctx.photo_url || null,
+    };
+}
+
 // Find the AdRoute that should claim this customer based on the ad
 // metadata they arrived with. Highest-priority rule wins; within the
 // same priority the oldest rule wins so layered rules stay

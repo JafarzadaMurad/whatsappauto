@@ -9,6 +9,7 @@ import axios from 'axios';
 import { buildToolsForSkills, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
 import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
+import { extractIgReferrer } from '../ads/ad-referrer';
 
 // makeTool used only for IG-specific tools (polls fallback). The
 // universal skill builder is imported from ai.service.ts so IG picks
@@ -205,7 +206,11 @@ async function replyToComment(commentId: string, text: string, accessToken: stri
 
 export class InstagramAiService {
     // ─── Handle DM ───
-    static async handleDm(igUserId: string, senderId: string, messageText: string, opts?: { imageUrl?: string | null }) {
+    static async handleDm(igUserId: string, senderId: string, messageText: string, opts?: {
+        imageUrl?: string | null;
+        audioUrl?: string | null;
+        referral?: any;
+    }) {
         const account = await prisma.instagramAccount.findUnique({
             where: { igUserId },
             include: { agent: { include: { provider: true } } }
@@ -245,13 +250,21 @@ export class InstagramAiService {
         // personal workspace.
         const wsId = account.workspaceId || (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(account.userId);
         const accountWorkspaceId = typeof wsId === 'string' ? wsId : await wsId;
+        // Ad attribution: when the DM came from a click-to-Instagram
+        // ad, Meta ships referral metadata alongside message. Same
+        // AdRoute matching engine as WhatsApp — the referral is
+        // converted to the internal shape and passed to
+        // upsertCrmContact so first-touch attribution lands + agent
+        // routing rules fire on the very first message.
+        const adRef = opts?.referral ? extractIgReferrer({ referral: opts.referral }) : null;
         await upsertCrmContact({
             userId: account.userId,
             workspaceId: accountWorkspaceId,
             phone: senderId,
             name: contact?.name || contact?.username || null,
             channel: 'instagram',
-            sourceLabel: account.igUsername ? '@' + account.igUsername : null
+            sourceLabel: account.igUsername ? '@' + account.igUsername : null,
+            adReferrer: adRef,
         });
         const { matched } = await AutomationEngine.handleMessage({
             userId: account.userId,
@@ -329,8 +342,31 @@ export class InstagramAiService {
         }
 
         const agent = account.agent;
+
+        // Voice-to-text: when the DM was an audio note AND the agent
+        // has audioEnabled, transcribe via Whisper and replace the
+        // model input so the agent responds to what was actually said
+        // instead of a generic '🎤 Audio' placeholder. Best-effort:
+        // falls through to the original text on failure.
+        let finalMessageText = messageText;
+        if (opts?.audioUrl && (agent as any).audioEnabled) {
+            try {
+                const { transcribeAudioUrl } = await import('../agent/whisper.service');
+                const r = await transcribeAudioUrl({
+                    workspaceId: accountWorkspaceId,
+                    mediaUrl: opts.audioUrl,
+                    mimetype: 'audio/mp4',
+                    language: (agent as any).whisperLanguage || null,
+                    model: (agent as any).whisperModel || null,
+                });
+                if (r?.text) finalMessageText = r.text;
+            } catch (e: any) {
+                logger.warn({ err: e?.message }, '[IG whisper] transcription failed');
+            }
+        }
+
         const t0 = Date.now();
-        const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm', {
+        const { text, usage } = await this.generateResponse(agent, account.userId, senderId, finalMessageText, 'dm', {
             igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
             imageUrl: opts?.imageUrl || null,
         });

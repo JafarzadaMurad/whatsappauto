@@ -455,6 +455,7 @@ export class InstagramController {
                         // that something was sent lands in the log.
                         const attachments: any[] = messaging.message.attachments || [];
                         const firstImage = attachments.find(a => a?.type === 'image' && a?.payload?.url);
+                        const firstAudio = attachments.find(a => a?.type === 'audio' && a?.payload?.url);
                         const nonImageLabels = attachments
                             .filter(a => a?.type !== 'image')
                             .map(a => a?.type === 'video' ? '🎬 Video' : a?.type === 'audio' ? '🎤 Audio' : `📎 ${a?.type || 'attachment'}`);
@@ -477,9 +478,11 @@ export class InstagramController {
                             text
                             || (firstImage ? '🖼️ Photo' : nonImageLabels[0] || '');
 
-                        logger.info({ hasText: !!text, hasImage: !!firstImage, others: nonImageLabels.length }, `[IG] DM from ${senderId} to ${igUserId}`);
+                        logger.info({ hasText: !!text, hasImage: !!firstImage, hasAudio: !!firstAudio, others: nonImageLabels.length }, `[IG] DM from ${senderId} to ${igUserId}`);
                         InstagramAiService.handleDm(igUserId, senderId, forwardedText, {
                             imageUrl: firstImage?.payload?.url || null,
+                            audioUrl: firstAudio?.payload?.url || null,
+                            referral: messaging.referral || null,
                         }).catch(err => {
                             logger.error({ err }, '[IG] Failed to handle DM');
                         });

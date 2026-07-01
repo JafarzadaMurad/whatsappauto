@@ -2504,6 +2504,115 @@ export class AiService {
         }
     }
 
+    // Instagram counterpart of triggerReminder. Uses aiConversationLog
+    // rows (IG never writes to prisma.message) for the history window
+    // and IG Messaging API to actually send the follow-up.
+    static async triggerIgReminder(opts: {
+        accountId: string;
+        senderId: string;
+        idleHours: number;
+    }) {
+        const { accountId, senderId, idleHours } = opts;
+        try {
+            const account = await prisma.instagramAccount.findUnique({
+                where: { id: accountId },
+                include: { agent: { include: { provider: true } } },
+            });
+            if (!account?.agent?.provider) return;
+            if (!(account.agent as any).isActive) return;
+            const agent: any = account.agent;
+            const providerInfo = agent.provider;
+            if (!(agent.skills || []).includes('reminder')) return;
+
+            let aiModel: any;
+            if (providerInfo.provider === 'OPENAI')      aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
+            else if (providerInfo.provider === 'CLAUDE') aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
+            else if (providerInfo.provider === 'GEMINI') aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+            else return;
+
+            const workspaceId = account.workspaceId || '';
+            const client = await prisma.client.findFirst({ where: { workspaceId, phone: senderId } });
+            if (client?.agentPaused) {
+                logger.info(`[ig ${accountId}] reminder skipped: contact paused`);
+                return;
+            }
+
+            const remoteJid = `ig:${senderId}`;
+            const historyDepth = Math.max(1, Math.min(50, Number(agent.historyDepth) || 10));
+            const priorLogs = await prisma.aiConversationLog.findMany({
+                where: { agentId: agent.id, remoteJid },
+                orderBy: { createdAt: 'desc' },
+                take: Math.ceil(historyDepth / 2), // each row is a user+assistant pair
+                select: { userMessage: true, agentReply: true },
+            });
+            priorLogs.reverse();
+            if (priorLogs.length === 0) return;
+
+            const messages: any[] = [];
+            for (const log of priorLogs) {
+                if (log.userMessage) messages.push({ role: 'user', content: log.userMessage });
+                if (log.agentReply) messages.push({ role: 'assistant', content: log.agentReply });
+            }
+            messages.push({
+                role: 'user' as const,
+                content: `[REMINDER_TURN: customer silent for ${idleHours}h. Write ONE short warm follow-up that nudges them based on chat history. Do not restart the funnel, do not apologise for writing again, do not repeat your last message verbatim. Reply must be under 900 characters.]`,
+            });
+
+            const skills = agent.skills || [];
+            const httpTools = (agent.httpTools || []) as HttpToolTemplate[];
+            const skillPrompts = (agent.skillPrompts || {}) as Record<string, string>;
+            const contactName = client?.name || null;
+            const contactContext = `\n\nCurrent contact info:\n- IG User: ${senderId}${contactName ? `\n- Name: ${contactName}` : ''}\nYou already have this info — do NOT ask the customer for it.`;
+            const { tools, skillPrompt } = buildToolsForSkills(
+                skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
+                agent.id, remoteJid, skillPrompts, accountId, contactName,
+            );
+            const systemPrompt = (agent.systemPrompt || 'You are a helpful Instagram assistant.') + contactContext + skillPrompt;
+
+            const result = await generateText({
+                model: aiModel,
+                system: systemPrompt,
+                messages: applyAnthropicCacheControl(providerInfo.provider, messages),
+                ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
+            } as any);
+
+            const text = (result.text || '').trim();
+            if (!text) {
+                logger.info(`[ig ${accountId}] reminder skipped: empty model output`);
+                return;
+            }
+
+            const { sendIgMessage } = await import('../instagram/instagram.ai.service');
+            await sendIgMessage(account.igUserId, senderId, text, account.accessToken);
+
+            await prisma.aiConversationLog.create({
+                data: {
+                    agentId: agent.id, instanceId: account.id, remoteJid,
+                    userMessage: '', agentReply: text,
+                    promptTokens: (result as any).usage?.inputTokens || 0,
+                    completionTokens: (result as any).usage?.outputTokens || 0,
+                    totalTokens: ((result as any).usage?.inputTokens || 0) + ((result as any).usage?.outputTokens || 0),
+                    provider: providerInfo.provider, model: agent.model,
+                    toolCalls: [{ toolName: 'auto_reminder', args: { idleHours } }] as any,
+                },
+            });
+            if (client) {
+                await prisma.client.update({ where: { id: client.id }, data: { lastReminderAt: new Date() } });
+            }
+            const { io: ioSrv } = await import('../../server');
+            ioSrv.emit(`message.new-${account.id}`, {
+                id: `ig-reminder-${Date.now()}`,
+                isFromMe: true, content: text,
+                remoteJid, messageType: 'text',
+                status: 'SENT',
+                timestamp: new Date().toISOString(),
+            });
+            logger.info(`[ig ${accountId}] [reminder] sent to ${senderId} (idle ${idleHours}h)`);
+        } catch (e: any) {
+            logger.error({ err: e?.message, accountId, senderId }, '[reminder] IG trigger failed');
+        }
+    }
+
     // The operator chat is its own full conversation with the agent —
     // the model has chat history with the operator, the list of open
     // tickets, all the lookup tools, and answerTicket / sendToCustomer

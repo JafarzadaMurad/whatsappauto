@@ -21,6 +21,7 @@ async function sweep() {
             select: {
                 id: true, workspaceId: true, reminderHours: true,
                 instances: { select: { id: true, status: true } },
+                instagramAccounts: { select: { id: true, isActive: true } },
             },
         });
         for (const agent of agents) {
@@ -31,6 +32,12 @@ async function sweep() {
                 if (!sock) continue; // instance not connected — skip silently
                 await sweepInstance(inst.id, agent.id, agent.workspaceId || '', hours, cutoff, sock).catch(err => {
                     logger.warn({ err: err?.message, instanceId: inst.id }, '[reminder] instance sweep failed');
+                });
+            }
+            for (const igAcc of agent.instagramAccounts) {
+                if (!igAcc.isActive) continue;
+                await sweepIgAccount(igAcc.id, agent.id, agent.workspaceId || '', hours, cutoff).catch(err => {
+                    logger.warn({ err: err?.message, accountId: igAcc.id }, '[reminder] IG account sweep failed');
                 });
             }
         }
@@ -119,6 +126,69 @@ async function sweepInstance(instanceId: string, agentId: string, workspaceId: s
             });
         } catch (e: any) {
             logger.warn({ err: e?.message, remoteJid: cand.remoteJid }, '[reminder] per-contact step failed');
+        }
+    }
+}
+
+// Instagram parallel to sweepInstance. Reminder eligibility uses
+// aiConversationLog (IG doesn't populate prisma.message) — the last
+// row's timestamp per remoteJid is treated as the last customer
+// contact. Same per-contact lock, cap and sticky-routing rules as
+// the WhatsApp path.
+async function sweepIgAccount(accountId: string, agentId: string, workspaceId: string, idleHours: number, cutoff: Date) {
+    // All IG conversations this agent has actually talked to.
+    const owned = await prisma.aiConversationLog.findMany({
+        where: { agentId, instanceId: accountId },
+        distinct: ['remoteJid'],
+        select: { remoteJid: true },
+        take: 5000,
+    });
+    if (owned.length === 0) return;
+
+    for (const row of owned) {
+        try {
+            const remoteJid = row.remoteJid;
+            // Latest log for this contact. Reminder rows also live
+            // here, so we look at the createdAt regardless of who
+            // spoke last.
+            const latest = await prisma.aiConversationLog.findFirst({
+                where: { agentId, instanceId: accountId, remoteJid },
+                orderBy: { createdAt: 'desc' },
+                select: { userMessage: true, agentReply: true, createdAt: true, toolCalls: true },
+            });
+            if (!latest) continue;
+            // Skip when the newest turn is a reminder itself — that
+            // means we already nudged them for this idle state.
+            const isReminderRow = Array.isArray(latest.toolCalls)
+                && (latest.toolCalls as any[]).some(t => t?.toolName === 'auto_reminder');
+            if (isReminderRow) continue;
+            // Skip when the log ends with our own reply and it's fresh —
+            // customer might just be reading.
+            if (latest.createdAt > cutoff) continue;
+
+            const senderId = remoteJid.replace(/^ig:/, '');
+            const client = await prisma.client.findFirst({ where: { workspaceId, phone: senderId } });
+            if (!client) continue;
+            if (client.agentPaused) continue;
+            if (client.assignedAgentId && client.assignedAgentId !== agentId) continue;
+
+            if (client.lastReminderAt && client.lastReminderAt > latest.createdAt) {
+                const remindersSent = await prisma.aiConversationLog.count({
+                    where: {
+                        instanceId: accountId, remoteJid,
+                        createdAt: { gt: latest.createdAt },
+                        toolCalls: { array_contains: [{ toolName: 'auto_reminder' }] } as any,
+                    },
+                }).catch(() => 0);
+                if (remindersSent >= MAX_REMINDERS_PER_IDLE) continue;
+                const nextDue = new Date(client.lastReminderAt.getTime() + idleHours * 3600 * 1000);
+                if (nextDue > new Date()) continue;
+            }
+
+            logger.info({ accountId, senderId, idleHours }, '[reminder] IG firing');
+            await AiService.triggerIgReminder({ accountId, senderId, idleHours });
+        } catch (e: any) {
+            logger.warn({ err: e?.message, remoteJid: row.remoteJid }, '[reminder] IG per-contact step failed');
         }
     }
 }

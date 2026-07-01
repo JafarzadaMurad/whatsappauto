@@ -205,7 +205,7 @@ async function replyToComment(commentId: string, text: string, accessToken: stri
 
 export class InstagramAiService {
     // ─── Handle DM ───
-    static async handleDm(igUserId: string, senderId: string, messageText: string) {
+    static async handleDm(igUserId: string, senderId: string, messageText: string, opts?: { imageUrl?: string | null }) {
         const account = await prisma.instagramAccount.findUnique({
             where: { igUserId },
             include: { agent: { include: { provider: true } } }
@@ -332,6 +332,7 @@ export class InstagramAiService {
         const t0 = Date.now();
         const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm', {
             igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
+            imageUrl: opts?.imageUrl || null,
         });
         const durationMs = Date.now() - t0;
         if (!text) return;
@@ -528,7 +529,7 @@ export class InstagramAiService {
         contactId: string,
         messageText: string,
         type: 'dm' | 'comment',
-        opts?: { igUserId?: string; accessToken?: string; workspaceId?: string; accountId?: string }
+        opts?: { igUserId?: string; accessToken?: string; workspaceId?: string; accountId?: string; imageUrl?: string | null }
     ): Promise<{ text: string | null; usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number; cacheCreationTokens: number } }> {
         const providerInfo = agent.provider;
         let aiModel: any;
@@ -607,12 +608,32 @@ export class InstagramAiService {
         });
         priorLogs.reverse();
 
-        const messages: { role: 'user' | 'assistant'; content: string }[] = [];
+        const messages: any[] = [];
         for (const log of priorLogs) {
             if (log.userMessage) messages.push({ role: 'user', content: log.userMessage });
             if (log.agentReply) messages.push({ role: 'assistant', content: log.agentReply });
         }
-        messages.push({ role: 'user', content: messageText });
+        // Vision: when the agent has visionEnabled and the DM arrived
+        // with an image attachment, ship the image as a native content
+        // part on the final user turn. Older turns stay as plain text
+        // (Meta doesn't hand us stable historical media URLs anyway).
+        const visionOn = !!(agent as any).visionEnabled;
+        if (visionOn && opts?.imageUrl) {
+            try {
+                messages.push({
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: messageText },
+                        { type: 'image', image: new URL(opts.imageUrl) },
+                    ],
+                });
+            } catch {
+                // Malformed URL — fall back to text-only so we still respond.
+                messages.push({ role: 'user', content: messageText });
+            }
+        } else {
+            messages.push({ role: 'user', content: messageText });
+        }
 
         const result = await generateText({
             model: aiModel,

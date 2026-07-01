@@ -443,9 +443,25 @@ export class InstagramController {
                     if (messaging.message?.is_echo) continue;
                     if (messaging.message && messaging.sender?.id !== igUserId) {
                         const senderId = messaging.sender.id;
-                        const text = messaging.message.text;
+                        const text: string | undefined = messaging.message.text;
                         const mid = messaging.message.mid;
-                        if (!text) continue;
+
+                        // Attachments (photos / videos / audio / files).
+                        // Meta ships them as an array under message.attachments[].
+                        // We forward the first image URL to the AI so
+                        // visionEnabled agents can see product photos,
+                        // screenshots etc. Non-image attachments become
+                        // a textual placeholder so at least the fact
+                        // that something was sent lands in the log.
+                        const attachments: any[] = messaging.message.attachments || [];
+                        const firstImage = attachments.find(a => a?.type === 'image' && a?.payload?.url);
+                        const nonImageLabels = attachments
+                            .filter(a => a?.type !== 'image')
+                            .map(a => a?.type === 'video' ? '🎬 Video' : a?.type === 'audio' ? '🎤 Audio' : `📎 ${a?.type || 'attachment'}`);
+
+                        // Skip only when there's neither text nor any
+                        // usable attachment metadata.
+                        if (!text && !firstImage && nonImageLabels.length === 0) continue;
 
                         // Dedupe by message ID
                         if (mid && isDuplicate(`dm:${mid}`)) {
@@ -453,8 +469,18 @@ export class InstagramController {
                             continue;
                         }
 
-                        logger.info(`[IG] DM from ${senderId} to ${igUserId}: ${text}`);
-                        InstagramAiService.handleDm(igUserId, senderId, text).catch(err => {
+                        // Compose the text passed to the AI. When only
+                        // a picture arrived, we use a short placeholder
+                        // so the model has something to react to on
+                        // top of the visual.
+                        const forwardedText =
+                            text
+                            || (firstImage ? '🖼️ Photo' : nonImageLabels[0] || '');
+
+                        logger.info({ hasText: !!text, hasImage: !!firstImage, others: nonImageLabels.length }, `[IG] DM from ${senderId} to ${igUserId}`);
+                        InstagramAiService.handleDm(igUserId, senderId, forwardedText, {
+                            imageUrl: firstImage?.payload?.url || null,
+                        }).catch(err => {
                             logger.error({ err }, '[IG] Failed to handle DM');
                         });
                     }

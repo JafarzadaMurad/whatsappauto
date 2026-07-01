@@ -1475,6 +1475,13 @@ export function buildToolsForSkills(
     skillPrompts: Record<string, string> = {},
     instanceId: string = '',
     contactName: string | null = null,
+    // Channel-specific overrides. When set, take precedence over the
+    // built-in Baileys/WhatsApp implementations. Lets Instagram (or
+    // any future channel) plug in its own poll / operator-request
+    // handlers without duplicating buildToolsForSkills.
+    channelOverrides?: {
+        pollsTools?: Record<string, any>;
+    },
 ) {
     let tools: Record<string, any> = {};
     let prompts: string[] = [];
@@ -1523,9 +1530,16 @@ export function buildToolsForSkills(
         prompts.push(resolveSkillPrompt('http', skillPrompts) + '\n' + list);
     }
 
-    if (skills.includes('polls') && remoteJid && instanceId) {
-        tools = { ...tools, ...buildPollsTool(instanceId, remoteJid) };
-        prompts.push(resolveSkillPrompt('polls', skillPrompts));
+    if (skills.includes('polls')) {
+        if (channelOverrides?.pollsTools) {
+            // Channel supplied its own poll builder (e.g. Instagram
+            // uses quick_replies instead of native WhatsApp polls).
+            tools = { ...tools, ...channelOverrides.pollsTools };
+            prompts.push(resolveSkillPrompt('polls', skillPrompts));
+        } else if (remoteJid && instanceId) {
+            tools = { ...tools, ...buildPollsTool(instanceId, remoteJid) };
+            prompts.push(resolveSkillPrompt('polls', skillPrompts));
+        }
     }
 
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };

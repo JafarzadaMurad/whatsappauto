@@ -6,86 +6,49 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
-import { buildHttpTools as buildHttpToolsShared, buildMemoryTools, sanitizeName, DEFAULT_SKILL_PROMPTS, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
+import { buildToolsForSkills, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
 import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
 
-// Reuse the same makeTool + skill builders from WhatsApp AI service
+// makeTool used only for IG-specific tools (polls fallback). The
+// universal skill builder is imported from ai.service.ts so IG picks
+// up every skill (CRM, tables, user_fields, self_pause, memory,
+// http, live_operator) automatically — no duplication.
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
     const wrapped = zodSchema(schema);
     return { description, parameters: wrapped, inputSchema: wrapped, execute };
 }
 
-function buildCrmTools(userId: string) {
+// Instagram DMs have no native poll type — closest analogue is
+// text + quick_replies (tap-to-select buttons, IG caps at 13).
+// Customer taps one, IG delivers their choice as an ordinary inbound
+// DM which the regular handler then treats as their answer. Same
+// tool signature as the WhatsApp poll so agent prompts don't need
+// to know which channel they're on.
+function buildIgPollsTool(igUserId: string, senderId: string, accessToken: string) {
     return {
-        upsertClient: makeTool(
-            'Create or update a client in CRM.',
+        sendPoll: makeTool(
+            'Send an interactive choice question with 2-13 tappable buttons. Use it when you want the customer to pick from a discrete set instead of typing free text.',
             z.object({
-                phone: z.string().describe('Client identifier (Instagram user ID or username)'),
-                name: z.string().optional().describe('Client name'),
-                status: z.string().optional().describe('CRM status'),
-                tags: z.array(z.string()).optional().describe('Tags'),
-                summary: z.string().optional().describe('Summary'),
-                customFields: z.record(z.string(), z.any()).optional().describe('Additional data')
+                name: z.string().min(1).max(950).describe('The question shown above the buttons.'),
+                options: z.array(z.string().min(1).max(20)).min(2).max(13).describe('Button labels — max 20 chars each, 2-13 total.'),
+                multi: z.boolean().optional().describe('Instagram only supports single-choice; multi is ignored.'),
             }),
-            async ({ phone, name, status, tags, summary, customFields }) => {
-                const client = await prisma.client.upsert({
-                    where: { userId_phone: { userId, phone } },
-                    update: {
-                        ...(name !== undefined ? { name } : {}),
-                        ...(status !== undefined ? { status } : {}),
-                        ...(tags !== undefined ? { tags } : {}),
-                        ...(summary !== undefined ? { summary } : {}),
-                        ...(customFields !== undefined ? { customFields } : {}),
-                    },
-                    create: { userId, phone, name: name || null, status: status || 'NEW', tags: tags || [], summary: summary || null, customFields: customFields || null }
-                });
-                return { success: true, clientId: client.id, status: client.status };
-            }
+            async (params: { name: string; options: string[]; multi?: boolean }) => {
+                try {
+                    await sendIgRichMessage(igUserId, senderId, {
+                        kind: 'text',
+                        text: params.name,
+                        quickReplies: params.options.map(o => ({ title: o })),
+                    } as any, accessToken);
+                    return { ok: true, name: params.name, options: params.options };
+                } catch (e: any) {
+                    return { ok: false, error: e?.message };
+                }
+            },
         ),
     };
 }
-
-function buildTableTools(allowedTableIds: string[]) {
-    return {
-        listTables: makeTool(
-            'List available data tables.',
-            z.object({ reason: z.string().describe('Why') }),
-            async () => {
-                const tables = await prisma.customTable.findMany({
-                    where: { id: { in: allowedTableIds } },
-                    select: { id: true, name: true, description: true, columns: true }
-                });
-                return tables.map((t: any) => ({ id: t.id, name: t.name, description: t.description, columns: (t.columns as any[]).map((c: any) => ({ name: c.name, type: c.type })) }));
-            }
-        ),
-        searchTable: makeTool(
-            'Search rows in a table by column value.',
-            z.object({ tableId: z.string(), column: z.string(), query: z.string() }),
-            async ({ tableId, column, query }) => {
-                if (!allowedTableIds.includes(tableId)) return { error: 'Access denied' };
-                const rows = await prisma.customRow.findMany({ where: { tableId }, take: 50 });
-                const q = query.toLowerCase();
-                const matched = rows.filter(r => { const v = (r.data as any)[column]; return v != null && String(v).toLowerCase().includes(q); });
-                return { results: matched.map(r => r.data), count: matched.length };
-            }
-        ),
-        getTableRows: makeTool(
-            'Get rows from a table (max 10).',
-            z.object({ tableId: z.string(), limit: z.number().max(10).optional().default(10), offset: z.number().optional().default(0) }),
-            async ({ tableId, limit = 10, offset = 0 }) => {
-                if (!allowedTableIds.includes(tableId)) return { error: 'Access denied' };
-                const [rows, total] = await Promise.all([
-                    prisma.customRow.findMany({ where: { tableId }, take: Math.min(limit, 10), skip: offset, orderBy: { createdAt: 'asc' } }),
-                    prisma.customRow.count({ where: { tableId } })
-                ]);
-                return { rows: rows.map(r => r.data), total, hasMore: offset + limit < total };
-            }
-        )
-    };
-}
-
-// HTTP tool building is shared with WhatsApp agent — see ../agent/ai.service.ts
 
 // Fetch and cache an Instagram contact's profile (username, name, picture).
 // Refetches only if missing or older than 24h to conserve API quota.
@@ -250,6 +213,23 @@ export class InstagramAiService {
 
         if (!account) return;
 
+        // Realtime push for the inbox — mirror what WhatsApp emits on
+        // inbound so the open chat repaints without a manual refresh.
+        // Runs early so even messages that later match an automation
+        // still surface in the UI.
+        try {
+            const { io: ioSrv } = await import('../../server');
+            ioSrv.emit(`message.new-${account.id}`, {
+                id: `ig-in-${Date.now()}`,
+                isFromMe: false,
+                content: messageText,
+                remoteJid: `ig:${senderId}`,
+                messageType: 'text',
+                status: 'DELIVERED',
+                timestamp: new Date().toISOString(),
+            });
+        } catch { /* best-effort */ }
+
         // Cache the sender's profile regardless of whether an agent replies
         await cacheIgContact(igUserId, senderId, account.accessToken);
 
@@ -301,7 +281,9 @@ export class InstagramAiService {
             runAgent: async (agentId) => {
                 const ag = await prisma.agent.findFirst({ where: { id: agentId }, include: { provider: true } });
                 if (!ag?.provider) return;
-                const r = await this.generateResponse(ag, account.userId, senderId, messageText, 'dm');
+                const r = await this.generateResponse(ag, account.userId, senderId, messageText, 'dm', {
+                    igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
+                });
                 if (r.text) await sendIgMessage(igUserId, senderId, r.text, account.accessToken);
             },
             addTag: async (tag) => {
@@ -348,11 +330,29 @@ export class InstagramAiService {
 
         const agent = account.agent;
         const t0 = Date.now();
-        const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm');
+        const { text, usage } = await this.generateResponse(agent, account.userId, senderId, messageText, 'dm', {
+            igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
+        });
         const durationMs = Date.now() - t0;
         if (!text) return;
 
         await sendIgMessage(igUserId, senderId, text, account.accessToken);
+
+        // Realtime push so the inbox chat repaints without a reload.
+        // Matches the message.new-{id} shape the WhatsApp path emits;
+        // the id here is the IG account row id.
+        try {
+            const { io: ioSrv } = await import('../../server');
+            ioSrv.emit(`message.new-${account.id}`, {
+                id: `ig-out-${Date.now()}`,
+                isFromMe: true,
+                content: text,
+                remoteJid: `ig:${senderId}`,
+                messageType: 'text',
+                status: 'SENT',
+                timestamp: new Date().toISOString(),
+            });
+        } catch { /* best-effort UI nudge */ }
 
         // Log conversation
         await prisma.aiConversationLog.create({
@@ -488,7 +488,14 @@ export class InstagramAiService {
 
         const agent = account.agent;
         const context = `[Comment on post by @${from.username}]: ${commentText}`;
-        const { text, usage } = await this.generateResponse(agent, account.userId, from.id, context, 'comment');
+        // Comments don't get poll fallback (posting quick_replies to a
+        // comment reply doesn't map cleanly), but the rest of the
+        // universal skill stack still applies — pass workspace + IDs
+        // so directives, CRM, HTTP tools etc. all work.
+        const accountWorkspaceId = account.workspaceId || '';
+        const { text, usage } = await this.generateResponse(agent, account.userId, from.id, context, 'comment', {
+            igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
+        });
         if (!text) return;
 
         await replyToComment(commentId, text, account.accessToken);
@@ -520,7 +527,8 @@ export class InstagramAiService {
         userId: string,
         contactId: string,
         messageText: string,
-        type: 'dm' | 'comment'
+        type: 'dm' | 'comment',
+        opts?: { igUserId?: string; accessToken?: string; workspaceId?: string; accountId?: string }
     ): Promise<{ text: string | null; usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number; cacheCreationTokens: number } }> {
         const providerInfo = agent.provider;
         let aiModel: any;
@@ -534,33 +542,47 @@ export class InstagramAiService {
             return { text: null, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cacheCreationTokens: 0 } };
         }
 
-        const skills = agent.skills || [];
+        const skills: string[] = agent.skills || [];
         const remoteJid = `ig:${contactId}`;
-        const overrides = (agent.skillPrompts || {}) as Record<string, string>;
-        const resolvePrompt = (id: string) =>
-            (overrides[id] && overrides[id].trim().length > 0) ? overrides[id] : (DEFAULT_SKILL_PROMPTS[id] || '');
+        const httpTools = ((agent.httpTools as any) || []) as HttpToolTemplate[];
+        const skillPrompts = (agent.skillPrompts || {}) as Record<string, string>;
+        const workspaceId = opts?.workspaceId || agent.workspaceId || '';
 
-        let tools: Record<string, any> = {};
-        let skillPromptParts: string[] = [];
+        // Universal skill builder — same one WhatsApp uses. IG plugs
+        // in its own poll implementation (quick_replies) via the
+        // channelOverrides hook so agents don't need to know they're
+        // on IG vs WA.
+        const pollsOverride = (skills.includes('polls') && opts?.igUserId && opts?.accessToken)
+            ? buildIgPollsTool(opts.igUserId, contactId, opts.accessToken)
+            : undefined;
 
-        if (skills.includes('crm')) {
-            tools = { ...tools, ...buildCrmTools(userId) };
-            skillPromptParts.push(resolvePrompt('crm'));
-        }
-        if (skills.includes('tables') && agent.allowedTableIds?.length > 0) {
-            tools = { ...tools, ...buildTableTools(agent.allowedTableIds) };
-            skillPromptParts.push(resolvePrompt('tables'));
-        }
-        if (skills.includes('memory')) {
-            tools = { ...tools, ...buildMemoryTools(agent.id, remoteJid) };
-            skillPromptParts.push(resolvePrompt('memory'));
-        }
-        if (skills.includes('http')) {
-            const httpTools = ((agent.httpTools as any) || []) as HttpToolTemplate[];
-            if (httpTools.length > 0) {
-                tools = { ...tools, ...buildHttpToolsShared(httpTools) };
-                const list = httpTools.map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`).join('\n');
-                skillPromptParts.push(resolvePrompt('http') + '\n' + list);
+        const { tools: skillTools, skillPrompt } = buildToolsForSkills(
+            skills, agent.allowedTableIds || [], userId, workspaceId, httpTools,
+            agent.id, remoteJid, skillPrompts,
+            opts?.accountId || '', null,
+            pollsOverride ? { pollsTools: pollsOverride } : undefined,
+        );
+        const tools = skillTools || {};
+
+        // Operator directives: pull the unconsumed "Talk to agent"
+        // panel steering notes for this contact so IG replies apply
+        // them too. Same shape as the WhatsApp handler.
+        let directivesBlock = '';
+        let activeDirectives: any[] = [];
+        if (workspaceId) {
+            const client = await prisma.client.findFirst({
+                where: { workspaceId, phone: contactId },
+                select: { id: true },
+            }).catch(() => null);
+            if (client?.id) {
+                activeDirectives = await prisma.operatorDirective.findMany({
+                    where: { clientId: client.id, agentId: agent.id, consumedAt: null },
+                    orderBy: { createdAt: 'asc' },
+                    take: 20,
+                }).catch(() => []);
+                if (activeDirectives.length > 0) {
+                    directivesBlock = `\n\n📌 OPERATOR DIRECTIVES (live instructions from the human operator handling this conversation — these OVERRIDE any conflicting style or behavior in your base instructions):\n${activeDirectives.map(d => `- ${d.text}`).join('\n')}`;
+                }
             }
         }
 
@@ -570,7 +592,8 @@ export class InstagramAiService {
 
         const systemPrompt = (agent.systemPrompt || 'You are a helpful assistant.') +
             `\n\n${platformNote}\nContact ID: ${contactId}` +
-            (skillPromptParts.length > 0 ? '\n\n' + skillPromptParts.join('\n\n') : '');
+            skillPrompt +
+            directivesBlock;
 
         const hasTools = Object.keys(tools).length > 0;
 
@@ -597,6 +620,29 @@ export class InstagramAiService {
             messages: applyAnthropicCacheControl(providerInfo.provider, messages),
             ...(hasTools ? { tools, stopWhen: stepCountIs(5) } : {}),
         } as any);
+
+        // Directive bookkeeping — mirrors what WhatsApp's
+        // handleIncomingMessage does. One-shot directives get their
+        // consumedAt stamped; persistent ones drop only their
+        // triggerNow flag so they keep steering future turns.
+        if (activeDirectives.length > 0) {
+            const consumeIds = activeDirectives.filter(d => !d.persistent).map(d => d.id);
+            if (consumeIds.length > 0) {
+                await prisma.operatorDirective.updateMany({
+                    where: { id: { in: consumeIds } },
+                    data: { consumedAt: new Date(), triggerNow: false },
+                }).catch(() => {});
+            }
+            const clearTriggerOnly = activeDirectives
+                .filter(d => d.persistent && d.triggerNow)
+                .map(d => d.id);
+            if (clearTriggerOnly.length > 0) {
+                await prisma.operatorDirective.updateMany({
+                    where: { id: { in: clearTriggerOnly } },
+                    data: { triggerNow: false },
+                }).catch(() => {});
+            }
+        }
 
         const cache = extractCacheUsage(providerInfo.provider, result);
         const usage = (result as any).usage || {};

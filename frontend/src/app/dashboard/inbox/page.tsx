@@ -206,10 +206,12 @@ export default function InboxPage() {
     useEffect(() => { selectedRef.current = selected; }, [selected]);
 
     useEffect(() => {
-        const waAccounts = conversations
-            .filter(c => c.channel === 'whatsapp')
+        // Include IG accounts too — the backend emits the same
+        // message.new-{accountId} shape for both channels.
+        const allAccounts = conversations
+            .filter(c => c.channel === 'whatsapp' || c.channel === 'instagram')
             .map(c => c.accountId);
-        const unique = Array.from(new Set(waAccounts));
+        const unique = Array.from(new Set(allAccounts));
         if (unique.length === 0) return;
 
         const baseUrl = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/api\/?$/, '') || window.location.origin;

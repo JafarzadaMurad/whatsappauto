@@ -290,7 +290,7 @@ function buildOperatorAgentTools(opts: {
         ),
 
         answerTicket: makeTool(
-            'Mark an open ticket as answered and deliver the answer to the originating customer in their language. Use this when the operator has actually provided the information the customer was waiting for. The "answerForCustomer" you pass is the literal text the customer will receive (polish it on-brand, no greeting, pick up from where the conversation left off). The ticket goes from "open" to "answered". Do NOT use this if the operator asked a clarifying question instead of answering — in that case just reply to the operator with the clarification they need.',
+            'Mark an open ticket as answered and deliver the answer to the originating customer in their language. Works for both WhatsApp and Instagram customers — the system routes to whichever channel the original ticket came from. Use this when the operator has actually provided the information the customer was waiting for. The "answerForCustomer" you pass is the literal text the customer will receive (polish it on-brand, no greeting, pick up from where the conversation left off). The ticket goes from "open" to "answered". Do NOT use this if the operator asked a clarifying question instead of answering — in that case just reply to the operator with the clarification they need.',
             z.object({
                 ticket: z.string().describe('5-char ticket code (e.g. "GNJH5"). Get it from listOpenTickets if unsure.'),
                 answerForCustomer: z.string().describe('The polished customer-facing message in the customer\'s own language. No greetings, no mention of "operator"/"manager".'),
@@ -310,36 +310,69 @@ function buildOperatorAgentTools(opts: {
                 });
 
                 try {
-                    const { sessions } = await import('../whatsapp/instance.manager');
                     const { io } = await import('../../server');
-                    const sock = sessions.get(req.instanceId);
-                    if (!sock) return { success: false, error: 'Customer\'s instance is not connected.' };
+                    // Route by originating channel — the customerJid
+                    // format tells us: 'ig:{senderId}' is Instagram,
+                    // '{digits}@s.whatsapp.net' or '@lid' is WhatsApp.
+                    const isIg = req.customerJid.startsWith('ig:');
 
-                    await sock.sendMessage(req.customerJid, { text: answerForCustomer });
-                    const saved = await prisma.message.create({
-                        data: {
-                            instanceId: req.instanceId,
+                    if (isIg) {
+                        const igAccount = await prisma.instagramAccount.findUnique({
+                            where: { id: req.instanceId },
+                            select: { id: true, igUserId: true, accessToken: true },
+                        });
+                        if (!igAccount) return { success: false, error: 'Customer\'s Instagram account no longer connected.' };
+                        const senderId = req.customerJid.replace(/^ig:/, '');
+                        const { sendIgMessage } = await import('../instagram/instagram.ai.service');
+                        await sendIgMessage(igAccount.igUserId, senderId, answerForCustomer, igAccount.accessToken);
+                        await prisma.aiConversationLog.create({
+                            data: {
+                                agentId, instanceId: req.instanceId, remoteJid: req.customerJid,
+                                userMessage: '', agentReply: answerForCustomer,
+                                promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                                provider: 'OPERATOR', model: 'manual',
+                                toolCalls: [],
+                            },
+                        }).catch(() => {});
+                        io.emit(`message.new-${req.instanceId}`, {
+                            id: `op-answer-${Date.now()}`,
+                            isFromMe: true, content: answerForCustomer,
                             remoteJid: req.customerJid,
-                            isFromMe: true, messageType: 'text',
-                            content: answerForCustomer, timestamp: new Date(),
-                        },
-                    });
-                    await prisma.aiConversationLog.create({
-                        data: {
-                            agentId, instanceId: req.instanceId, remoteJid: req.customerJid,
-                            userMessage: '', agentReply: answerForCustomer,
-                            promptTokens: 0, completionTokens: 0, totalTokens: 0,
-                            provider: 'OPERATOR', model: 'manual',
-                            toolCalls: [],
-                        },
-                    }).catch(() => {});
-                    io.emit(`message.new-${req.instanceId}`, {
-                        id: saved.id, isFromMe: true, content: answerForCustomer,
-                        remoteJid: req.customerJid, status: 'DELIVERED',
-                        timestamp: new Date().toISOString(),
-                    });
+                            messageType: 'text',
+                            status: 'SENT',
+                            timestamp: new Date().toISOString(),
+                        });
+                    } else {
+                        const { sessions } = await import('../whatsapp/instance.manager');
+                        const sock = sessions.get(req.instanceId);
+                        if (!sock) return { success: false, error: 'Customer\'s instance is not connected.' };
+                        await sock.sendMessage(req.customerJid, { text: answerForCustomer });
+                        const saved = await prisma.message.create({
+                            data: {
+                                instanceId: req.instanceId,
+                                remoteJid: req.customerJid,
+                                isFromMe: true, messageType: 'text',
+                                content: answerForCustomer, timestamp: new Date(),
+                            },
+                        });
+                        await prisma.aiConversationLog.create({
+                            data: {
+                                agentId, instanceId: req.instanceId, remoteJid: req.customerJid,
+                                userMessage: '', agentReply: answerForCustomer,
+                                promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                                provider: 'OPERATOR', model: 'manual',
+                                toolCalls: [],
+                            },
+                        }).catch(() => {});
+                        io.emit(`message.new-${req.instanceId}`, {
+                            id: saved.id, isFromMe: true, content: answerForCustomer,
+                            remoteJid: req.customerJid, status: 'DELIVERED',
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
                     return {
                         success: true, ticket: code,
+                        channel: isIg ? 'instagram' : 'whatsapp',
                         customer: { jid: req.customerJid, name: updated.customerName, phone: updated.customerPhone },
                         sentLength: answerForCustomer.length,
                     };
@@ -350,25 +383,59 @@ function buildOperatorAgentTools(opts: {
         ),
 
         sendToCustomer: makeTool(
-            'Send a polished WhatsApp message to a specific customer. Use whenever the operator instructs you to message someone ("send X to client", "tell Cəfərzadə that…", or quotes a customer message). The message you pass is what the customer literally receives — polish it on-brand and in the customer\'s own language. The customer must be someone we already have history with on this instance (anti-spam guard).',
+            'Send a polished message to a specific customer — WhatsApp or Instagram based on their JID format. Use whenever the operator instructs you to message someone ("send X to client", "tell Cəfərzadə that…", or quotes a customer message). The message you pass is what the customer literally receives — polish it on-brand and in the customer\'s own language. The customer must be someone we already have history with (anti-spam guard).',
             z.object({
-                customerJid: z.string().describe('Customer WhatsApp JID, e.g. "994555348024@s.whatsapp.net". Look it up via listRecentCustomers / searchCustomers if you don\'t have it.'),
+                customerJid: z.string().describe('Customer JID — WhatsApp "994555348024@s.whatsapp.net" or Instagram "ig:{senderId}". Look it up via listRecentCustomers / searchCustomers if you don\'t have it.'),
                 message: z.string().describe('The polished, customer-facing text in the customer\'s language.'),
             }),
             async ({ customerJid, message }) => {
-                const known = await prisma.message.findFirst({
-                    where: { instanceId, remoteJid: customerJid },
-                    select: { id: true },
-                });
+                const isIg = customerJid.startsWith('ig:');
+
+                // Anti-spam guard — must have prior contact. WA uses
+                // prisma.message; IG only writes to aiConversationLog.
+                const known = isIg
+                    ? await prisma.aiConversationLog.findFirst({ where: { remoteJid: customerJid }, select: { id: true } })
+                    : await prisma.message.findFirst({ where: { instanceId, remoteJid: customerJid }, select: { id: true } });
                 if (!known) {
-                    return { success: false, error: 'No prior conversation with this JID on this instance — refusing to message a stranger.' };
+                    return { success: false, error: 'No prior conversation with this JID — refusing to message a stranger.' };
                 }
                 try {
-                    const { sessions } = await import('../whatsapp/instance.manager');
                     const { io } = await import('../../server');
+
+                    if (isIg) {
+                        // Resolve the IG account tied to this agent (via
+                        // the operator's own agent link — same workspace).
+                        const igAccount = await prisma.instagramAccount.findFirst({
+                            where: { workspaceId, OR: [{ agentId }, { routerAgentId: agentId }], isActive: true },
+                            select: { id: true, igUserId: true, accessToken: true },
+                        });
+                        if (!igAccount) return { success: false, error: 'No Instagram account bound to this agent — cannot send.' };
+                        const senderId = customerJid.replace(/^ig:/, '');
+                        const { sendIgMessage } = await import('../instagram/instagram.ai.service');
+                        await sendIgMessage(igAccount.igUserId, senderId, message, igAccount.accessToken);
+                        await prisma.aiConversationLog.create({
+                            data: {
+                                agentId, instanceId: igAccount.id, remoteJid: customerJid,
+                                userMessage: '', agentReply: message,
+                                promptTokens: 0, completionTokens: 0, totalTokens: 0,
+                                provider: 'OPERATOR', model: 'manual',
+                                toolCalls: [],
+                            },
+                        }).catch(() => {});
+                        io.emit(`message.new-${igAccount.id}`, {
+                            id: `op-send-${Date.now()}`,
+                            isFromMe: true, content: message,
+                            remoteJid: customerJid,
+                            messageType: 'text',
+                            status: 'SENT',
+                            timestamp: new Date().toISOString(),
+                        });
+                        return { success: true, channel: 'instagram', sentTo: customerJid, length: message.length };
+                    }
+                    // WhatsApp path
+                    const { sessions } = await import('../whatsapp/instance.manager');
                     const sock = sessions.get(instanceId);
                     if (!sock) return { success: false, error: 'Instance not connected' };
-
                     await sock.sendMessage(customerJid, { text: message });
                     const saved = await prisma.message.create({
                         data: {
@@ -377,8 +444,6 @@ function buildOperatorAgentTools(opts: {
                             content: message, timestamp: new Date(),
                         },
                     });
-                    // Mirror into the agent's conversation memory so the
-                    // next customer turn knows what the bot already said.
                     await prisma.aiConversationLog.create({
                         data: {
                             agentId, instanceId, remoteJid: customerJid,
@@ -393,7 +458,7 @@ function buildOperatorAgentTools(opts: {
                         remoteJid: customerJid, status: 'DELIVERED',
                         timestamp: new Date().toISOString(),
                     });
-                    return { success: true, sentTo: customerJid, length: message.length };
+                    return { success: true, channel: 'whatsapp', sentTo: customerJid, length: message.length };
                 } catch (e: any) {
                     return { success: false, error: e.message };
                 }

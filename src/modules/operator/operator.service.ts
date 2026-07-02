@@ -36,6 +36,31 @@ export async function findOperatorByPhone(phone: string, agentId: string) {
 // Send the operator a WhatsApp message with the embedded ticket
 // header so their reply can be matched back. customerName / phone
 // are included so the operator knows who they're answering about.
+// Find a WhatsApp instance we can actually send from, even when the
+// originating request came from Instagram (where opts.instanceId is
+// an IG account UUID with no Baileys session). Prefers the exact
+// instance passed in, then falls back to any connected instance in
+// the same workspace via the operator's agent.
+async function pickOperatorSock(instanceId: string, agentId?: string) {
+    const direct = sessions.get(instanceId);
+    if (direct) return { sock: direct, instanceId };
+    if (!agentId) return { sock: null as any, instanceId };
+    const agent = await prisma.agent.findUnique({
+        where: { id: agentId },
+        select: { workspaceId: true },
+    });
+    if (!agent?.workspaceId) return { sock: null as any, instanceId };
+    const workspaceInstances = await prisma.instance.findMany({
+        where: { workspaceId: agent.workspaceId },
+        select: { id: true },
+    });
+    for (const inst of workspaceInstances) {
+        const sock = sessions.get(inst.id);
+        if (sock) return { sock, instanceId: inst.id };
+    }
+    return { sock: null as any, instanceId };
+}
+
 async function deliverToOperator(opts: {
     instanceId: string;
     operatorPhone: string;
@@ -44,10 +69,11 @@ async function deliverToOperator(opts: {
     customerPhone: string | null;
     question: string;
     isEscalation?: boolean;
+    agentId?: string;
 }) {
-    const sock = sessions.get(opts.instanceId);
+    const { sock } = await pickOperatorSock(opts.instanceId, opts.agentId);
     if (!sock) {
-        logger.warn(`[operator] cannot deliver — instance ${opts.instanceId} not connected`);
+        logger.warn(`[operator] cannot deliver — no connected WhatsApp instance in workspace for ticket ${opts.ticket}`);
         return false;
     }
     const heading = opts.isEscalation
@@ -115,6 +141,7 @@ export async function createOperatorRequest(opts: {
         customerName: opts.customerName,
         customerPhone: opts.customerPhone,
         question: opts.question,
+        agentId: opts.agentId,
     });
 
     return {
@@ -217,8 +244,11 @@ export async function processTimeouts() {
     if (expired.length === 0) return;
     for (const req of expired) {
         try {
-            // Notify the operator who timed out
-            const sock = sessions.get(req.instanceId);
+            // Notify the operator who timed out — pickOperatorSock so
+            // IG-originated tickets (which stamp req.instanceId with an
+            // IG account UUID) still reach the operator via any
+            // connected WA instance in the workspace.
+            const { sock } = await pickOperatorSock(req.instanceId, req.agentId || undefined);
             if (sock && req.operator) {
                 const note = `⏰ Тикет *[REQ-${req.ticket}]* истёк (нет ответа в течение ${req.operator.timeoutMin} мин). Запрос передан следующему оператору.`;
                 await sock.sendMessage(`${req.operator.phone}@s.whatsapp.net`, { text: note }).catch(() => {});
@@ -261,6 +291,7 @@ export async function processTimeouts() {
                 ticket: req.ticket,
                 customerName: req.customerName,
                 customerPhone: req.customerPhone,
+                agentId: req.agentId || undefined,
                 question: req.question,
                 isEscalation: true,
             });

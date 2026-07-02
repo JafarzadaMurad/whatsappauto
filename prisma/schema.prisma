@@ -1089,6 +1089,45 @@ model InstagramAccount {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  comments  InstagramComment[]
+}
+
+// Instagram post comments captured from the webhook. Comments live
+// in their own table so the inbox can render them separately from
+// DMs (which stay in AiConversationLog + Message). The AI agent on
+// an IG account is now DM-only; comment handling is driven by the
+// Automation engine + a future "AI reply to comment" node that
+// operators wire up per-post if they want automation.
+model InstagramComment {
+  id             String   @id @default(uuid())
+  igAccountId    String
+  igAccount      InstagramAccount @relation(fields: [igAccountId], references: [id], onDelete: Cascade)
+  workspaceId    String?
+
+  commentId      String   @unique  // Meta's IG comment id
+  parentId       String?  // parent comment id when this is a reply
+  mediaId        String?  // post / reel / story id the comment sits on
+  mediaPermalink String?  // cached at capture time so the UI can link
+
+  fromId         String   // commenter's IGSID
+  fromUsername   String?
+
+  text           String   @db.Text
+
+  // What we did about it. AUTOMATION_MATCHED = an automation
+  // reply / DM fired for it; MANUAL_REPLIED = operator replied
+  // from the inbox; IGNORED = operator marked no-op; PENDING =
+  // fresh, no action yet.
+  status         String   @default("PENDING")
+  agentReply     String?  // stored copy of whatever we ultimately sent as a public comment reply
+
+  createdAt      DateTime @default(now())
+  repliedAt      DateTime?
+
+  @@index([igAccountId, createdAt])
+  @@index([mediaId])
+  @@index([status])
 }
 
 // -----------------------------------------

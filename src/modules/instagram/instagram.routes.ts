@@ -29,4 +29,10 @@ router.get('/accounts/:id/media',                    authMiddleware, view,   con
 router.get('/accounts/:id/media/:mediaId/comments',  authMiddleware, view,   controller.getMediaComments.bind(controller));
 router.post('/accounts/:id/comments/:commentId/reply', authMiddleware, update, controller.replyToMediaComment.bind(controller));
 
+// Comments inbox (workspace-scoped, backed by InstagramComment)
+router.get('/comments-inbox',                        authMiddleware, view,   controller.listCommentsInbox.bind(controller));
+router.post('/comments/:id/reply',                   authMiddleware, update, controller.replyToStoredComment.bind(controller));
+router.post('/comments/:id/ignore',                  authMiddleware, update, controller.ignoreComment.bind(controller));
+router.delete('/comments/:id',                       authMiddleware, remove, controller.hideComment.bind(controller));
+
 export default router;

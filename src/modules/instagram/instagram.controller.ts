@@ -410,6 +410,139 @@ export class InstagramController {
         }
     }
 
+    // ─── Comments inbox (workspace-scoped) ───────────────────
+    // Comment rows come from the InstagramComment table populated
+    // by handleComment. The inbox Comments tab reads from here so
+    // it has post context (mediaId + permalink) and status
+    // (PENDING / AUTOMATION_MATCHED / MANUAL_REPLIED / IGNORED)
+    // that the mixed AiConversationLog stream couldn't express.
+    async listCommentsInbox(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const status = String(req.query.status || ''); // '', 'PENDING', 'AUTOMATION_MATCHED', 'MANUAL_REPLIED', 'IGNORED'
+            const accountId = String(req.query.accountId || '');
+            const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+            const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '30'), 10) || 30));
+
+            const where: any = { workspaceId };
+            if (status) where.status = status;
+            if (accountId) where.igAccountId = accountId;
+
+            const [rows, total, pendingCount] = await Promise.all([
+                prisma.instagramComment.findMany({
+                    where,
+                    orderBy: { createdAt: 'desc' },
+                    skip: (page - 1) * pageSize,
+                    take: pageSize,
+                    include: {
+                        igAccount: { select: { id: true, igUsername: true } },
+                    },
+                }),
+                prisma.instagramComment.count({ where }),
+                prisma.instagramComment.count({ where: { workspaceId, status: 'PENDING' } }),
+            ]);
+            return res.json({
+                success: true,
+                comments: rows.map(r => ({
+                    id: r.id,
+                    commentId: r.commentId,
+                    parentId: r.parentId,
+                    mediaId: r.mediaId,
+                    mediaPermalink: r.mediaPermalink,
+                    fromId: r.fromId,
+                    fromUsername: r.fromUsername,
+                    text: r.text,
+                    status: r.status,
+                    agentReply: r.agentReply,
+                    createdAt: r.createdAt,
+                    repliedAt: r.repliedAt,
+                    account: r.igAccount ? { id: r.igAccount.id, username: r.igAccount.igUsername } : null,
+                })),
+                total, page, pageSize, pendingCount,
+            });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // POST /instagram/comments/:id/reply  — public comment reply
+    async replyToStoredComment(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = String(req.params.id);
+            const text = String(req.body?.text || '').trim();
+            if (!text) return res.status(400).json({ success: false, message: 'text is required' });
+
+            const comment = await prisma.instagramComment.findFirst({
+                where: { id, workspaceId },
+                include: { igAccount: { select: { id: true, accessToken: true } } },
+            });
+            if (!comment) return res.status(404).json({ success: false, message: 'Comment not found' });
+
+            try {
+                await axios.post(`https://graph.instagram.com/v21.0/${comment.commentId}/replies`,
+                    `message=${encodeURIComponent(text)}`,
+                    { headers: { 'Authorization': `Bearer ${comment.igAccount.accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+            } catch (e: any) {
+                const ig = e.response?.data?.error;
+                return res.status(502).json({ success: false, message: ig?.error_user_msg || ig?.message || e.message });
+            }
+
+            const updated = await prisma.instagramComment.update({
+                where: { id },
+                data: { status: 'MANUAL_REPLIED', agentReply: text, repliedAt: new Date() },
+            });
+            return res.json({ success: true, comment: updated });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // POST /instagram/comments/:id/ignore
+    async ignoreComment(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = String(req.params.id);
+            const owns = await prisma.instagramComment.findFirst({ where: { id, workspaceId }, select: { id: true } });
+            if (!owns) return res.status(404).json({ success: false, message: 'Comment not found' });
+            await prisma.instagramComment.update({ where: { id }, data: { status: 'IGNORED', repliedAt: new Date() } });
+            return res.json({ success: true });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
+    // DELETE /instagram/comments/:id  — hides the comment on Meta's side + drops the local row
+    async hideComment(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = String(req.params.id);
+            const comment = await prisma.instagramComment.findFirst({
+                where: { id, workspaceId },
+                include: { igAccount: { select: { accessToken: true } } },
+            });
+            if (!comment) return res.status(404).json({ success: false, message: 'Comment not found' });
+            try {
+                // hide=true hides the comment on the post (soft), delete removes it entirely.
+                // We soft-hide by default so operators can undo from Meta UI if they mis-click.
+                await axios.post(
+                    `https://graph.instagram.com/v21.0/${comment.commentId}`,
+                    'hide=true',
+                    { headers: { 'Authorization': `Bearer ${comment.igAccount.accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } },
+                );
+            } catch (e: any) {
+                const ig = e.response?.data?.error;
+                logger.warn({ err: ig?.message || e.message }, '[IG] hide comment on Meta failed');
+                // Still drop the local row so the inbox doesn't nag.
+            }
+            await prisma.instagramComment.delete({ where: { id } });
+            return res.json({ success: true });
+        } catch (e: any) {
+            return res.status(500).json({ success: false, message: e.message });
+        }
+    }
+
     // ─── Webhook verification (GET) ───
     async verifyWebhook(req: Request, res: Response) {
         const mode = req.query['hub.mode'];

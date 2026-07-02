@@ -491,7 +491,34 @@ export class InstagramAiService {
             }
         };
 
-        // Run automations first — a matching comment trigger skips the default agent
+        // Persist the raw comment before we touch anything else so
+        // the Comments tab in the inbox has the row even if automation
+        // errors out. `status` starts at PENDING and gets bumped by
+        // whoever eventually replies (automation or a manual operator
+        // action from the inbox).
+        try {
+            await prisma.instagramComment.upsert({
+                where: { commentId },
+                update: { text: commentText, mediaId: mediaId || null, mediaPermalink: permalink || null, fromUsername: from.username || null },
+                create: {
+                    igAccountId: account.id,
+                    workspaceId: account.workspaceId,
+                    commentId,
+                    mediaId: mediaId || null,
+                    mediaPermalink: permalink || null,
+                    fromId: from.id,
+                    fromUsername: from.username || null,
+                    text: commentText,
+                    status: 'PENDING',
+                },
+            });
+        } catch (e: any) {
+            logger.warn({ err: e.message, commentId }, '[IG] persisting comment failed');
+        }
+
+        // Run the Automation engine. If a rule matches we mark the
+        // stored comment AUTOMATION_MATCHED so the inbox knows it's
+        // been handled.
         const { matched } = await AutomationEngine.handleMessage({
             userId: account.userId,
             channel: 'instagram',
@@ -517,45 +544,20 @@ export class InstagramAiService {
             replyComment: (t) => replyToComment(commentId, t, account.accessToken),
         });
         if (matched) {
+            await prisma.instagramComment.update({
+                where: { commentId },
+                data: { status: 'AUTOMATION_MATCHED', repliedAt: new Date() },
+            }).catch(() => {});
             logger.info(`[IG] Comment ${commentId} handled by automation`);
             return;
         }
 
-        if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
-
-        const agent = account.agent;
-        const context = `[Comment on post by @${from.username}]: ${commentText}`;
-        // Comments don't get poll fallback (posting quick_replies to a
-        // comment reply doesn't map cleanly), but the rest of the
-        // universal skill stack still applies — pass workspace + IDs
-        // so directives, CRM, HTTP tools etc. all work.
-        const accountWorkspaceId = account.workspaceId || '';
-        const { text, usage } = await this.generateResponse(agent, account.userId, from.id, context, 'comment', {
-            igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
-        });
-        if (!text) return;
-
-        await replyToComment(commentId, text, account.accessToken);
-
-        await prisma.aiConversationLog.create({
-            data: {
-                agentId: agent.id,
-                instanceId: account.id,
-                remoteJid: `ig:${from.id}`,
-                userMessage: context,
-                agentReply: text,
-                promptTokens: usage.promptTokens,
-                completionTokens: usage.completionTokens,
-                totalTokens: usage.totalTokens,
-                cachedTokens: usage.cachedTokens,
-                cacheCreationTokens: usage.cacheCreationTokens,
-                provider: agent.provider.provider,
-                model: agent.model,
-                toolCalls: [],
-            }
-        });
-
-        logger.info(`[IG] Agent replied to comment ${commentId} from @${from.username}`);
+        // No automation matched. The IG agent is now DM-only by
+        // product design — comments stay PENDING and wait for either
+        // the operator to reply from the inbox Comments tab or an
+        // automation rule to be added. Comments-tab UI displays the
+        // full backlog so nothing is silently lost.
+        logger.info(`[IG] Comment ${commentId} from @${from.username} left pending — no automation matched, agent won't auto-reply on comments.`);
     }
 
     // ─── Shared AI generation ───

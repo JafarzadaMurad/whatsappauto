@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, MessageCircle, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap, ExternalLink, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
 import { usePermChatWrite } from "@/store/workspaceStore";
@@ -99,7 +99,25 @@ type Message = {
     pollMulti?: boolean;
 };
 
-type ChannelFilter = 'all' | 'whatsapp' | 'instagram';
+type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'comments';
+
+type IgComment = {
+    id: string;
+    commentId: string;
+    parentId: string | null;
+    mediaId: string | null;
+    mediaPermalink: string | null;
+    fromId: string;
+    fromUsername: string | null;
+    text: string;
+    status: 'PENDING' | 'AUTOMATION_MATCHED' | 'MANUAL_REPLIED' | 'IGNORED';
+    agentReply: string | null;
+    createdAt: string;
+    repliedAt: string | null;
+    account: { id: string; username: string } | null;
+};
+
+type CommentStatusFilter = '' | 'PENDING' | 'AUTOMATION_MATCHED' | 'MANUAL_REPLIED' | 'IGNORED';
 
 // ─── Page ─────────────────────────────────────────────────────
 export default function InboxPage() {
@@ -468,6 +486,7 @@ export default function InboxPage() {
                         { id: 'all', label: 'All' },
                         { id: 'whatsapp', label: 'WhatsApp', Icon: MessageSquare, color: 'text-emerald-400' },
                         { id: 'instagram', label: 'Instagram', Icon: Camera, color: 'text-pink-400' },
+                        { id: 'comments', label: 'Comments', Icon: MessageCircle, color: 'text-violet-400' },
                     ] as const).map(f => (
                         <button key={f.id} onClick={() => setChannelFilter(f.id as ChannelFilter)}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0
@@ -481,6 +500,9 @@ export default function InboxPage() {
                 </div>
             </div>
 
+            {channelFilter === 'comments' ? (
+                <CommentsInboxView />
+            ) : (
             <div className="flex-1 flex min-h-0">
                 {/* ─── Conversation list ───
                     Mobile: full width when no chat selected, hidden once a
@@ -634,6 +656,7 @@ export default function InboxPage() {
                     />
                 )}
             </div>
+            )}
         </div>
     );
 }
@@ -1309,6 +1332,206 @@ function AgentChatBubble({ turn }: { turn: AgentChatTurn }) {
                         ))}
                     </div>
                 )}
+            </div>
+        </div>
+    );
+}
+
+// ─── Comments inbox view ──────────────────────────────────────
+//
+// Fully separate view from the DM conversation list. Reads from
+// InstagramComment rows the backend populates on comment
+// webhooks. IG DM-bound agents now DM-only by product design — this
+// tab is where operators triage comments manually until they wire
+// an automation for the post.
+
+const COMMENT_STATUS_LABELS: Record<CommentStatusFilter, string> = {
+    '': 'All',
+    PENDING: 'Pending',
+    AUTOMATION_MATCHED: 'Automation replied',
+    MANUAL_REPLIED: 'Manually replied',
+    IGNORED: 'Ignored',
+};
+
+function CommentsInboxView() {
+    const [status, setStatus] = useState<CommentStatusFilter>('PENDING');
+    const [comments, setComments] = useState<IgComment[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [total, setTotal] = useState(0);
+    const [pendingCount, setPendingCount] = useState(0);
+    const [page, setPage] = useState(1);
+    const pageSize = 30;
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (status) params.set('status', status);
+            params.set('page', String(page));
+            params.set('pageSize', String(pageSize));
+            const r = await api.get(`/instagram/comments-inbox?${params.toString()}`);
+            if (r.data?.success) {
+                setComments(r.data.comments);
+                setTotal(r.data.total);
+                setPendingCount(r.data.pendingCount);
+            }
+        } catch (e) { console.error(e); }
+        finally { setLoading(false); }
+    }, [status, page]);
+
+    useEffect(() => { load(); }, [load]);
+
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+    return (
+        <div className="flex-1 flex flex-col min-h-0 bg-background">
+            <div className="px-4 py-3 border-b border-border flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Status</span>
+                {(['', 'PENDING', 'AUTOMATION_MATCHED', 'MANUAL_REPLIED', 'IGNORED'] as CommentStatusFilter[]).map(s => (
+                    <button key={s || 'all'} onClick={() => { setStatus(s); setPage(1); }}
+                        className={`text-xs px-2.5 py-1 rounded-md border transition-colors ${status === s
+                            ? 'bg-primary/15 border-primary/40 text-foreground'
+                            : 'bg-card border-border text-muted-foreground hover:text-foreground'}`}>
+                        {COMMENT_STATUS_LABELS[s]}
+                        {s === 'PENDING' && pendingCount > 0 && (
+                            <span className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold">
+                                {pendingCount}
+                            </span>
+                        )}
+                    </button>
+                ))}
+                <div className="ml-auto text-xs text-muted-foreground">
+                    {total.toLocaleString()} {total === 1 ? 'comment' : 'comments'}
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2">
+                {loading ? (
+                    <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                ) : comments.length === 0 ? (
+                    <div className="text-center text-sm text-muted-foreground py-20">
+                        {status === 'PENDING' ? 'All caught up — no pending comments.' : 'No comments in this bucket.'}
+                    </div>
+                ) : (
+                    comments.map(c => (
+                        <CommentCard key={c.id} comment={c} onChanged={load} />
+                    ))
+                )}
+            </div>
+
+            {totalPages > 1 && (
+                <div className="border-t border-border px-4 py-2.5 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Page {page} of {totalPages}</span>
+                    <div className="flex gap-1.5">
+                        <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || loading}
+                            className="px-2.5 py-1 rounded bg-secondary/40 hover:bg-secondary border border-border disabled:opacity-40">Previous</button>
+                        <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages || loading}
+                            className="px-2.5 py-1 rounded bg-secondary/40 hover:bg-secondary border border-border disabled:opacity-40">Next</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CommentCard({ comment, onChanged }: { comment: IgComment; onChanged: () => void }) {
+    const [reply, setReply] = useState('');
+    const [replyOpen, setReplyOpen] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    const statusBadge = (() => {
+        switch (comment.status) {
+            case 'PENDING':            return { label: 'Pending', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' };
+            case 'AUTOMATION_MATCHED': return { label: 'Automation replied', cls: 'bg-blue-500/10 text-blue-300 border-blue-500/30' };
+            case 'MANUAL_REPLIED':     return { label: 'Manually replied', cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' };
+            case 'IGNORED':            return { label: 'Ignored', cls: 'bg-secondary/60 text-muted-foreground border-border' };
+        }
+    })();
+
+    const doReply = async () => {
+        if (!reply.trim()) return;
+        setBusy(true);
+        try {
+            await api.post(`/instagram/comments/${comment.id}/reply`, { text: reply.trim() });
+            setReply(''); setReplyOpen(false);
+            onChanged();
+        } catch (e: any) {
+            alert(e?.response?.data?.message || e.message);
+        } finally { setBusy(false); }
+    };
+    const doIgnore = async () => {
+        setBusy(true);
+        try { await api.post(`/instagram/comments/${comment.id}/ignore`); onChanged(); }
+        catch (e: any) { alert(e?.response?.data?.message || e.message); }
+        finally { setBusy(false); }
+    };
+    const doHide = async () => {
+        if (!confirm('Hide this comment on Instagram? The user can still see their own comment but nobody else will.')) return;
+        setBusy(true);
+        try { await api.delete(`/instagram/comments/${comment.id}`); onChanged(); }
+        catch (e: any) { alert(e?.response?.data?.message || e.message); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <div className="bg-card border border-border rounded-xl p-3">
+            <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-secondary/50 flex items-center justify-center text-sm font-semibold text-muted-foreground flex-shrink-0">
+                    {(comment.fromUsername || comment.fromId || '?').charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-sm font-medium">@{comment.fromUsername || comment.fromId}</span>
+                        <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${statusBadge.cls}`}>{statusBadge.label}</span>
+                        {comment.account && (
+                            <span className="text-[10px] text-muted-foreground">on @{comment.account.username}</span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground ml-auto">{new Date(comment.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap break-words">{comment.text}</p>
+                    {comment.agentReply && (
+                        <div className="mt-2 pl-3 border-l-2 border-emerald-500/40">
+                            <p className="text-[10px] uppercase tracking-wide text-emerald-400 mb-0.5">Our reply</p>
+                            <p className="text-xs whitespace-pre-wrap break-words">{comment.agentReply}</p>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        {comment.mediaPermalink && (
+                            <a href={comment.mediaPermalink} target="_blank" rel="noreferrer"
+                                className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1">
+                                <ExternalLink className="w-3 h-3" /> Post
+                            </a>
+                        )}
+                        {comment.status !== 'MANUAL_REPLIED' && comment.status !== 'IGNORED' && (
+                            <>
+                                <button onClick={() => setReplyOpen(v => !v)} disabled={busy}
+                                    className="text-[11px] px-2 py-1 rounded bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 disabled:opacity-50">
+                                    Reply
+                                </button>
+                                <button onClick={doIgnore} disabled={busy}
+                                    className="text-[11px] px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground border border-border disabled:opacity-50">
+                                    Mark ignored
+                                </button>
+                            </>
+                        )}
+                        <button onClick={doHide} disabled={busy}
+                            className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-red-400 flex items-center gap-1 disabled:opacity-50">
+                            <Trash2 className="w-3 h-3" /> Hide
+                        </button>
+                    </div>
+                    {replyOpen && (
+                        <div className="mt-2 flex gap-2 items-end">
+                            <textarea value={reply} onChange={e => setReply(e.target.value)}
+                                placeholder="Public reply to this comment…"
+                                rows={2} maxLength={2000} disabled={busy}
+                                className="flex-1 bg-secondary/40 border border-border rounded-lg px-2.5 py-2 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                            <button onClick={doReply} disabled={busy || !reply.trim()}
+                                className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-3 py-2 disabled:opacity-50 flex-shrink-0">
+                                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

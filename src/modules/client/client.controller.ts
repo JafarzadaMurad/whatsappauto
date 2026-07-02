@@ -34,7 +34,7 @@ export class ClientController {
                     { phone: { contains: search } },
                 ];
             }
-            const [total, clients] = await Promise.all([
+            const [total, rawClients] = await Promise.all([
                 prisma.client.count({ where }),
                 prisma.client.findMany({
                     where,
@@ -46,6 +46,30 @@ export class ClientController {
                     },
                 }),
             ]);
+
+            // Enrich Instagram clients with username / profile pic
+            // from the InstagramContact cache. Existing rows may have
+            // been created before we started passing profile info into
+            // upsertCrmContact, so filling it here keeps the Contacts
+            // page pretty without a data migration.
+            const clients: any[] = rawClients;
+            const igPhones = clients.filter(c => c.channel === 'instagram').map(c => c.phone);
+            if (igPhones.length > 0) {
+                const igContacts = await prisma.instagramContact.findMany({
+                    where: { senderId: { in: igPhones } },
+                    select: { senderId: true, name: true, username: true, profilePic: true },
+                });
+                const bySenderId = new Map(igContacts.map(c => [c.senderId, c]));
+                for (const c of clients) {
+                    if (c.channel !== 'instagram') continue;
+                    const igc = bySenderId.get(c.phone);
+                    if (!igc) continue;
+                    if (!c.name) c.name = igc.name || igc.username || null;
+                    if (!c.profilePicUrl) c.profilePicUrl = igc.profilePic || null;
+                    c.igUsername = igc.username || null;
+                }
+            }
+
             return res.json({
                 success: true,
                 clients,

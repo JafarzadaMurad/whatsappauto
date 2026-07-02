@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { Users, Search, Phone, Tag, Loader2, MessageSquare, Camera, Settings2, X, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, ChevronsUpDown, Save } from "lucide-react";
+import { Users, Search, Phone, Tag, Loader2, MessageSquare, Camera, Settings2, X, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, ChevronsUpDown, Save, User } from "lucide-react";
 import api from "@/lib/api";
 
 interface Client {
@@ -17,6 +17,8 @@ interface Client {
     isAnonymous?: boolean;
     assignedAgentId?: string | null;
     assignedAgent?: { id: string; name: string; isRouter?: boolean } | null;
+    profilePicUrl?: string | null;
+    igUsername?: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -57,17 +59,55 @@ const getStatusColor = (status: string) => {
     }
 };
 
-// Display a stored phone/IGSID as a friendly identifier. WhatsApp phones
-// arrive as digits-only (e.g. 994773102993); we prefix them with "+".
-// Instagram IGSIDs are also numeric but very long — same treatment is
-// fine, the user just wanted "looks like a number, not an id".
-// For WhatsApp LIDs (anonymous identities) we drop the "+" prefix —
-// adding it would imply this 15-digit number is a real phone you can
-// call, which it isn't.
-function formatPhone(phone: string, isAnonymous?: boolean): string {
-    const digits = phone.replace(/[^0-9]/g, '');
-    if (!digits) return phone;
-    if (isAnonymous) return digits;
+// Display a stored phone/IGSID as a friendly identifier. WhatsApp
+// phones arrive as digits-only (e.g. 994773102993); we prefix them
+// with "+". WhatsApp LID (anonymous) → digits only, no "+" (it
+// isn't callable). Instagram IGSIDs are internal IDs — never a
+// phone — so we show the human handle (@username) when we have it,
+// falling back to a shortened id label so the row stays useful.
+// Small avatar for a Client row. Prefers a cached profile picture
+// (WA CDN or IG's), then the name's initial, then a channel-tinted
+// icon fallback (User for IG, Phone for WA) so nobody gets a
+// misleading phone icon on an Instagram row.
+function ContactAvatar({ client: c, size = 36 }: { client: Client; size?: number }) {
+    const px = `${size}px`;
+    const iconClass = size >= 36 ? 'w-4 h-4' : 'w-3.5 h-3.5';
+    if (c.profilePicUrl) {
+        return (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={c.profilePicUrl} alt="" style={{ width: px, height: px }}
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                className="rounded-full object-cover flex-shrink-0 bg-secondary/40" />
+        );
+    }
+    if (c.name) {
+        return (
+            <div style={{ width: px, height: px }}
+                className={`rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold ${size >= 36 ? 'text-sm' : 'text-xs'} flex-shrink-0`}>
+                {c.name.charAt(0).toUpperCase()}
+            </div>
+        );
+    }
+    const isIg = c.channel === 'instagram';
+    return (
+        <div style={{ width: px, height: px }}
+            className={`rounded-full flex items-center justify-center flex-shrink-0 ${isIg
+                ? 'bg-pink-500/10 text-pink-400'
+                : 'bg-primary/10 text-primary'}`}>
+            {isIg ? <User className={iconClass} /> : <Phone className={iconClass} />}
+        </div>
+    );
+}
+
+function formatIdentifier(c: Client): string {
+    const digits = c.phone.replace(/[^0-9]/g, '');
+    if (c.channel === 'instagram') {
+        if (c.igUsername) return '@' + c.igUsername;
+        // Fallback: a compact placeholder rather than "+16-digit-number".
+        return 'IG · ' + (digits ? digits.slice(-6) : c.phone);
+    }
+    if (!digits) return c.phone;
+    if (c.isAnonymous) return digits;
     return '+' + digits;
 }
 
@@ -342,14 +382,14 @@ export default function ContactsPage() {
 // ─── Per-column cell renderer ─────────────────────────────────
 function CellValue({ client: c, columnId, field }: { client: Client; columnId: ColumnId; field?: UserField }) {
     if (columnId === 'contact') {
+        const isIg = c.channel === 'instagram';
+        const displayName = c.name || (isIg ? (c.igUsername ? '@' + c.igUsername : 'Instagram user') : 'Unknown');
         return (
             <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs flex-shrink-0">
-                    {c.name ? c.name.charAt(0).toUpperCase() : <Phone className="w-3.5 h-3.5" />}
-                </div>
+                <ContactAvatar client={c} size={36} />
                 <div className="min-w-0">
                     <div className="font-medium text-foreground truncate flex items-center gap-1.5">
-                        {c.name || 'Unknown'}
+                        {displayName}
                         {c.isAnonymous && (
                             <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20"
                                 title="Anonymous WhatsApp LID — not a real phone number">
@@ -357,7 +397,7 @@ function CellValue({ client: c, columnId, field }: { client: Client; columnId: C
                             </span>
                         )}
                     </div>
-                    <div className="text-xs text-muted-foreground font-mono truncate">{formatPhone(c.phone, c.isAnonymous)}</div>
+                    <div className="text-xs text-muted-foreground font-mono truncate">{formatIdentifier(c)}</div>
                 </div>
             </div>
         );
@@ -658,12 +698,10 @@ function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
                 onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between p-5 border-b border-border">
                     <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                            {name ? name.charAt(0).toUpperCase() : <Phone className="w-4 h-4" />}
-                        </div>
+                        <ContactAvatar client={client} size={40} />
                         <div className="min-w-0">
                             <h2 className="font-semibold truncate flex items-center gap-2">
-                                {name || 'Unknown'}
+                                {name || (client.channel === 'instagram' ? (client.igUsername ? '@' + client.igUsername : 'Instagram user') : 'Unknown')}
                                 {client.isAnonymous && (
                                     <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20"
                                         title="Anonymous WhatsApp LID — not a real phone number">
@@ -671,7 +709,7 @@ function EditContactDrawer({ client, fields, onClose, onSaved, onDeleted }: {
                                     </span>
                                 )}
                             </h2>
-                            <p className="text-xs text-muted-foreground font-mono truncate">{formatPhone(client.phone, client.isAnonymous)}</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{formatIdentifier(client)}</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="text-muted-foreground hover:text-foreground">

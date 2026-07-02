@@ -577,6 +577,8 @@ export class InstagramAiService {
             aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
         } else if (providerInfo.provider === 'GEMINI') {
             aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        } else if (providerInfo.provider === 'GLM') {
+            aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
         } else {
             return { text: null, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, cacheCreationTokens: 0 } };
         }

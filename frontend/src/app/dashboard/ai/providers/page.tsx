@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Key, Loader2, Save, Trash2, CheckCircle2 } from "lucide-react";
 import api from "@/lib/api";
 
-type ProviderType = 'OPENAI' | 'CLAUDE' | 'GEMINI';
+type ProviderType = 'OPENAI' | 'CLAUDE' | 'GEMINI' | 'GLM';
 
 interface Provider {
     id?: string;
@@ -13,11 +13,19 @@ interface Provider {
     isSaved?: boolean;
 }
 
+const PROVIDER_LABELS: Record<ProviderType, string> = {
+    OPENAI: 'OpenAI',
+    CLAUDE: 'Anthropic (Claude)',
+    GEMINI: 'Google Gemini',
+    GLM: 'Z.ai (GLM)',
+};
+
 export default function AiProvidersPage() {
     const [providers, setProviders] = useState<Provider[]>([
         { provider: 'OPENAI', apiKey: '' },
         { provider: 'CLAUDE', apiKey: '' },
-        { provider: 'GEMINI', apiKey: '' }
+        { provider: 'GEMINI', apiKey: '' },
+        { provider: 'GLM', apiKey: '' },
     ]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState<ProviderType | null>(null);
@@ -97,7 +105,7 @@ export default function AiProvidersPage() {
                                         <Key className="w-6 h-6 text-primary" />
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-semibold">{p.provider === 'OPENAI' ? 'OpenAI' : p.provider === 'CLAUDE' ? 'Anthropic (Claude)' : 'Google Gemini'}</h2>
+                                        <h2 className="text-lg font-semibold">{PROVIDER_LABELS[p.provider]}</h2>
                                         <div className="flex items-center gap-2 mt-1">
                                             {p.isSaved ? (
                                                 <span className="flex items-center text-xs font-medium text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">

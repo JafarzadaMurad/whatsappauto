@@ -4,16 +4,17 @@ import { useEffect, useState } from "react";
 import { Bot, Loader2, Plus, Trash2, Save, RotateCcw } from "lucide-react";
 import api from "@/lib/api";
 
-type ProviderKey = "OPENAI" | "CLAUDE" | "GEMINI";
+type ProviderKey = "OPENAI" | "CLAUDE" | "GEMINI" | "GLM";
 type ModelMap = Record<ProviderKey, string[]>;
 
 const PROVIDERS: { key: ProviderKey; label: string; color: string }[] = [
     { key: "OPENAI", label: "OpenAI", color: "text-green-400 bg-green-500/10 border-green-500/30" },
     { key: "CLAUDE", label: "Anthropic Claude", color: "text-orange-400 bg-orange-500/10 border-orange-500/30" },
     { key: "GEMINI", label: "Google Gemini", color: "text-blue-400 bg-blue-500/10 border-blue-500/30" },
+    { key: "GLM", label: "Z.ai (GLM)", color: "text-violet-400 bg-violet-500/10 border-violet-500/30" },
 ];
 
-const EMPTY: ModelMap = { OPENAI: [], CLAUDE: [], GEMINI: [] };
+const EMPTY: ModelMap = { OPENAI: [], CLAUDE: [], GEMINI: [], GLM: [] };
 
 export default function AdminAiModelsPage() {
     const [models, setModels] = useState<ModelMap>(EMPTY);
@@ -32,6 +33,7 @@ export default function AdminAiModelsPage() {
                     OPENAI: r.data.models?.OPENAI || [],
                     CLAUDE: r.data.models?.CLAUDE || [],
                     GEMINI: r.data.models?.GEMINI || [],
+                    GLM: r.data.models?.GLM || [],
                 };
                 setModels(m);
                 setOriginal(m);
@@ -67,6 +69,7 @@ export default function AdminAiModelsPage() {
                     OPENAI: r.data.models?.OPENAI || [],
                     CLAUDE: r.data.models?.CLAUDE || [],
                     GEMINI: r.data.models?.GEMINI || [],
+                    GLM: r.data.models?.GLM || [],
                 };
                 setModels(next);
                 setOriginal(next);

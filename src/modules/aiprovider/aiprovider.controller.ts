@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createProviderSchema = z.object({
-    provider: z.enum(['OPENAI', 'CLAUDE', 'GEMINI']),
+    provider: z.enum(['OPENAI', 'CLAUDE', 'GEMINI', 'GLM']),
     apiKey: z.string().min(1)
 });
 

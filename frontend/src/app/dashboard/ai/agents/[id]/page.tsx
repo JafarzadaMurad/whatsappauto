@@ -1085,7 +1085,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                             {stats.stats.map((s: any, i: number) => (
                                                 <tr key={i} className="border-b border-border/50 hover:bg-secondary/20">
                                                     <td className="p-3">
-                                                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.provider === 'OPENAI' ? 'bg-green-500/10 text-green-400' : s.provider === 'CLAUDE' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.provider === 'OPENAI' ? 'bg-green-500/10 text-green-400' : s.provider === 'CLAUDE' ? 'bg-orange-500/10 text-orange-400' : s.provider === 'GLM' ? 'bg-violet-500/10 text-violet-400' : 'bg-blue-500/10 text-blue-400'}`}>
                                                             {s.provider}
                                                         </span>
                                                     </td>

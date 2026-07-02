@@ -1910,6 +1910,8 @@ export class AiService {
                 aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
             } else if (providerInfo.provider === 'GEMINI') {
                 aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+            } else if (providerInfo.provider === 'GLM') {
+                aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
             } else {
                 logger.error(`Unknown AI Provider: ${providerInfo.provider}`);
                 return;
@@ -2273,6 +2275,8 @@ export class AiService {
             aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
         } else if (providerInfo.provider === 'GEMINI') {
             aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        } else if (providerInfo.provider === 'GLM') {
+            aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
         } else {
             throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
         }
@@ -2359,6 +2363,7 @@ export class AiService {
         if (providerInfo.provider === 'OPENAI') return createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
         if (providerInfo.provider === 'CLAUDE') return createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
         if (providerInfo.provider === 'GEMINI') return createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        if (providerInfo.provider === 'GLM') return createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
         throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
     }
 
@@ -2482,6 +2487,7 @@ export class AiService {
             if (providerInfo.provider === 'OPENAI')      aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
             else if (providerInfo.provider === 'CLAUDE') aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
             else if (providerInfo.provider === 'GEMINI') aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+            else if (providerInfo.provider === 'GLM')    aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
             else return;
 
             // Skip when the contact is paused or has no Client row.
@@ -2593,6 +2599,7 @@ export class AiService {
             if (providerInfo.provider === 'OPENAI')      aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
             else if (providerInfo.provider === 'CLAUDE') aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
             else if (providerInfo.provider === 'GEMINI') aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+            else if (providerInfo.provider === 'GLM')    aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
             else return;
 
             const workspaceId = account.workspaceId || '';
@@ -2886,6 +2893,8 @@ export class AiService {
             aiModel = createAnthropic({ apiKey: providerInfo.apiKey })(agent.model);
         } else if (providerInfo.provider === 'GEMINI') {
             aiModel = createGoogleGenerativeAI({ apiKey: providerInfo.apiKey })(agent.model);
+        } else if (providerInfo.provider === 'GLM') {
+            aiModel = createOpenAI({ apiKey: providerInfo.apiKey, baseURL: 'https://api.z.ai/api/paas/v4/' } as any).chat(agent.model);
         } else {
             throw new Error(`Unknown AI Provider: ${providerInfo.provider}`);
         }

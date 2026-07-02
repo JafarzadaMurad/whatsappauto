@@ -66,10 +66,43 @@ export class DirectiveController {
             });
             if (!instance && !igAccount) return res.status(404).json({ success: false, message: 'Account not found' });
 
-            const client = await prisma.client.findFirst({
+            let client = await prisma.client.findFirst({
                 where: { workspaceId, phone },
                 select: { id: true, assignedAgentId: true, assignedAgent: { select: { id: true, name: true } } },
             });
+
+            // Panel is opened on an existing conversation → the contact
+            // is real by construction. If the CRM row somehow wasn't
+            // created earlier (legacy IG DMs that landed before
+            // upsertCrmContact was wired for IG, workspaceId drift on
+            // the InstagramAccount, or a WA thread that skipped
+            // upsert), lazy-create it here so operators aren't blocked
+            // from steering the agent. Channel + userId + sourceLabel
+            // come from whichever account matched.
+            if (!client) {
+                const { upsertCrmContact } = await import('../client/client.service');
+                const channel: 'whatsapp' | 'instagram' = igAccount ? 'instagram' : 'whatsapp';
+                const userId = (instance?.agent as any)?.userId
+                    || (igAccount?.agent as any)?.userId
+                    || (await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ownerId: true } }))?.ownerId
+                    || '';
+                if (userId) {
+                    const created = await upsertCrmContact({
+                        userId,
+                        workspaceId,
+                        phone,
+                        name: null,
+                        channel,
+                        sourceLabel: null,
+                    }).catch(() => null);
+                    if (created) {
+                        client = await prisma.client.findUnique({
+                            where: { id: created.id },
+                            select: { id: true, assignedAgentId: true, assignedAgent: { select: { id: true, name: true } } },
+                        });
+                    }
+                }
+            }
 
             const primaryAgent = instance?.agent || igAccount?.agent || null;
             const routerAgent = instance?.routerAgent || igAccount?.routerAgent || null;

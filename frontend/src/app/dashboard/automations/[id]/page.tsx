@@ -164,6 +164,189 @@ const CHANNEL_TINT: Record<NodeChannel, { bg: string; border: string; text: stri
     generic: { bg: 'bg-secondary/40',   border: 'border-border',         text: 'text-muted-foreground', label: 'Generic' },
 };
 
+// ─── Variable chip helpers ───────────────────────────────────────────
+// Text stays as plain strings with `{{var}}` markers on disk (backwards
+// compatible with the engine's interpolate). Only the *rendering* is
+// enriched: chips in the node body, chips inline inside the editor.
+const VAR_TOKEN_RE = /(\{\{\s*\w+\s*\}\})/g;
+const VAR_CAPTURE_RE = /^\{\{\s*(\w+)\s*\}\}$/;
+
+// Inline chip style used by both the read-only summary and the
+// contentEditable innerHTML. Inline CSS so it doesn't need globals.css.
+const CHIP_INLINE_STYLE =
+    'display:inline-block;padding:0 6px;margin:0 2px;background:rgba(139,92,246,0.18);' +
+    'color:rgb(196,181,253);border:1px solid rgba(139,92,246,0.45);border-radius:5px;' +
+    'font-size:0.85em;font-family:ui-monospace,Menlo,monospace;font-weight:500;' +
+    'cursor:default;user-select:none;vertical-align:baseline;';
+
+function TextWithChips({ text }: { text: string }) {
+    if (!text) return null;
+    const parts = text.split(VAR_TOKEN_RE);
+    return (
+        <>
+            {parts.map((p, i) => {
+                const m = p.match(VAR_CAPTURE_RE);
+                if (m) return <span key={i} style={{ padding: '0 6px', margin: '0 2px', background: 'rgba(139,92,246,0.18)', color: 'rgb(196,181,253)', border: '1px solid rgba(139,92,246,0.45)', borderRadius: '5px', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: '0.85em', fontWeight: 500 }}>{m[1]}</span>;
+                return <span key={i}>{p}</span>;
+            })}
+        </>
+    );
+}
+
+const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const stringToChipHtml = (s: string): string => {
+    if (!s) return '';
+    return s.split(VAR_TOKEN_RE).map(part => {
+        const m = part.match(VAR_CAPTURE_RE);
+        if (m) {
+            const v = m[1];
+            return `<span style="${CHIP_INLINE_STYLE}" contenteditable="false" data-var="${v}">${v}</span>`;
+        }
+        return escapeHtml(part).replace(/\n/g, '<br>');
+    }).join('');
+};
+
+const chipHtmlToString = (el: HTMLElement): string => {
+    let out = '';
+    el.childNodes.forEach(node => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            // Strip zero-width spaces we use for cursor placement.
+            out += (node.textContent || '').replace(/​/g, '');
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const e = node as HTMLElement;
+            if (e.dataset.var) {
+                out += `{{${e.dataset.var}}}`;
+            } else if (e.tagName === 'BR') {
+                out += '\n';
+            } else if (e.tagName === 'DIV') {
+                if (out && !out.endsWith('\n')) out += '\n';
+                out += chipHtmlToString(e);
+            } else {
+                out += chipHtmlToString(e);
+            }
+        }
+    });
+    return out;
+};
+
+function VariableTextEditor({
+    value, onChange, variables, rows = 4, hint,
+}: {
+    value: string;
+    onChange: (v: string) => void;
+    variables: string[];
+    rows?: number;
+    hint?: string;
+}) {
+    const editorRef = useRef<HTMLDivElement | null>(null);
+    const skipNextExternal = useRef(false);
+    const [dragOver, setDragOver] = useState(false);
+
+    // Sync from external `value` when it differs from what we currently render.
+    useEffect(() => {
+        const el = editorRef.current;
+        if (!el) return;
+        if (skipNextExternal.current) { skipNextExternal.current = false; return; }
+        const current = chipHtmlToString(el);
+        if (current === value) return;
+        el.innerHTML = stringToChipHtml(value);
+    }, [value]);
+
+    const emitChange = () => {
+        const el = editorRef.current;
+        if (!el) return;
+        skipNextExternal.current = true;
+        onChange(chipHtmlToString(el));
+    };
+
+    const insertVariable = (v: string, atRange?: Range) => {
+        const el = editorRef.current;
+        if (!el) return;
+        el.focus();
+        const sel = window.getSelection();
+        if (!sel) return;
+        let range = atRange || (sel.rangeCount ? sel.getRangeAt(0) : null);
+        if (!range || !el.contains(range.commonAncestorContainer)) {
+            range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+        }
+        const chip = document.createElement('span');
+        chip.setAttribute('style', CHIP_INLINE_STYLE);
+        chip.contentEditable = 'false';
+        chip.dataset.var = v;
+        chip.textContent = v;
+        range.deleteContents();
+        range.insertNode(chip);
+        // Zero-width space so caret has a place to sit after the chip.
+        const zws = document.createTextNode('​');
+        chip.parentNode?.insertBefore(zws, chip.nextSibling);
+        const after = document.createRange();
+        after.setStartAfter(zws);
+        after.setEndAfter(zws);
+        sel.removeAllRanges();
+        sel.addRange(after);
+        emitChange();
+    };
+
+    const onPaste = (e: React.ClipboardEvent) => {
+        e.preventDefault();
+        const text = e.clipboardData.getData('text/plain');
+        // Convert on paste so `{{var}}` typed elsewhere becomes a real chip.
+        const html = stringToChipHtml(text);
+        document.execCommand('insertHTML', false, html);
+        emitChange();
+    };
+
+    const onDrop = (e: React.DragEvent) => {
+        setDragOver(false);
+        const v = e.dataTransfer.getData('text/x-variable');
+        if (!v) return;
+        e.preventDefault();
+        const doc = document as any;
+        let dropRange: Range | null = null;
+        if (doc.caretRangeFromPoint) dropRange = doc.caretRangeFromPoint(e.clientX, e.clientY);
+        else if (doc.caretPositionFromPoint) {
+            const cp = doc.caretPositionFromPoint(e.clientX, e.clientY);
+            if (cp) { dropRange = document.createRange(); dropRange.setStart(cp.offsetNode, cp.offset); dropRange.collapse(true); }
+        }
+        insertVariable(v, dropRange || undefined);
+    };
+
+    return (
+        <div>
+            <div className="flex gap-1.5 mb-2 flex-wrap">
+                {variables.map(v => (
+                    <button key={v}
+                        type="button"
+                        draggable
+                        onDragStart={e => { e.dataTransfer.setData('text/x-variable', v); e.dataTransfer.effectAllowed = 'copy'; }}
+                        onClick={() => insertVariable(v)}
+                        title={`Drag or click to insert {{${v}}}`}
+                        className="inline-flex items-center gap-0.5 text-[11px] font-mono px-2 py-1 rounded-md bg-violet-500/15 border border-violet-500/40 text-violet-300 hover:bg-violet-500/25 cursor-grab active:cursor-grabbing select-none">
+                        <span className="opacity-50">{'{{'}</span>{v}<span className="opacity-50">{'}}'}</span>
+                    </button>
+                ))}
+            </div>
+            <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={emitChange}
+                onPaste={onPaste}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDrop}
+                style={{ minHeight: `${rows * 1.5}em`, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                className={`w-full bg-secondary/50 border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 ${dragOver ? 'border-primary/60 ring-2 ring-primary/40' : 'border-border'}`}
+            />
+            {hint && <p className="text-[10px] text-muted-foreground/80 mt-1">{hint}</p>}
+        </div>
+    );
+}
+
 // ─── Custom node component ───
 function FlowNode({ id, type, data, selected }: NodeProps) {
     const meta = NODE_META[type as string];
@@ -233,7 +416,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
                     <span className={`ml-auto text-[9px] font-semibold uppercase tracking-wide ${tint.text}`}>{tint.label}</span>
                 )}
             </div>
-            <div className="pl-4 pr-3 py-2 text-xs text-muted-foreground break-words">{summary}</div>
+            <div className="pl-4 pr-3 py-2 text-xs text-muted-foreground break-words"><TextWithChips text={summary} /></div>
             {isCondition ? (
                 <>
                     <Handle id="true" type="source" position={Position.Right} style={{ top: "40%" }} className="!w-3 !h-3 !bg-emerald-500" />
@@ -903,8 +1086,8 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
 
             {kind === 'text' && (
                 <Field label="Message text">
-                    <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={5}
-                        placeholder="Hi {{username}}, thanks for your comment!" className={inputCls + ' resize-none'} />
+                    <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
+                        variables={["username", "comment", "post_url"]} />
                 </Field>
             )}
 
@@ -1135,8 +1318,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
             return (
                 <div className="space-y-3">
                     <Field label="Message text">
-                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
-                            placeholder="Use {{name}} for the contact's name" className={inputCls + ' resize-none'} />
+                        <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
+                            variables={["name", "message"]} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media} onChange={(m) => onChange({ media: m })} />
@@ -1148,8 +1331,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
             return (
                 <div className="space-y-3">
                     <Field label="DM text">
-                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
-                            placeholder="Hi {{username}}, thanks for your comment!" className={inputCls + ' resize-none'} />
+                        <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
+                            variables={["username", "comment", "post_url"]} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media}
@@ -1181,7 +1364,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                         ))}
                     </div>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        Variables: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>. Documents fall back to a text link on Instagram.
+                        Documents fall back to a text link on Instagram.
                     </p>
                 </div>
             );
@@ -1189,8 +1372,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
             return (
                 <div className="space-y-3">
                     <Field label="Reply text">
-                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
-                            placeholder="Thanks for commenting, {{username}}!" className={inputCls + ' resize-none'} />
+                        <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
+                            variables={["username", "comment", "post_url"]} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1215,8 +1398,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
             return (
                 <div className="space-y-3">
                     <Field label="Message text">
-                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={5}
-                            placeholder="Use {{name}} for the contact's name" className={inputCls + ' resize-none'} />
+                        <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
+                            variables={["name", "message"]} />
                     </Field>
                 </div>
             );
@@ -1237,8 +1420,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                     </Field>
                     {(d.mediaKind === 'image' || d.mediaKind === 'video' || d.mediaKind === 'document') && (
                         <Field label="Caption (optional)">
-                            <textarea value={d.caption || ''} onChange={e => onChange({ caption: e.target.value })} rows={3}
-                                placeholder="Optional text shown with the file. Variables: {{name}}, {{message}}." className={inputCls + ' resize-none'} />
+                            <VariableTextEditor value={d.caption || ''} onChange={(t) => onChange({ caption: t })} rows={3}
+                                variables={["name", "message"]} />
                         </Field>
                     )}
                     {d.mediaKind === 'document' && (
@@ -1258,8 +1441,8 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
             return (
                 <div className="space-y-3">
                     <Field label="Reply text">
-                        <textarea value={d.text || ''} onChange={e => onChange({ text: e.target.value })} rows={4}
-                            placeholder="Thanks for commenting, {{username}}!" className={inputCls + ' resize-none'} />
+                        <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
+                            variables={["username", "comment", "post_url"]} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1309,12 +1492,9 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                         )}
                     </Field>
                     <Field label="Value">
-                        <input type="text" value={d.value || ''} onChange={e => onChange({ value: e.target.value })}
-                            placeholder="e.g. {{message}}, Baku, 25, …" className={inputCls} />
+                        <VariableTextEditor value={d.value || ''} onChange={(v) => onChange({ value: v })} rows={2}
+                            variables={["name", "username", "message", "comment", "post_url"]} />
                     </Field>
-                    <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        Variables supported: <code>{'{{message}}'}</code>, <code>{'{{name}}'}</code>, <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
-                    </p>
                 </div>
             );
         case 'action_wait':

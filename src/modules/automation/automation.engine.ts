@@ -108,6 +108,15 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
             return true;
 
         // ─── Instagram DM triggers ───
+        // Unified trigger with a filterMode switch (any/keyword). Old
+        // paired triggers still supported below for backward compat.
+        case 'trigger_ig_dm': {
+            if (ctx.channel !== 'instagram' || ctx.source !== 'dm') return false;
+            if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
+            const mode = String(d.filterMode || 'any');
+            if (mode === 'keyword') return keywordMatches(d, ctx.text);
+            return true;
+        }
         case 'trigger_ig_keyword':
             if (ctx.channel !== 'instagram' || ctx.source !== 'dm') return false;
             if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
@@ -121,11 +130,13 @@ function triggerMatches(node: any, ctx: AutomationContext): boolean {
             if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
             return true;
 
-        // ─── Instagram comment trigger (renamed from trigger_comment) ───
+        // ─── Instagram post trigger (comments today, room to grow) ───
+        // Renamed from trigger_ig_comment. Old names still match.
+        case 'trigger_ig_post':
         case 'trigger_comment':
         case 'trigger_ig_comment': {
             if (ctx.channel !== 'instagram' || ctx.source !== 'comment') return false;
-            if (d.accountId && d.accountId !== ctx.accountId) return false;
+            if (d.accountId && d.accountId !== 'any' && d.accountId !== ctx.accountId) return false;
             const postId = String(d.mediaId || d.postId || '').trim();
             if (postId && postId !== 'any' && postId !== ctx.mediaId) return false;
             return String(d.keywords || '').trim() === '' || keywordMatches(d, ctx.text);

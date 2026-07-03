@@ -36,21 +36,17 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         defaultData: {}
     },
     // ─── Instagram triggers ───
-    trigger_ig_keyword: {
-        label: "Instagram · DM Keyword", category: "trigger", icon: Zap, channel: "ig",
-        defaultData: { keywords: "", caseSensitive: false, matchMode: "contains" }
-    },
-    trigger_ig_any: {
-        label: "Instagram · Any DM", category: "trigger", icon: MessageSquare, channel: "ig",
-        defaultData: {}
+    trigger_ig_dm: {
+        label: "Instagram · DM", category: "trigger", icon: MessageSquare, channel: "ig",
+        defaultData: { accountId: "any", filterMode: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
     trigger_ig_new_contact: {
         label: "Instagram · New Contact", category: "trigger", icon: UserPlus, channel: "ig",
-        defaultData: {}
+        defaultData: { accountId: "any" }
     },
-    trigger_ig_comment: {
-        label: "Instagram · Comment", category: "trigger", icon: Camera, channel: "ig",
-        defaultData: { accountId: "", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+    trigger_ig_post: {
+        label: "Instagram · Post", category: "trigger", icon: Camera, channel: "ig",
+        defaultData: { accountId: "any", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
     // ─── WhatsApp actions ───
     action_wa_send_message: {
@@ -100,6 +96,18 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "IG Comment (legacy)", category: "trigger", icon: Camera,
         defaultData: { accountId: "", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
+    trigger_ig_comment: {
+        label: "IG Comment (legacy)", category: "trigger", icon: Camera,
+        defaultData: { accountId: "any", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+    },
+    trigger_ig_any: {
+        label: "IG Any DM (legacy)", category: "trigger", icon: MessageSquare,
+        defaultData: { accountId: "any" }
+    },
+    trigger_ig_keyword: {
+        label: "IG DM Keyword (legacy)", category: "trigger", icon: Zap,
+        defaultData: { accountId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
+    },
     trigger_new_contact: {
         label: "New Contact (legacy)", category: "trigger", icon: UserPlus,
         defaultData: { channel: "any" }
@@ -128,14 +136,25 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
     logic: { bg: "bg-amber-500/10", border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-500" },
 };
 
-const PALETTE: { category: "trigger" | "action" | "logic"; label: string; types: string[] }[] = [
-    { category: "trigger", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
-    { category: "trigger", label: "Instagram · Triggers", types: ["trigger_ig_keyword", "trigger_ig_any", "trigger_ig_new_contact", "trigger_ig_comment"] },
-    { category: "action", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
-    { category: "action", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment"] },
-    { category: "action", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait"] },
-    { category: "logic", label: "Logic", types: ["condition"] },
+const PALETTE: { category: "trigger" | "action" | "logic"; label: string; channel?: NodeChannel; types: string[] }[] = [
+    { category: "trigger", channel: "wa", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
+    { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
+    { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
+    { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment"] },
+    { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait"] },
+    { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
 ];
+
+// Channel-tinted background per palette group. Uses lucide colour
+// tokens for consistency with the rest of the app (WA = emerald,
+// IG = pink, generic = slate). The category ring stays the same
+// (trigger = emerald, action = blue, logic = amber) so the shape
+// of the node still tells you what it does at a glance.
+const CHANNEL_TINT: Record<NodeChannel, { bg: string; border: string; text: string; label: string }> = {
+    wa:      { bg: 'bg-emerald-500/5',  border: 'border-emerald-500/25', text: 'text-emerald-300', label: 'WhatsApp' },
+    ig:      { bg: 'bg-pink-500/5',     border: 'border-pink-500/25',    text: 'text-pink-300',    label: 'Instagram' },
+    generic: { bg: 'bg-secondary/40',   border: 'border-border',         text: 'text-muted-foreground', label: 'Generic' },
+};
 
 // ─── Custom node component ───
 function FlowNode({ id, type, data, selected }: NodeProps) {
@@ -150,8 +169,12 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     let summary = "";
     const kwSummary = d.keywords || "(no keywords)";
     if (type === "trigger_wa_keyword" || type === "trigger_ig_keyword" || type === "trigger_keyword") summary = kwSummary;
+    else if (type === "trigger_ig_dm") {
+        const mode = d.filterMode || 'any';
+        summary = mode === 'keyword' ? `keyword: ${d.keywords || '(none)'}` : 'any DM';
+    }
     else if (type === "trigger_wa_any" || type === "trigger_wa_new_contact" || type === "trigger_ig_any" || type === "trigger_ig_new_contact") summary = "—";
-    else if (type === "trigger_ig_comment" || type === "trigger_comment") {
+    else if (type === "trigger_ig_post" || type === "trigger_ig_comment" || type === "trigger_comment") {
         const post = d.mediaId && d.mediaId !== 'any' ? '1 post' : 'any post';
         const kw = d.keywords ? ` · "${d.keywords}"` : '';
         summary = `${post}${kw}`;
@@ -182,14 +205,27 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
     else if (type === "condition") summary = `${d.field} ${d.operator} ${d.value || "?"}`;
 
+    // Channel-tinted left ribbon so IG vs WA vs Generic is legible at
+    // a glance without needing to read the label.
+    const channelKey: NodeChannel = (meta as any).channel || 'generic';
+    const tint = CHANNEL_TINT[channelKey];
+    const ribbon =
+        channelKey === 'ig' ? 'bg-pink-500'      :
+        channelKey === 'wa' ? 'bg-emerald-500'   :
+                              'bg-muted-foreground/40';
+
     return (
-        <div className={`rounded-xl border-2 bg-card min-w-[180px] max-w-[240px] ${selected ? c.border : "border-border"} shadow-md`}>
+        <div className={`relative rounded-xl border-2 bg-card min-w-[180px] max-w-[240px] ${selected ? c.border : "border-border"} shadow-md overflow-hidden`}>
+            <div className={`absolute left-0 top-0 bottom-0 w-1 ${ribbon}`} />
             {!isTrigger && <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-muted-foreground" />}
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-t-[10px] ${c.bg}`}>
+            <div className={`flex items-center gap-2 pl-4 pr-3 py-2 rounded-t-[10px] ${c.bg}`}>
                 <Icon className={`w-4 h-4 ${c.text}`} />
                 <span className="text-sm font-semibold truncate">{meta.label}</span>
+                {channelKey !== 'generic' && (
+                    <span className={`ml-auto text-[9px] font-semibold uppercase tracking-wide ${tint.text}`}>{tint.label}</span>
+                )}
             </div>
-            <div className="px-3 py-2 text-xs text-muted-foreground break-words">{summary}</div>
+            <div className="pl-4 pr-3 py-2 text-xs text-muted-foreground break-words">{summary}</div>
             {isCondition ? (
                 <>
                     <Handle id="true" type="source" position={Position.Right} style={{ top: "40%" }} className="!w-3 !h-3 !bg-emerald-500" />
@@ -410,23 +446,30 @@ function Editor({ id }: { id: string }) {
     );
 }
 
-// ─── Add Node modal (centered, searchable, grouped by channel) ───
+// ─── Add Node modal (centered, searchable, tab-filtered, channel-tinted) ───
+type PaletteTab = 'all' | 'trigger' | 'action';
+
 function AddNodeModal({ onPick, onClose }: { onPick: (type: string) => void; onClose: () => void }) {
     const [query, setQuery] = useState("");
+    const [tab, setTab] = useState<PaletteTab>('all');
     const q = query.trim().toLowerCase();
-    const groups = PALETTE.map(g => ({
-        ...g,
-        types: g.types.filter(t => {
-            if (!q) return true;
-            const meta = NODE_META[t];
-            return meta.label.toLowerCase().includes(q) || t.toLowerCase().includes(q);
-        })
-    })).filter(g => g.types.length > 0);
+
+    const groups = PALETTE
+        .filter(g => tab === 'all' || (tab === 'trigger' && g.category === 'trigger') || (tab === 'action' && (g.category === 'action' || g.category === 'logic')))
+        .map(g => ({
+            ...g,
+            types: g.types.filter(t => {
+                if (!q) return true;
+                const meta = NODE_META[t];
+                return meta.label.toLowerCase().includes(q) || t.toLowerCase().includes(q);
+            })
+        }))
+        .filter(g => g.types.length > 0);
 
     return (
         <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-start justify-center pt-20 p-4" onClick={onClose}>
             <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[75vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="p-3 border-b border-border">
+                <div className="p-3 border-b border-border space-y-3">
                     <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50 border border-border focus-within:ring-2 focus-within:ring-primary/40">
                         <Plus className="w-4 h-4 text-muted-foreground rotate-45" />
                         <input
@@ -439,33 +482,53 @@ function AddNodeModal({ onPick, onClose }: { onPick: (type: string) => void; onC
                             <X className="w-4 h-4" />
                         </button>
                     </div>
+                    {/* Category tabs — All / Triggers / Actions. Logic
+                        nodes tuck under Actions since they're side-by-
+                        side in a flow. */}
+                    <div className="flex items-center gap-1.5">
+                        {([
+                            { id: 'all',     label: 'All' },
+                            { id: 'trigger', label: 'Triggers' },
+                            { id: 'action',  label: 'Actions' },
+                        ] as { id: PaletteTab; label: string }[]).map(t => (
+                            <button key={t.id} onClick={() => setTab(t.id)}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${tab === t.id
+                                    ? 'bg-primary/15 border-primary/40 text-foreground'
+                                    : 'bg-secondary/40 border-border text-muted-foreground hover:text-foreground'}`}>
+                                {t.label}
+                            </button>
+                        ))}
+                    </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-4">
                     {groups.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-8">No matches.</p>
-                    ) : groups.map(group => (
-                        <div key={group.label}>
-                            <div className="flex items-center gap-2 mb-2 px-1">
-                                <div className={`w-2 h-2 rounded-full ${CATEGORY_COLOR[group.category].dot}`} />
-                                <span className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">{group.label}</span>
+                    ) : groups.map(group => {
+                        const tint = CHANNEL_TINT[group.channel || 'generic'];
+                        return (
+                            <div key={group.label}>
+                                <div className="flex items-center gap-2 mb-2 px-1">
+                                    <div className={`w-2 h-2 rounded-full ${CATEGORY_COLOR[group.category].dot}`} />
+                                    <span className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">{group.label}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {group.types.map(t => {
+                                        const meta = NODE_META[t];
+                                        const Icon = meta.icon;
+                                        return (
+                                            <button key={t} onClick={() => onPick(t)}
+                                                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border ${tint.border} ${tint.bg} hover:brightness-125 hover:border-primary/60 text-left text-sm transition-all`}>
+                                                <div className={`w-8 h-8 rounded-lg ${CATEGORY_COLOR[group.category].bg} flex items-center justify-center flex-shrink-0`}>
+                                                    <Icon className={`w-4 h-4 ${CATEGORY_COLOR[group.category].text}`} />
+                                                </div>
+                                                <span className={`truncate font-medium ${tint.text}`}>{meta.label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                {group.types.map(t => {
-                                    const meta = NODE_META[t];
-                                    const Icon = meta.icon;
-                                    return (
-                                        <button key={t} onClick={() => onPick(t)}
-                                            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border bg-secondary/30 hover:bg-secondary/70 hover:border-primary/40 text-left text-sm transition-all">
-                                            <div className={`w-8 h-8 rounded-lg ${CATEGORY_COLOR[group.category].bg} flex items-center justify-center flex-shrink-0`}>
-                                                <Icon className={`w-4 h-4 ${CATEGORY_COLOR[group.category].text}`} />
-                                            </div>
-                                            <span className="truncate font-medium">{meta.label}</span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </div>
@@ -998,6 +1061,28 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
         // ─── New channel-specific triggers ───
         case 'trigger_wa_keyword':
             return <div className="space-y-3">{WaInstanceField}{KeywordFields}</div>;
+        case 'trigger_ig_dm': {
+            const mode = d.filterMode || 'any';
+            return (
+                <div className="space-y-3">
+                    {IgAccountField}
+                    <Field label="Filter">
+                        <div className="flex gap-2">
+                            {(['any', 'keyword'] as const).map(m => (
+                                <button key={m} type="button" onClick={() => onChange({ filterMode: m })}
+                                    className={`flex-1 text-xs px-3 py-2 rounded-md border transition-colors ${mode === m
+                                        ? 'bg-primary/15 border-primary/40 text-foreground'
+                                        : 'bg-secondary/40 border-border text-muted-foreground hover:text-foreground'}`}>
+                                    {m === 'any' ? 'Every DM' : 'Match keyword'}
+                                </button>
+                            ))}
+                        </div>
+                    </Field>
+                    {mode === 'keyword' && KeywordFields}
+                </div>
+            );
+        }
+        // Legacy IG DM triggers — kept so saved automations render, edit UI stays identical.
         case 'trigger_ig_keyword':
             return <div className="space-y-3">{IgAccountField}{KeywordFields}</div>;
         case 'trigger_wa_any':
@@ -1006,13 +1091,14 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
         case 'trigger_ig_any':
         case 'trigger_ig_new_contact':
             return <div className="space-y-3">{IgAccountField}</div>;
+        case 'trigger_ig_post':
         case 'trigger_ig_comment':
             return (
                 <div className="space-y-3">
                     <CommentTriggerConfig d={d} igAccounts={igAccounts} onChange={onChange} />
                     {KeywordFields}
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        Variables available in actions: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
+                        Fires on comment events for the selected post(s). Variables available in actions: <code>{'{{username}}'}</code>, <code>{'{{comment}}'}</code>, <code>{'{{post_url}}'}</code>.
                     </p>
                 </div>
             );

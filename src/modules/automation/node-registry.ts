@@ -78,39 +78,40 @@ export const AUTOMATION_NODES: Record<string, AutomationNodeSpec> = {
     },
 
     // ─── Instagram triggers ───
-    trigger_ig_keyword: {
-        id: 'trigger_ig_keyword',
+    // Single DM trigger with an internal filter switch: 'any' fires on
+    // every DM, 'keyword' requires a keyword match. Replaces the old
+    // pair trigger_ig_any + trigger_ig_keyword (both kept as legacy
+    // aliases so saved automations still work).
+    trigger_ig_dm: {
+        id: 'trigger_ig_dm',
         category: 'trigger', channel: 'instagram',
-        label: 'Instagram · DM Keyword',
-        description: 'Fires when an incoming Instagram DM matches one of the keywords.',
+        label: 'Instagram · DM',
+        description: 'Fires on incoming Instagram DMs. Set filterMode to "keyword" to only match specific keywords, or "any" to match every DM.',
         fields: [
             { name: 'accountId', type: 'select', description: 'Instagram account id, or "any"', defaultValue: 'any' },
-            ...KEYWORD_FIELDS,
-        ],
-    },
-    trigger_ig_any: {
-        id: 'trigger_ig_any',
-        category: 'trigger', channel: 'instagram',
-        label: 'Instagram · Any DM',
-        description: 'Fires on every incoming Instagram DM.',
-        fields: [
-            { name: 'accountId', type: 'select', description: 'Instagram account id, or "any"', defaultValue: 'any' },
+            { name: 'filterMode', type: 'select', options: ['any', 'keyword'], defaultValue: 'any', description: '"any" fires on every DM; "keyword" only fires when the message text matches one of the listed keywords.' },
+            { name: 'keywords', type: 'string', description: 'Only used when filterMode = "keyword". Comma-separated, e.g. "price, qiymet".' },
+            { name: 'matchMode', type: 'select', options: ['contains', 'exact', 'starts', 'regex'], defaultValue: 'contains' },
+            { name: 'caseSensitive', type: 'boolean', defaultValue: false },
         ],
     },
     trigger_ig_new_contact: {
         id: 'trigger_ig_new_contact',
         category: 'trigger', channel: 'instagram',
-        label: 'Instagram · New DM Contact',
+        label: 'Instagram · New Contact',
         description: 'Fires the first time an Instagram contact DMs this account.',
         fields: [
             { name: 'accountId', type: 'select', description: 'Instagram account id, or "any"', defaultValue: 'any' },
         ],
     },
-    trigger_ig_comment: {
-        id: 'trigger_ig_comment',
+    // Post trigger — activated by any post event we support (currently
+    // comments; reactions / mentions can plug in here later without a
+    // renaming break). Renamed from trigger_ig_comment.
+    trigger_ig_post: {
+        id: 'trigger_ig_post',
         category: 'trigger', channel: 'instagram',
-        label: 'Instagram · Comment',
-        description: 'Fires when someone comments on a post. Filter by a specific post or any post, optionally require a keyword in the comment text.',
+        label: 'Instagram · Post',
+        description: 'Fires when someone interacts with a post. Filter by a specific post or any post, and optionally require a keyword in the comment text. Wire it to any of the Instagram comment/DM actions.',
         fields: [
             { name: 'accountId', type: 'select', description: 'Instagram account id, or "any"', defaultValue: 'any' },
             { name: 'mediaId', type: 'string', description: 'Specific Instagram media (post) id, or "any" for every post', defaultValue: 'any' },
@@ -233,7 +234,34 @@ export const AUTOMATION_NODES: Record<string, AutomationNodeSpec> = {
     trigger_comment: {
         id: 'trigger_comment', category: 'trigger', channel: 'instagram', legacy: true,
         label: 'IG Comment (legacy)',
-        description: 'Older Instagram comment trigger; aliased to trigger_ig_comment.',
+        description: 'Older Instagram comment trigger; aliased to trigger_ig_post.',
+        fields: [
+            { name: 'accountId', type: 'select', defaultValue: 'any' },
+            { name: 'mediaId', type: 'string', defaultValue: 'any' },
+            ...KEYWORD_FIELDS.map(f => f.name === 'keywords' ? { ...f, required: false } : f),
+        ],
+    },
+    trigger_ig_any: {
+        id: 'trigger_ig_any', category: 'trigger', channel: 'instagram', legacy: true,
+        label: 'IG Any DM (legacy)',
+        description: 'Older Instagram DM trigger. Prefer trigger_ig_dm with filterMode=any.',
+        fields: [
+            { name: 'accountId', type: 'select', defaultValue: 'any' },
+        ],
+    },
+    trigger_ig_keyword: {
+        id: 'trigger_ig_keyword', category: 'trigger', channel: 'instagram', legacy: true,
+        label: 'IG DM Keyword (legacy)',
+        description: 'Older Instagram DM keyword trigger. Prefer trigger_ig_dm with filterMode=keyword.',
+        fields: [
+            { name: 'accountId', type: 'select', defaultValue: 'any' },
+            ...KEYWORD_FIELDS,
+        ],
+    },
+    trigger_ig_comment: {
+        id: 'trigger_ig_comment', category: 'trigger', channel: 'instagram', legacy: true,
+        label: 'IG Comment (legacy)',
+        description: 'Older Instagram comment trigger. Prefer trigger_ig_post.',
         fields: [
             { name: 'accountId', type: 'select', defaultValue: 'any' },
             { name: 'mediaId', type: 'string', defaultValue: 'any' },

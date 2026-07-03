@@ -38,6 +38,11 @@ export type AutomationContext = {
     contactName?: string;     // display name — WhatsApp pushName / IG profile name
     contactUsername?: string; // @handle on Instagram; on WhatsApp usually undefined
     isNewContact?: boolean;
+    // Per-run variable bag. action_http_request stashes its parsed
+    // response here under the operator-picked key; downstream nodes
+    // reference values via {{key}} or dotted paths like {{key.data.name}}.
+    // Populated by the engine on entry; nodes may push into it.
+    vars?: Record<string, any>;
     source?: 'dm' | 'comment';
     // Channel-specific context
     instanceId?: string;      // alChatBot WhatsAppInstance.id (which WA number received the msg)
@@ -171,12 +176,30 @@ function interpolate(text: string, ctx: AutomationContext): string {
     // gets *something* rendered, and vice-versa.
     const displayName = ctx.contactName || ctx.contactUsername || '';
     const handle = ctx.contactUsername || ctx.contactName || '';
-    return (text || '')
-        .replace(/\{\{\s*name\s*\}\}/gi, displayName)
-        .replace(/\{\{\s*username\s*\}\}/gi, handle)
-        .replace(/\{\{\s*message\s*\}\}/gi, ctx.text || '')
-        .replace(/\{\{\s*comment\s*\}\}/gi, ctx.text || '')
-        .replace(/\{\{\s*post_url\s*\}\}/gi, ctx.permalink || '');
+    const builtIns: Record<string, string> = {
+        name: displayName,
+        username: handle,
+        message: ctx.text || '',
+        comment: ctx.text || '',
+        post_url: ctx.permalink || '',
+    };
+    return (text || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
+        const parts = path.split('.').filter(Boolean);
+        if (parts.length === 0) return '';
+        const root = parts[0].toLowerCase();
+        // Built-in (single-segment) variables
+        if (parts.length === 1 && root in builtIns) return builtIns[root];
+        // Dynamic vars from upstream nodes (case-sensitive key match)
+        const bag = ctx.vars || {};
+        if (!(parts[0] in bag)) return '';
+        let v: any = bag[parts[0]];
+        for (let i = 1; i < parts.length; i++) {
+            if (v == null) return '';
+            v = v[parts[i]];
+        }
+        if (v == null) return '';
+        return typeof v === 'object' ? JSON.stringify(v) : String(v);
+    });
 }
 
 function interpolateRich(payload: any, ctx: AutomationContext): RichDmPayload {
@@ -315,6 +338,58 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
             if (secs > 0) await new Promise(r => setTimeout(r, secs * 1000));
             return true;
         }
+        case 'action_http_request': {
+            const method = String(d.method || 'GET').toUpperCase();
+            const url = interpolate(String(d.url || ''), ctx).trim();
+            if (!url) return true;
+            // Headers stored as one "Key: Value" per line; blank lines ignored.
+            const headers: Record<string, string> = {};
+            for (const line of String(d.headers || '').split('\n')) {
+                const idx = line.indexOf(':');
+                if (idx <= 0) continue;
+                const k = line.slice(0, idx).trim();
+                const v = interpolate(line.slice(idx + 1).trim(), ctx);
+                if (k) headers[k] = v;
+            }
+            const rawBody = d.body ? interpolate(String(d.body), ctx) : undefined;
+            let body: string | undefined = rawBody;
+            // If a body is provided but Content-Type wasn't, assume JSON
+            // when it parses. Non-JSON bodies pass through as-is.
+            if (rawBody && !headers['Content-Type'] && !headers['content-type']) {
+                try { JSON.parse(rawBody); headers['Content-Type'] = 'application/json'; } catch { /* not json */ }
+            }
+            const varKey = String(d.outputVariable || '').trim();
+            try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 15_000);
+                const resp = await fetch(url, {
+                    method,
+                    headers,
+                    body: (method === 'GET' || method === 'HEAD') ? undefined : body,
+                    signal: controller.signal,
+                });
+                clearTimeout(timer);
+                const ct = resp.headers.get('content-type') || '';
+                const parsed: any = ct.includes('application/json')
+                    ? await resp.json().catch(() => null)
+                    : await resp.text().catch(() => '');
+                if (varKey) {
+                    if (!ctx.vars) ctx.vars = {};
+                    ctx.vars[varKey] = parsed;
+                    // Also expose the status for scripts that want to branch on it.
+                    ctx.vars[`${varKey}_status`] = resp.status;
+                }
+                logger.info({ url, method, status: resp.status, varKey }, '[Automation] HTTP request completed');
+            } catch (err: any) {
+                logger.warn({ url, method, err: err?.message }, '[Automation] HTTP request failed');
+                if (varKey) {
+                    if (!ctx.vars) ctx.vars = {};
+                    ctx.vars[varKey] = null;
+                    ctx.vars[`${varKey}_error`] = err?.message || 'request failed';
+                }
+            }
+            return true;
+        }
         case 'condition': {
             let subject = '';
             if (d.field === 'message') {
@@ -381,6 +456,9 @@ export class AutomationEngine {
             // comment→DM alike.
             let overrideAgentId: string | undefined;
             ctx.runAgent = async (agentId: string) => { overrideAgentId = agentId; };
+            // Fresh variable bag per handleMessage call — action_http_request
+            // and any future producers stash values here for downstream nodes.
+            if (!ctx.vars) ctx.vars = {};
             for (const auto of automations) {
                 const nodes = (auto.nodes as any[]) || [];
                 const edges = (auto.edges as any[]) || [];

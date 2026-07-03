@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History, EyeOff } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History, EyeOff, Globe } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -87,6 +87,10 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "Wait / Delay", category: "action", icon: Clock, channel: "generic",
         defaultData: { seconds: 60 }
     },
+    action_http_request: {
+        label: "HTTP Request", category: "action", icon: Globe, channel: "generic",
+        defaultData: { method: "GET", url: "", headers: "", body: "", outputVariable: "apiResponse" }
+    },
     condition: {
         label: "Condition", category: "logic", icon: GitBranch, channel: "generic",
         defaultData: { field: "message", operator: "contains", value: "" }
@@ -149,7 +153,7 @@ const PALETTE: { category: "trigger" | "action" | "logic"; label: string; channe
     { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
     { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
     { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment", "action_ig_hide_comment", "action_ig_delete_comment"] },
-    { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait"] },
+    { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
     { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
 ];
 
@@ -394,6 +398,12 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     else if (type === "action_add_tag") summary = d.tag || "(no tag)";
     else if (type === "action_set_user_field") summary = d.fieldKey ? `${d.fieldKey} = ${d.value || '(empty)'}` : "(no field)";
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
+    else if (type === "action_http_request") {
+        const m = (d.method || 'GET').toUpperCase();
+        const u = d.url ? String(d.url).slice(0, 40) + (String(d.url).length > 40 ? '…' : '') : '(no url)';
+        const v = d.outputVariable ? ` → ${d.outputVariable}` : '';
+        summary = `${m} ${u}${v}`;
+    }
     else if (type === "condition") summary = `${d.field} ${d.operator} ${d.value || "?"}`;
 
     // Channel-tinted left ribbon so IG vs WA vs Generic is legible at
@@ -618,7 +628,7 @@ function Editor({ id }: { id: string }) {
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
-                            <NodeConfig node={selectedNode} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                            <NodeConfig node={selectedNode} nodes={nodes} edges={edges} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                         </div>
                     )}
 
@@ -1066,13 +1076,14 @@ function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, a
 }
 
 // ─── Rich Instagram DM action config ───
-function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: Record<string, any>) => void }) {
+function SendDmConfig({ d, extraVars, onChange }: { d: Record<string, any>; extraVars?: string[]; onChange: (p: Record<string, any>) => void }) {
     const kind = d.kind || 'text';
     const quickReplies: { title: string; payload?: string }[] = d.quickReplies || [];
     const elements: any[] = d.elements || [];
 
     const setQr = (next: any[]) => onChange({ quickReplies: next });
     const setEls = (next: any[]) => onChange({ elements: next });
+    const extras = extraVars || [];
 
     return (
         <div className="space-y-3">
@@ -1087,7 +1098,7 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
             {kind === 'text' && (
                 <Field label="Message text">
                     <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                        variables={["username", "name", "comment", "message", "post_url"]} />
+                        variables={["username", "name", "comment", "message", "post_url", ...extras]} />
                 </Field>
             )}
 
@@ -1201,7 +1212,41 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
     );
 }
 
-function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChange }: { node: Node; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; onChange: (p: Record<string, any>) => void }) {
+// Walk edges backwards from `nodeId` and collect HTTP output-variable
+// names produced by any upstream action_http_request. Used to grow the
+// chip palette in downstream text fields so operators can drop
+// {{apiResponse}} straight in.
+function collectUpstreamHttpVars(nodeId: string, nodes: Node[], edges: Edge[]): string[] {
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const incoming = new Map<string, string[]>();
+    for (const e of edges) {
+        if (!incoming.has(e.target)) incoming.set(e.target, []);
+        incoming.get(e.target)!.push(e.source);
+    }
+    const seen = new Set<string>();
+    const stack = [...(incoming.get(nodeId) || [])];
+    const vars = new Set<string>();
+    while (stack.length) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const n = byId.get(id);
+        if (!n) continue;
+        const t = String((n as any).type);
+        const d: any = (n as any).data || {};
+        if (t === 'action_http_request' && d.outputVariable) {
+            vars.add(String(d.outputVariable));
+        }
+        (incoming.get(id) || []).forEach(x => stack.push(x));
+    }
+    return Array.from(vars);
+}
+
+function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userFields, onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; onChange: (p: Record<string, any>) => void }) {
+    // HTTP output keys from any node connected upstream — these get
+    // merged into every text field's chip palette below.
+    const upstreamHttpVars = collectUpstreamHttpVars(node.id, nodes, edges);
+    const withHttp = (base: string[]) => Array.from(new Set([...base, ...upstreamHttpVars]));
     const d = node.data as Record<string, any>;
     const type = node.type as string;
 
@@ -1319,7 +1364,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["name", "username", "message", "comment"]} />
+                            variables={withHttp(["name", "username", "message", "comment"])} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media} onChange={(m) => onChange({ media: m })} />
@@ -1332,7 +1377,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="DM text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "name", "comment", "message", "post_url"]} />
+                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media}
@@ -1373,7 +1418,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "name", "comment", "message", "post_url"]} />
+                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1399,7 +1444,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                            variables={["name", "username", "message", "comment"]} />
+                            variables={withHttp(["name", "username", "message", "comment"])} />
                     </Field>
                 </div>
             );
@@ -1421,7 +1466,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                     {(d.mediaKind === 'image' || d.mediaKind === 'video' || d.mediaKind === 'document') && (
                         <Field label="Caption (optional)">
                             <VariableTextEditor value={d.caption || ''} onChange={(t) => onChange({ caption: t })} rows={3}
-                                variables={["name", "username", "message", "comment"]} />
+                                variables={withHttp(["name", "username", "message", "comment"])} />
                         </Field>
                     )}
                     {d.mediaKind === 'document' && (
@@ -1436,13 +1481,13 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 </div>
             );
         case 'action_send_dm':
-            return <SendDmConfig d={d} onChange={onChange} />;
+            return <SendDmConfig d={d} extraVars={upstreamHttpVars} onChange={onChange} />;
         case 'action_reply_comment':
             return (
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "name", "comment", "message", "post_url"]} />
+                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1496,7 +1541,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                     </Field>
                     <Field label="Value">
                         <VariableTextEditor value={d.value || ''} onChange={(v) => onChange({ value: v })} rows={2}
-                            variables={["name", "username", "message", "comment", "post_url"]} />
+                            variables={withHttp(["name", "username", "message", "comment", "post_url"])} />
                     </Field>
                 </div>
             );
@@ -1509,6 +1554,43 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                     </Field>
                 </div>
             );
+        case 'action_http_request': {
+            const bodyVars = withHttp(["name", "username", "message", "comment", "post_url"]);
+            return (
+                <div className="space-y-3">
+                    <Field label="Method">
+                        <select value={d.method || 'GET'} onChange={e => onChange({ method: e.target.value })} className={inputCls}>
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="PATCH">PATCH</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                    </Field>
+                    <Field label="URL">
+                        <VariableTextEditor value={d.url || ''} onChange={(v) => onChange({ url: v })} rows={1}
+                            variables={bodyVars} />
+                    </Field>
+                    <Field label="Headers (one per line, Key: Value)">
+                        <VariableTextEditor value={d.headers || ''} onChange={(v) => onChange({ headers: v })} rows={2}
+                            variables={bodyVars} />
+                    </Field>
+                    {d.method && d.method !== 'GET' && (
+                        <Field label="Body (JSON or plain text)">
+                            <VariableTextEditor value={d.body || ''} onChange={(v) => onChange({ body: v })} rows={4}
+                                variables={bodyVars} />
+                        </Field>
+                    )}
+                    <Field label="Save response as">
+                        <input type="text" value={d.outputVariable || ''} onChange={e => onChange({ outputVariable: e.target.value.replace(/[^\w]/g, '') })}
+                            placeholder="apiResponse" className={inputCls} />
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Reference the response downstream with <code>{'{{' + (d.outputVariable || 'apiResponse') + '}}'}</code> (whole payload) or dotted paths like <code>{'{{' + (d.outputVariable || 'apiResponse') + '.data.name}}'}</code>. Request timeout: 15s. If the server sends JSON, it&apos;s parsed automatically.
+                    </p>
+                </div>
+            );
+        }
         case 'condition':
             return (
                 <div className="space-y-3">

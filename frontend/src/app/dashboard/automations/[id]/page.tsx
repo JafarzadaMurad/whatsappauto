@@ -1087,7 +1087,7 @@ function SendDmConfig({ d, onChange }: { d: Record<string, any>; onChange: (p: R
             {kind === 'text' && (
                 <Field label="Message text">
                     <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                        variables={["username", "comment", "post_url"]} />
+                        variables={["username", "name", "comment", "message", "post_url"]} />
                 </Field>
             )}
 
@@ -1319,7 +1319,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["name", "message"]} />
+                            variables={["name", "username", "message", "comment"]} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media} onChange={(m) => onChange({ media: m })} />
@@ -1332,7 +1332,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="DM text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "comment", "post_url"]} />
+                            variables={["username", "name", "comment", "message", "post_url"]} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media}
@@ -1373,7 +1373,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "comment", "post_url"]} />
+                            variables={["username", "name", "comment", "message", "post_url"]} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1399,7 +1399,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                            variables={["name", "message"]} />
+                            variables={["name", "username", "message", "comment"]} />
                     </Field>
                 </div>
             );
@@ -1421,7 +1421,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                     {(d.mediaKind === 'image' || d.mediaKind === 'video' || d.mediaKind === 'document') && (
                         <Field label="Caption (optional)">
                             <VariableTextEditor value={d.caption || ''} onChange={(t) => onChange({ caption: t })} rows={3}
-                                variables={["name", "message"]} />
+                                variables={["name", "username", "message", "comment"]} />
                         </Field>
                     )}
                     {d.mediaKind === 'document' && (
@@ -1442,7 +1442,7 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={["username", "comment", "post_url"]} />
+                            variables={["username", "name", "comment", "message", "post_url"]} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.

@@ -756,20 +756,34 @@ function MediaPicker({
 function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, any>; igAccounts: any[]; onChange: (p: Record<string, any>) => void }) {
     const [media, setMedia] = useState<any[]>([]);
     const [loadingMedia, setLoadingMedia] = useState(false);
+    const [mediaError, setMediaError] = useState<string | null>(null);
     const [pickerOpen, setPickerOpen] = useState(false);
-    const accountId = d.accountId || (igAccounts[0]?.id || '');
+    // Effective account id we'll fetch media from — 'any' or empty is
+    // NOT a valid Meta account id, so fall back to the first connected
+    // account. The stored trigger.accountId can still be 'any' (engine
+    // matches against every account); the picker just needs A real one
+    // to talk to Meta.
+    const accountId = (d.accountId && d.accountId !== 'any') ? d.accountId : (igAccounts[0]?.id || '');
     const selectedPost = media.find(m => m.id === d.mediaId);
 
     useEffect(() => {
-        if (!d.accountId && igAccounts[0]?.id) onChange({ accountId: igAccounts[0].id });
+        // Bootstrap: if no accountId at all, plant the first connected
+        // account so the media picker knows what to query.
+        if ((!d.accountId || d.accountId === 'any') && igAccounts[0]?.id) {
+            onChange({ accountId: igAccounts[0].id });
+        }
     }, [igAccounts.length]);
 
     useEffect(() => {
         if (!accountId) return;
         setLoadingMedia(true);
+        setMediaError(null);
         api.get(`/instagram/accounts/${accountId}/media`).then(r => {
             if (r.data?.success) setMedia(r.data.media || []);
-        }).catch(() => {}).finally(() => setLoadingMedia(false));
+            else setMediaError(r.data?.message || 'Could not load posts');
+        }).catch(e => {
+            setMediaError(e?.response?.data?.message || e.message);
+        }).finally(() => setLoadingMedia(false));
     }, [accountId]);
 
     if (igAccounts.length === 0) {
@@ -831,8 +845,13 @@ function CommentTriggerConfig({ d, igAccounts, onChange }: { d: Record<string, a
                         <div className="flex-1 overflow-y-auto p-4">
                             {loadingMedia ? (
                                 <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+                            ) : mediaError ? (
+                                <div className="text-center py-8 px-4">
+                                    <p className="text-sm text-red-400 break-words">{mediaError}</p>
+                                    <p className="text-xs text-muted-foreground mt-2">Check that this Instagram account still has a valid token — reconnect from Networks → Instagram if needed.</p>
+                                </div>
                             ) : media.length === 0 ? (
-                                <p className="text-sm text-muted-foreground text-center py-8">No posts found.</p>
+                                <p className="text-sm text-muted-foreground text-center py-8">No posts found on this account.</p>
                             ) : (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                     {media.map(m => (

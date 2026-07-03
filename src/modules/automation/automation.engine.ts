@@ -35,7 +35,8 @@ export type AutomationContext = {
     channel: Channel;
     text: string;
     contactId: string;        // remoteJid (WhatsApp) or IGSID (Instagram)
-    contactName?: string;
+    contactName?: string;     // display name — WhatsApp pushName / IG profile name
+    contactUsername?: string; // @handle on Instagram; on WhatsApp usually undefined
     isNewContact?: boolean;
     source?: 'dm' | 'comment';
     // Channel-specific context
@@ -164,9 +165,15 @@ function resolveMedia(d: any, ctx: AutomationContext): MediaPayload | null {
 }
 
 function interpolate(text: string, ctx: AutomationContext): string {
+    // `name` prefers the display name, falls back to @handle. `username`
+    // prefers the @handle, falls back to display name. This way an
+    // operator who plugged {{username}} into a WhatsApp trigger still
+    // gets *something* rendered, and vice-versa.
+    const displayName = ctx.contactName || ctx.contactUsername || '';
+    const handle = ctx.contactUsername || ctx.contactName || '';
     return (text || '')
-        .replace(/\{\{\s*name\s*\}\}/gi, ctx.contactName || '')
-        .replace(/\{\{\s*username\s*\}\}/gi, ctx.contactName || '')
+        .replace(/\{\{\s*name\s*\}\}/gi, displayName)
+        .replace(/\{\{\s*username\s*\}\}/gi, handle)
         .replace(/\{\{\s*message\s*\}\}/gi, ctx.text || '')
         .replace(/\{\{\s*comment\s*\}\}/gi, ctx.text || '')
         .replace(/\{\{\s*post_url\s*\}\}/gi, ctx.permalink || '');

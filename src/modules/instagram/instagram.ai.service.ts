@@ -272,6 +272,7 @@ export class InstagramAiService {
             text: messageText,
             contactId: senderId,
             contactName: contact?.name || contact?.username || undefined,
+            contactUsername: contact?.username || undefined,
             isNewContact: priorCount === 0,
             source: 'dm',
             accountId: account.id,
@@ -516,6 +517,14 @@ export class InstagramAiService {
             logger.warn({ err: e.message, commentId }, '[IG] persisting comment failed');
         }
 
+        // If the commenter has DMed us before, we already have their
+        // display name cached. Otherwise Meta's webhook only gives the
+        // @handle and {{name}} falls back to it via interpolate.
+        const cachedContact = await prisma.instagramContact.findUnique({
+            where: { igUserId_senderId: { igUserId, senderId: from.id } },
+            select: { name: true },
+        }).catch(() => null);
+
         // Run the Automation engine. If a rule matches we mark the
         // stored comment AUTOMATION_MATCHED so the inbox knows it's
         // been handled.
@@ -524,7 +533,8 @@ export class InstagramAiService {
             channel: 'instagram',
             text: commentText,
             contactId: from.id,
-            contactName: from.username || undefined,
+            contactName: cachedContact?.name || undefined,
+            contactUsername: from.username || undefined,
             source: 'comment',
             accountId: account.id,
             igUserId,

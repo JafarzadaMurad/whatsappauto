@@ -152,6 +152,20 @@ export const AUTOMATION_NODES: Record<string, AutomationNodeSpec> = {
             { name: 'text', type: 'string', required: true, description: 'Reply text. Supports {{username}}, {{comment}}.' },
         ],
     },
+    action_ig_hide_comment: {
+        id: 'action_ig_hide_comment',
+        category: 'action', channel: 'instagram',
+        label: 'Instagram · Hide Comment',
+        description: 'Hides the comment that triggered the automation from public view. The commenter can still see their own comment but nobody else can. Useful for handling spam / abuse without an audit-trail hit. Reversible via Meta UI.',
+        fields: [],
+    },
+    action_ig_delete_comment: {
+        id: 'action_ig_delete_comment',
+        category: 'action', channel: 'instagram',
+        label: 'Instagram · Delete Comment',
+        description: 'Permanently deletes the comment that triggered the automation. Irreversible; prefer Hide Comment when in doubt.',
+        fields: [],
+    },
 
     // ─── Generic actions ───
     action_ai_reply: {

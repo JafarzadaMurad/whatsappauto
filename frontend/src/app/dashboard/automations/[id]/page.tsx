@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History, EyeOff } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -61,6 +61,14 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
     action_ig_reply_comment: {
         label: "Instagram · Reply Comment", category: "action", icon: Reply, channel: "ig",
         defaultData: { text: "" }
+    },
+    action_ig_hide_comment: {
+        label: "Instagram · Hide Comment", category: "action", icon: EyeOff, channel: "ig",
+        defaultData: {}
+    },
+    action_ig_delete_comment: {
+        label: "Instagram · Delete Comment", category: "action", icon: Trash2, channel: "ig",
+        defaultData: {}
     },
     // ─── Generic actions / logic ───
     action_ai_reply: {
@@ -140,7 +148,7 @@ const PALETTE: { category: "trigger" | "action" | "logic"; label: string; channe
     { category: "trigger", channel: "wa", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
     { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
     { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
-    { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment"] },
+    { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment", "action_ig_hide_comment", "action_ig_delete_comment"] },
     { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait"] },
     { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
 ];

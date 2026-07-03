@@ -542,6 +542,28 @@ export class InstagramAiService {
             },
             sendDm: sendDmFromComment,
             replyComment: (t) => replyToComment(commentId, t, account.accessToken),
+            hideComment: async () => {
+                try {
+                    await axios.post(`https://graph.instagram.com/v21.0/${commentId}`,
+                        'hide=true',
+                        { headers: { 'Authorization': `Bearer ${account.accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' } });
+                    await prisma.instagramComment.update({ where: { commentId }, data: { status: 'AUTOMATION_MATCHED', repliedAt: new Date() } }).catch(() => {});
+                    logger.info({ commentId }, '[IG] comment hidden by automation');
+                } catch (e: any) {
+                    logger.warn({ err: e?.response?.data?.error?.message || e?.message, commentId }, '[IG] hideComment failed');
+                }
+            },
+            deleteComment: async () => {
+                try {
+                    await axios.delete(`https://graph.instagram.com/v21.0/${commentId}`, {
+                        headers: { 'Authorization': `Bearer ${account.accessToken}` },
+                    });
+                    await prisma.instagramComment.delete({ where: { commentId } }).catch(() => {});
+                    logger.info({ commentId }, '[IG] comment deleted by automation');
+                } catch (e: any) {
+                    logger.warn({ err: e?.response?.data?.error?.message || e?.message, commentId }, '[IG] deleteComment failed');
+                }
+            },
         });
         if (matched) {
             await prisma.instagramComment.update({

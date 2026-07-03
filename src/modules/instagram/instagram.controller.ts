@@ -342,16 +342,45 @@ export class InstagramController {
             if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
             try {
-                const r = await axios.get('https://graph.instagram.com/v21.0/me/media', {
+                // Resolve the IG user's actual node id first. On some
+                // long-lived business tokens `/me/media` returns empty
+                // because /me resolves to the app-scoped id, not the
+                // IG business account id — hitting /{ig_user_id}/media
+                // explicitly is more reliable.
+                let mediaOwner = 'me';
+                try {
+                    const meRes = await axios.get('https://graph.instagram.com/v21.0/me', {
+                        params: { fields: 'id,username', access_token: account.accessToken },
+                    });
+                    if (meRes.data?.id) mediaOwner = String(meRes.data.id);
+                } catch { /* fall through with 'me' — still usually works */ }
+
+                const r = await axios.get(`https://graph.instagram.com/v21.0/${mediaOwner}/media`, {
                     params: {
                         fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,comments_count,like_count',
                         access_token: account.accessToken,
-                        limit: 30
-                    }
+                        limit: 30,
+                    },
                 });
-                return res.json({ success: true, media: r.data.data || [] });
+                const media = r.data?.data || [];
+                logger.info({ accountId: id, mediaOwner, count: media.length }, '[IG] media fetch');
+                return res.json({ success: true, media });
             } catch (e: any) {
-                return res.status(502).json({ success: false, message: e.response?.data?.error?.message || e.message });
+                const ig = e.response?.data?.error;
+                logger.warn({
+                    accountId: id,
+                    status: e.response?.status,
+                    code: ig?.code,
+                    subcode: ig?.error_subcode,
+                    type: ig?.type,
+                    message: ig?.message,
+                    fbtrace_id: ig?.fbtrace_id,
+                }, '[IG] media fetch failed');
+                return res.status(502).json({
+                    success: false,
+                    message: ig?.error_user_msg || ig?.message || e.message,
+                    meta: { code: ig?.code, subcode: ig?.error_subcode, fbtrace_id: ig?.fbtrace_id },
+                });
             }
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });

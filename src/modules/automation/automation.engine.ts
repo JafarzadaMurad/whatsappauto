@@ -50,6 +50,8 @@ export type AutomationContext = {
     sendMedia?: (payload: MediaPayload) => Promise<void>;
     sendDm?: (payload: RichDmPayload) => Promise<void>;
     replyComment?: (text: string) => Promise<void>;
+    hideComment?: () => Promise<void>;
+    deleteComment?: () => Promise<void>;
     runAgent?: (agentId: string) => Promise<void>;
     addTag?: (tag: string) => Promise<void>;
     setUserField?: (key: string, value: unknown) => Promise<void>;
@@ -247,6 +249,14 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         case 'action_ig_reply_comment': {
             if (!ctx.replyComment || !d.text) return true;
             await ctx.replyComment(interpolate(String(d.text), ctx));
+            return true;
+        }
+        case 'action_ig_hide_comment': {
+            if (ctx.hideComment) await ctx.hideComment();
+            return true;
+        }
+        case 'action_ig_delete_comment': {
+            if (ctx.deleteComment) await ctx.deleteComment();
             return true;
         }
         case 'action_send_media': {

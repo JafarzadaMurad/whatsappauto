@@ -1851,7 +1851,12 @@ export class AiService {
                     });
                 }
             });
-            if (autoResult.matched) {
+            // If the automation matched but requested a specific agent
+            // (action_ai_reply), we still let the reply flow run — but
+            // with that agent instead of the instance default. If it
+            // matched with no override, the automation itself handled
+            // the reply and we stay silent.
+            if (autoResult.matched && !autoResult.overrideAgentId) {
                 logger.info(`[${instanceId}] message handled by automation`);
                 return;
             }
@@ -1862,7 +1867,10 @@ export class AiService {
             // assignedAgentId from a previous configuration. The owner
             // explicitly removed the agent from this channel; respecting
             // that beats "remembering" the old binding.
-            if (!instance.agentId && !instance.routerAgentId) {
+            // Exception: an automation-level override (action_ai_reply)
+            // is an explicit opt-in, so honour it even on channels with
+            // no default agent bound.
+            if (!instance.agentId && !instance.routerAgentId && !autoResult.overrideAgentId) {
                 logger.info(`[${instanceId}] no agent or router configured on instance — skipping AI`);
                 return;
             }
@@ -1884,7 +1892,19 @@ export class AiService {
                 select: { assignedAgentId: true },
             });
             let resolvedAgent: any = null;
-            if (clientForRouting?.assignedAgentId) {
+            // Automation's action_ai_reply overrides every other
+            // routing decision — the operator explicitly picked which
+            // agent should answer this trigger.
+            if (autoResult.overrideAgentId) {
+                resolvedAgent = await prisma.agent.findUnique({
+                    where: { id: autoResult.overrideAgentId },
+                    include: { provider: true },
+                });
+                if (!resolvedAgent?.provider) {
+                    logger.warn({ agentId: autoResult.overrideAgentId }, '[Automation] override agent not found or missing provider');
+                    return;
+                }
+            } else if (clientForRouting?.assignedAgentId) {
                 resolvedAgent = await prisma.agent.findUnique({
                     where: { id: clientForRouting.assignedAgentId },
                     include: { provider: true },

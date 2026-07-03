@@ -1463,6 +1463,9 @@ function NodeConfig({ node, agents, igAccounts, waInstances, userFields, onChang
                             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
                     </Field>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        The picked agent answers this trigger instead of the channel's default agent — works for both WhatsApp DMs and Instagram DMs. For Instagram comment triggers the agent reply is delivered as a private DM via the comment&nbsp;→ DM route.
+                    </p>
                 </div>
             );
         case 'action_add_tag':

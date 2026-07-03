@@ -368,12 +368,19 @@ async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: Auto
 export class AutomationEngine {
     // Returns { matched } — if matched, the channel handler should skip its
     // default AI-agent reply to avoid double responses.
-    static async handleMessage(ctx: AutomationContext): Promise<{ matched: boolean }> {
+    static async handleMessage(ctx: AutomationContext): Promise<{ matched: boolean; overrideAgentId?: string }> {
         try {
             const automations = await prisma.automation.findMany({
                 where: { userId: ctx.userId, isActive: true }
             });
             let matched = false;
+            // action_ai_reply calls ctx.runAgent(agentId). We stash the
+            // ID here and let the channel handler swap in that agent
+            // instead of the instance/account default when it emits its
+            // reply. Uniform for WhatsApp DM, Instagram DM, and Instagram
+            // comment→DM alike.
+            let overrideAgentId: string | undefined;
+            ctx.runAgent = async (agentId: string) => { overrideAgentId = agentId; };
             for (const auto of automations) {
                 const nodes = (auto.nodes as any[]) || [];
                 const edges = (auto.edges as any[]) || [];
@@ -413,7 +420,7 @@ export class AutomationEngine {
                     }).catch(e => logger.warn({ err: e.message }, '[Automation] execution log failed'));
                 }
             }
-            return { matched };
+            return { matched, overrideAgentId };
         } catch (e: any) {
             logger.error({ err: e.message }, '[Automation] engine error');
             return { matched: false };

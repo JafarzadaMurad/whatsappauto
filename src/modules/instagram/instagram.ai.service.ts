@@ -266,7 +266,7 @@ export class InstagramAiService {
             sourceLabel: account.igUsername ? '@' + account.igUsername : null,
             adReferrer: adRef,
         });
-        const { matched } = await AutomationEngine.handleMessage({
+        const { matched, overrideAgentId } = await AutomationEngine.handleMessage({
             userId: account.userId,
             channel: 'instagram',
             text: messageText,
@@ -292,14 +292,10 @@ export class InstagramAiService {
                 if (p.caption) await sendIgMessage(igUserId, senderId, p.caption, account.accessToken);
             },
             sendDm: (p) => sendIgRichMessage(igUserId, senderId, p, account.accessToken),
-            runAgent: async (agentId) => {
-                const ag = await prisma.agent.findFirst({ where: { id: agentId }, include: { provider: true } });
-                if (!ag?.provider) return;
-                const r = await this.generateResponse(ag, account.userId, senderId, messageText, 'dm', {
-                    igUserId, accessToken: account.accessToken, workspaceId: accountWorkspaceId, accountId: account.id,
-                });
-                if (r.text) await sendIgMessage(igUserId, senderId, r.text, account.accessToken);
-            },
+            // runAgent is intentionally omitted — the engine intercepts
+            // action_ai_reply into `overrideAgentId`, which the outer
+            // flow reads below to swap in the picked agent for the
+            // reply.
             addTag: async (tag) => {
                 const existing = await prisma.client.findUnique({
                     where: { userId_phone: { userId: account.userId, phone: senderId } }
@@ -323,12 +319,31 @@ export class InstagramAiService {
                 });
             }
         });
-        if (matched) {
+        // Automation matched but requested a specific agent — swap in
+        // and continue the reply flow with it. Otherwise, matched means
+        // the automation handled the reply itself.
+        if (matched && !overrideAgentId) {
             logger.info(`[IG] DM from ${senderId} handled by automation`);
             return;
         }
 
-        if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
+        // Resolve the agent for this reply. Override wins over the
+        // account's default agent so action_ai_reply can pick any agent
+        // regardless of what the IG account is bound to.
+        let resolvedAgent: any = null;
+        if (overrideAgentId) {
+            resolvedAgent = await prisma.agent.findUnique({
+                where: { id: overrideAgentId },
+                include: { provider: true },
+            });
+            if (!resolvedAgent?.provider) {
+                logger.warn({ agentId: overrideAgentId }, '[IG] override agent not found or missing provider');
+                return;
+            }
+        } else {
+            if (!account.agent?.provider || !account.isActive || !(account.agent as any).isActive) return;
+            resolvedAgent = account.agent;
+        }
 
         // Per-contact pause: agent stops replying to this contact until
         // un-paused. Incoming messages remain in the conversation log so
@@ -342,7 +357,7 @@ export class InstagramAiService {
             return;
         }
 
-        const agent = account.agent;
+        const agent = resolvedAgent;
 
         // Voice-to-text: when the DM was an audio note AND the agent
         // has audioEnabled, transcribe via Whisper and replace the
@@ -528,7 +543,7 @@ export class InstagramAiService {
         // Run the Automation engine. If a rule matches we mark the
         // stored comment AUTOMATION_MATCHED so the inbox knows it's
         // been handled.
-        const { matched } = await AutomationEngine.handleMessage({
+        const { matched, overrideAgentId } = await AutomationEngine.handleMessage({
             userId: account.userId,
             channel: 'instagram',
             text: commentText,
@@ -576,6 +591,27 @@ export class InstagramAiService {
             },
         });
         if (matched) {
+            // If the automation asked an agent to answer, run it here
+            // and route the reply through the comment→DM channel so the
+            // commenter gets a private message instead of a public reply.
+            if (overrideAgentId) {
+                try {
+                    const ag = await prisma.agent.findUnique({
+                        where: { id: overrideAgentId },
+                        include: { provider: true },
+                    });
+                    if (ag?.provider) {
+                        const r = await this.generateResponse(ag, account.userId, from.id, commentText, 'dm', {
+                            igUserId, accessToken: account.accessToken, workspaceId: account.workspaceId, accountId: account.id,
+                        });
+                        if (r.text) await sendDmFromComment({ kind: 'text', text: r.text });
+                    } else {
+                        logger.warn({ agentId: overrideAgentId }, '[IG] comment override agent missing');
+                    }
+                } catch (e: any) {
+                    logger.warn({ err: e?.message, commentId, agentId: overrideAgentId }, '[IG] comment agent reply failed');
+                }
+            }
             await prisma.instagramComment.update({
                 where: { commentId },
                 data: { status: 'AUTOMATION_MATCHED', repliedAt: new Date() },

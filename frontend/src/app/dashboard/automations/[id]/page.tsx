@@ -321,19 +321,23 @@ function VariableTextEditor({
 
     return (
         <div>
-            <div className="flex gap-1.5 mb-2 flex-wrap">
-                {variables.map(v => (
-                    <button key={v}
-                        type="button"
-                        draggable
-                        onDragStart={e => { e.dataTransfer.setData('text/x-variable', v); e.dataTransfer.effectAllowed = 'copy'; }}
-                        onClick={() => insertVariable(v)}
-                        title={`Drag or click to insert {{${v}}}`}
-                        className="inline-flex items-center gap-0.5 text-[11px] font-mono px-2 py-1 rounded-md bg-violet-500/15 border border-violet-500/40 text-violet-300 hover:bg-violet-500/25 cursor-grab active:cursor-grabbing select-none">
-                        <span className="opacity-50">{'{{'}</span>{v}<span className="opacity-50">{'}}'}</span>
-                    </button>
-                ))}
-            </div>
+            {variables.length > 0 ? (
+                <div className="flex gap-1.5 mb-2 flex-wrap">
+                    {variables.map(v => (
+                        <button key={v}
+                            type="button"
+                            draggable
+                            onDragStart={e => { e.dataTransfer.setData('text/x-variable', v); e.dataTransfer.effectAllowed = 'copy'; }}
+                            onClick={() => insertVariable(v)}
+                            title={`Drag or click to insert {{${v}}}`}
+                            className="inline-flex items-center gap-0.5 text-[11px] font-mono px-2 py-1 rounded-md bg-violet-500/15 border border-violet-500/40 text-violet-300 hover:bg-violet-500/25 cursor-grab active:cursor-grabbing select-none">
+                            <span className="opacity-50">{'{{'}</span>{v}<span className="opacity-50">{'}}'}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <p className="text-[10px] text-muted-foreground/70 mb-2 italic">Connect a trigger upstream to see available variables.</p>
+            )}
             <div
                 ref={editorRef}
                 contentEditable
@@ -1098,7 +1102,7 @@ function SendDmConfig({ d, extraVars, onChange }: { d: Record<string, any>; extr
             {kind === 'text' && (
                 <Field label="Message text">
                     <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                        variables={["username", "name", "comment", "message", "post_url", ...extras]} />
+                        variables={extras} />
                 </Field>
             )}
 
@@ -1212,11 +1216,12 @@ function SendDmConfig({ d, extraVars, onChange }: { d: Record<string, any>; extr
     );
 }
 
-// Walk edges backwards from `nodeId` and collect HTTP output-variable
-// names produced by any upstream action_http_request. Used to grow the
-// chip palette in downstream text fields so operators can drop
-// {{apiResponse}} straight in.
-function collectUpstreamHttpVars(nodeId: string, nodes: Node[], edges: Edge[]): string[] {
+// Walk edges backwards from `nodeId` and collect every variable that
+// will actually be resolvable at runtime — trigger built-ins from any
+// upstream trigger plus HTTP output-variable names from any upstream
+// action_http_request. If the node isn't wired to a trigger yet the
+// palette comes back empty, which matches what the engine would see.
+function collectUpstreamVariables(nodeId: string, nodes: Node[], edges: Edge[]): string[] {
     const byId = new Map(nodes.map(n => [n.id, n]));
     const incoming = new Map<string, string[]>();
     for (const e of edges) {
@@ -1234,6 +1239,15 @@ function collectUpstreamHttpVars(nodeId: string, nodes: Node[], edges: Edge[]): 
         if (!n) continue;
         const t = String((n as any).type);
         const d: any = (n as any).data || {};
+        if (t.startsWith('trigger_')) {
+            // Contact-based vars — every trigger surfaces these via the
+            // engine's aliasing (name↔username, message↔comment).
+            ['name', 'username', 'message', 'comment'].forEach(v => vars.add(v));
+            // post_url is only meaningful for post/comment triggers.
+            if (t === 'trigger_ig_post' || t === 'trigger_ig_comment' || t === 'trigger_comment') {
+                vars.add('post_url');
+            }
+        }
         if (t === 'action_http_request' && d.outputVariable) {
             vars.add(String(d.outputVariable));
         }
@@ -1243,10 +1257,10 @@ function collectUpstreamHttpVars(nodeId: string, nodes: Node[], edges: Edge[]): 
 }
 
 function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userFields, onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; onChange: (p: Record<string, any>) => void }) {
-    // HTTP output keys from any node connected upstream — these get
-    // merged into every text field's chip palette below.
-    const upstreamHttpVars = collectUpstreamHttpVars(node.id, nodes, edges);
-    const withHttp = (base: string[]) => Array.from(new Set([...base, ...upstreamHttpVars]));
+    // Only variables actually reachable from this node's upstream
+    // chain — no hardcoded fallback list, so a floating node's palette
+    // is empty until it's wired to a trigger.
+    const upstreamVars = collectUpstreamVariables(node.id, nodes, edges);
     const d = node.data as Record<string, any>;
     const type = node.type as string;
 
@@ -1364,7 +1378,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={withHttp(["name", "username", "message", "comment"])} />
+                            variables={upstreamVars} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media} onChange={(m) => onChange({ media: m })} />
@@ -1377,7 +1391,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 <div className="space-y-3">
                     <Field label="DM text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
+                            variables={upstreamVars} />
                     </Field>
                     <Field label="Attachment (optional)">
                         <MediaPicker media={d.media}
@@ -1418,7 +1432,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
+                            variables={upstreamVars} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1444,7 +1458,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 <div className="space-y-3">
                     <Field label="Message text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={5}
-                            variables={withHttp(["name", "username", "message", "comment"])} />
+                            variables={upstreamVars} />
                     </Field>
                 </div>
             );
@@ -1466,7 +1480,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                     {(d.mediaKind === 'image' || d.mediaKind === 'video' || d.mediaKind === 'document') && (
                         <Field label="Caption (optional)">
                             <VariableTextEditor value={d.caption || ''} onChange={(t) => onChange({ caption: t })} rows={3}
-                                variables={withHttp(["name", "username", "message", "comment"])} />
+                                variables={upstreamVars} />
                         </Field>
                     )}
                     {d.mediaKind === 'document' && (
@@ -1481,13 +1495,13 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 </div>
             );
         case 'action_send_dm':
-            return <SendDmConfig d={d} extraVars={upstreamHttpVars} onChange={onChange} />;
+            return <SendDmConfig d={d} extraVars={upstreamVars} onChange={onChange} />;
         case 'action_reply_comment':
             return (
                 <div className="space-y-3">
                     <Field label="Reply text">
                         <VariableTextEditor value={d.text || ''} onChange={(t) => onChange({ text: t })} rows={4}
-                            variables={withHttp(["username", "name", "comment", "message", "post_url"])} />
+                            variables={upstreamVars} />
                     </Field>
                     <p className="text-[10px] text-amber-400/80 leading-relaxed">
                         Posts a public reply on the comment. Requires the <code>instagram_business_manage_comments</code> permission — pending re-approval from Meta.
@@ -1541,7 +1555,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                     </Field>
                     <Field label="Value">
                         <VariableTextEditor value={d.value || ''} onChange={(v) => onChange({ value: v })} rows={2}
-                            variables={withHttp(["name", "username", "message", "comment", "post_url"])} />
+                            variables={upstreamVars} />
                     </Field>
                 </div>
             );
@@ -1555,7 +1569,7 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 </div>
             );
         case 'action_http_request': {
-            const bodyVars = withHttp(["name", "username", "message", "comment", "post_url"]);
+            const bodyVars = upstreamVars;
             return (
                 <div className="space-y-3">
                     <Field label="Method">

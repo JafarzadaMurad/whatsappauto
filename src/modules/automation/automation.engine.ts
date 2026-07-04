@@ -340,24 +340,65 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         }
         case 'action_http_request': {
             const method = String(d.method || 'GET').toUpperCase();
-            const url = interpolate(String(d.url || ''), ctx).trim();
+            let url = interpolate(String(d.url || ''), ctx).trim();
             if (!url) return true;
-            // Headers stored as one "Key: Value" per line; blank lines ignored.
+
+            // Query parameters — structured array only. The n8n-style
+            // UI sends `[{ key, value, enabled }, …]`.
+            if (d.sendQueryParams && Array.isArray(d.queryParams) && d.queryParams.length > 0) {
+                const qs = new URLSearchParams();
+                for (const p of d.queryParams) {
+                    if (!p || p.enabled === false) continue;
+                    const k = interpolate(String(p.key || ''), ctx).trim();
+                    if (!k) continue;
+                    qs.append(k, interpolate(String(p.value || ''), ctx));
+                }
+                const queryString = qs.toString();
+                if (queryString) url += (url.includes('?') ? '&' : '?') + queryString;
+            }
+
+            // Headers — support both the new array shape and the legacy
+            // newline string so older saved automations still work.
             const headers: Record<string, string> = {};
-            for (const line of String(d.headers || '').split('\n')) {
-                const idx = line.indexOf(':');
-                if (idx <= 0) continue;
-                const k = line.slice(0, idx).trim();
-                const v = interpolate(line.slice(idx + 1).trim(), ctx);
-                if (k) headers[k] = v;
+            if (d.sendHeaders !== false) {
+                if (Array.isArray(d.headers)) {
+                    for (const h of d.headers) {
+                        if (!h || h.enabled === false) continue;
+                        const k = interpolate(String(h.key || ''), ctx).trim();
+                        if (!k) continue;
+                        headers[k] = interpolate(String(h.value || ''), ctx);
+                    }
+                } else if (typeof d.headers === 'string') {
+                    for (const line of d.headers.split('\n')) {
+                        const idx = line.indexOf(':');
+                        if (idx <= 0) continue;
+                        const k = line.slice(0, idx).trim();
+                        const v = interpolate(line.slice(idx + 1).trim(), ctx);
+                        if (k) headers[k] = v;
+                    }
+                }
             }
-            const rawBody = d.body ? interpolate(String(d.body), ctx) : undefined;
-            let body: string | undefined = rawBody;
-            // If a body is provided but Content-Type wasn't, assume JSON
-            // when it parses. Non-JSON bodies pass through as-is.
-            if (rawBody && !headers['Content-Type'] && !headers['content-type']) {
-                try { JSON.parse(rawBody); headers['Content-Type'] = 'application/json'; } catch { /* not json */ }
+
+            // Body — honour the toggle (sendBody). bodyType defaults to
+            // json so older payloads without the flag still auto-set
+            // Content-Type.
+            let body: string | undefined;
+            const bodyEnabled = d.sendBody !== false && (method !== 'GET' && method !== 'HEAD');
+            if (bodyEnabled && d.body) {
+                body = interpolate(String(d.body), ctx);
+                const bodyType = String(d.bodyType || 'json');
+                const hasContentType = !!(headers['Content-Type'] || headers['content-type']);
+                if (!hasContentType) {
+                    if (bodyType === 'json') {
+                        // Trust the operator's declaration — no runtime parse
+                        // check needed since the UI has one.
+                        headers['Content-Type'] = 'application/json';
+                    } else if (bodyType === 'form') {
+                        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                    }
+                }
             }
+
             const varKey = String(d.outputVariable || '').trim();
             try {
                 const controller = new AbortController();
@@ -376,7 +417,6 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
                 if (varKey) {
                     if (!ctx.vars) ctx.vars = {};
                     ctx.vars[varKey] = parsed;
-                    // Also expose the status for scripts that want to branch on it.
                     ctx.vars[`${varKey}_status`] = resp.status;
                 }
                 logger.info({ url, method, status: resp.status, varKey }, '[Automation] HTTP request completed');

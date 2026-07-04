@@ -1216,6 +1216,188 @@ function SendDmConfig({ d, extraVars, onChange }: { d: Record<string, any>; extr
     );
 }
 
+// ─── HTTP node helpers ───────────────────────────────────────────────
+function ToggleRow({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void; }) {
+    return (
+        <div className="flex items-center justify-between gap-3 py-1.5">
+            <span className="text-xs font-medium text-foreground/90">{label}</span>
+            <button
+                type="button"
+                onClick={() => onChange(!value)}
+                aria-pressed={value}
+                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-primary' : 'bg-muted-foreground/25'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${value ? 'translate-x-4' : ''}`} />
+            </button>
+        </div>
+    );
+}
+
+type KVItem = { key: string; value: string; enabled?: boolean };
+
+function KeyValueList({ items, onChange, variables, keyPlaceholder, valuePlaceholder }: {
+    items: KVItem[];
+    onChange: (list: KVItem[]) => void;
+    variables: string[];
+    keyPlaceholder?: string;
+    valuePlaceholder?: string;
+}) {
+    const list = Array.isArray(items) ? items : [];
+    const update = (i: number, patch: Partial<KVItem>) =>
+        onChange(list.map((it, idx) => idx === i ? { ...it, ...patch } : it));
+    const add = () => onChange([...list, { key: '', value: '' }]);
+    const remove = (i: number) => onChange(list.filter((_, idx) => idx !== i));
+    return (
+        <div className="space-y-2 pl-3 border-l-2 border-border/50">
+            {list.length === 0 && (
+                <p className="text-[10px] text-muted-foreground/70 italic">No entries yet.</p>
+            )}
+            {list.map((it, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1.5 items-start">
+                    <input
+                        type="text"
+                        value={it.key}
+                        onChange={e => update(i, { key: e.target.value })}
+                        placeholder={keyPlaceholder || 'key'}
+                        className="bg-secondary/50 border border-border rounded-md px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    <div className="min-w-0">
+                        <VariableTextEditor
+                            value={it.value}
+                            onChange={v => update(i, { value: v })}
+                            rows={1}
+                            variables={variables} />
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => remove(i)}
+                        className="text-muted-foreground hover:text-red-400 p-1 flex-shrink-0"
+                        title="Remove">
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            ))}
+            <button
+                type="button"
+                onClick={add}
+                className="w-full text-[11px] font-medium py-1.5 rounded-md border border-dashed border-border hover:bg-secondary/40 transition-colors text-muted-foreground hover:text-foreground">
+                + Add
+            </button>
+        </div>
+    );
+}
+
+// Strip {{...}} references before parsing so JSON.parse doesn't reject
+// a template that's structurally valid. `"…{{v}}…"` becomes a string
+// literal placeholder, bare `{{v}}` (numeric/object context) becomes null.
+function jsonWithoutVars(s: string): string {
+    return s
+        .replace(/"[^"]*\{\{[^"]*"/g, '"__VAR__"')
+        .replace(/\{\{[^}]+\}\}/g, 'null');
+}
+
+function JsonBodyEditor({ value, onChange, variables }: {
+    value: string;
+    onChange: (v: string) => void;
+    variables: string[];
+}) {
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const gutterRef = useRef<HTMLDivElement | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const trimmed = value.trim();
+        if (!trimmed) { setError(null); return; }
+        try {
+            JSON.parse(jsonWithoutVars(trimmed));
+            setError(null);
+        } catch (e: any) {
+            setError(String(e?.message || 'Invalid JSON').replace(/^SyntaxError:\s*/i, ''));
+        }
+    }, [value]);
+
+    const insertAtCursor = (text: string) => {
+        const ta = textareaRef.current;
+        if (!ta) { onChange(value + text); return; }
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const next = value.slice(0, start) + text + value.slice(end);
+        onChange(next);
+        requestAnimationFrame(() => {
+            ta.focus();
+            ta.selectionStart = ta.selectionEnd = start + text.length;
+        });
+    };
+
+    const formatJson = () => {
+        try {
+            // Round-trip through markers so variables survive stringify.
+            const marked = value.replace(/\{\{([^}]+)\}\}/g, (_, name) => `"__VAR__${name.trim()}__VAR__"`);
+            const parsed = JSON.parse(marked);
+            const pretty = JSON.stringify(parsed, null, 2);
+            const restored = pretty.replace(/"__VAR__([^"]+)__VAR__"/g, (_, name) => `{{${name}}}`);
+            onChange(restored);
+        } catch { /* invalid JSON, leave as-is */ }
+    };
+
+    const lineCount = Math.max(1, (value.match(/\n/g) || []).length + 1);
+    const syncScroll = () => {
+        if (textareaRef.current && gutterRef.current) {
+            gutterRef.current.scrollTop = textareaRef.current.scrollTop;
+        }
+    };
+
+    return (
+        <div>
+            {variables.length > 0 && (
+                <div className="flex gap-1.5 mb-2 flex-wrap">
+                    {variables.map(v => (
+                        <button key={v}
+                            type="button"
+                            onClick={() => insertAtCursor(`{{${v}}}`)}
+                            title={`Insert {{${v}}}`}
+                            className="inline-flex items-center gap-0.5 text-[11px] font-mono px-2 py-1 rounded-md bg-violet-500/15 border border-violet-500/40 text-violet-300 hover:bg-violet-500/25 select-none">
+                            <span className="opacity-50">{'{{'}</span>{v}<span className="opacity-50">{'}}'}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+            <div className={`relative rounded-lg border overflow-hidden ${error ? 'border-red-500/60 ring-1 ring-red-500/30' : 'border-border'}`}>
+                <div className="flex">
+                    <div
+                        ref={gutterRef}
+                        className="w-9 flex-shrink-0 bg-secondary/60 py-2 text-[11px] font-mono text-muted-foreground/60 text-right pr-1.5 select-none overflow-hidden leading-5">
+                        {Array.from({ length: lineCount }, (_, i) => (
+                            <div key={i}>{i + 1}</div>
+                        ))}
+                    </div>
+                    <textarea
+                        ref={textareaRef}
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        onScroll={syncScroll}
+                        rows={8}
+                        spellCheck={false}
+                        placeholder={'{\n  "key": "value"\n}'}
+                        className="flex-1 bg-secondary/40 py-2 pl-2 pr-3 text-sm font-mono focus:outline-none resize-y leading-5 min-h-[9em]" />
+                </div>
+                <div className={`flex items-center justify-between px-2 py-1 text-[10px] border-t ${error ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-secondary/30 border-border text-muted-foreground'}`}>
+                    <span className="truncate">
+                        {value.trim()
+                            ? (error ? `Invalid JSON — ${error}` : 'Valid JSON')
+                            : 'Empty — no body will be sent'}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={formatJson}
+                        disabled={!!error || !value.trim()}
+                        className="text-[10px] font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline">
+                        Format
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // Walk edges backwards from `nodeId` and collect every variable that
 // will actually be resolvable at runtime — trigger built-ins from any
 // upstream trigger plus HTTP output-variable names from any upstream
@@ -1569,38 +1751,103 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 </div>
             );
         case 'action_http_request': {
-            const bodyVars = upstreamVars;
+            const method = String(d.method || 'GET').toUpperCase();
+            const bodyType = String(d.bodyType || 'json');
+            const showBody = method !== 'GET' && method !== 'HEAD';
+            // Legacy migration: older saves stored `headers` as a
+            // newline string. Convert on read so the KV list can render.
+            const headersFromLegacyString = (s: string): KVItem[] =>
+                s.split('\n').map((line: string) => {
+                    const idx = line.indexOf(':');
+                    return idx > 0
+                        ? { key: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim() }
+                        : null;
+                }).filter(Boolean) as KVItem[];
+            const headersList: KVItem[] = Array.isArray(d.headers)
+                ? d.headers
+                : (typeof d.headers === 'string' && d.headers.trim() ? headersFromLegacyString(d.headers) : []);
+            // Sensible toggle default: on if the node already has header
+            // data (upgraded config), off for fresh nodes.
+            const sendHeaders = d.sendHeaders === undefined ? headersList.length > 0 : !!d.sendHeaders;
             return (
                 <div className="space-y-3">
                     <Field label="Method">
-                        <select value={d.method || 'GET'} onChange={e => onChange({ method: e.target.value })} className={inputCls}>
+                        <select value={method} onChange={e => onChange({ method: e.target.value })} className={inputCls}>
                             <option value="GET">GET</option>
                             <option value="POST">POST</option>
                             <option value="PUT">PUT</option>
                             <option value="PATCH">PATCH</option>
                             <option value="DELETE">DELETE</option>
+                            <option value="HEAD">HEAD</option>
                         </select>
                     </Field>
                     <Field label="URL">
                         <VariableTextEditor value={d.url || ''} onChange={(v) => onChange({ url: v })} rows={1}
-                            variables={bodyVars} />
+                            variables={upstreamVars} />
                     </Field>
-                    <Field label="Headers (one per line, Key: Value)">
-                        <VariableTextEditor value={d.headers || ''} onChange={(v) => onChange({ headers: v })} rows={2}
-                            variables={bodyVars} />
-                    </Field>
-                    {d.method && d.method !== 'GET' && (
-                        <Field label="Body (JSON or plain text)">
-                            <VariableTextEditor value={d.body || ''} onChange={(v) => onChange({ body: v })} rows={4}
-                                variables={bodyVars} />
-                        </Field>
+
+                    <ToggleRow label="Send Query Parameters" value={!!d.sendQueryParams}
+                        onChange={v => onChange({ sendQueryParams: v })} />
+                    {d.sendQueryParams && (
+                        <KeyValueList
+                            items={d.queryParams || []}
+                            onChange={(list) => onChange({ queryParams: list })}
+                            variables={upstreamVars}
+                            keyPlaceholder="param"
+                            valuePlaceholder="value" />
                     )}
+
+                    <ToggleRow label="Send Headers" value={sendHeaders}
+                        onChange={v => onChange({ sendHeaders: v, ...(v && !Array.isArray(d.headers) ? { headers: headersList } : {}) })} />
+                    {sendHeaders && (
+                        <KeyValueList
+                            items={headersList}
+                            onChange={(list) => onChange({ headers: list })}
+                            variables={upstreamVars}
+                            keyPlaceholder="Header"
+                            valuePlaceholder="Value" />
+                    )}
+
+                    {showBody && (
+                        <>
+                            <ToggleRow label="Send Body" value={!!d.sendBody}
+                                onChange={v => onChange({ sendBody: v })} />
+                            {d.sendBody && (
+                                <div className="pl-3 border-l-2 border-border/50 space-y-2">
+                                    <Field label="Body type">
+                                        <select value={bodyType} onChange={e => onChange({ bodyType: e.target.value })} className={inputCls}>
+                                            <option value="json">JSON</option>
+                                            <option value="text">Raw text</option>
+                                            <option value="form">Form URL-encoded</option>
+                                        </select>
+                                    </Field>
+                                    {bodyType === 'json' && (
+                                        <JsonBodyEditor value={d.body || ''} onChange={(v) => onChange({ body: v })}
+                                            variables={upstreamVars} />
+                                    )}
+                                    {bodyType === 'text' && (
+                                        <VariableTextEditor value={d.body || ''} onChange={(v) => onChange({ body: v })} rows={4}
+                                            variables={upstreamVars} />
+                                    )}
+                                    {bodyType === 'form' && (
+                                        <KeyValueList
+                                            items={Array.isArray(d.formBody) ? d.formBody : []}
+                                            onChange={(list) => onChange({ formBody: list, body: list.filter((it: KVItem) => it.enabled !== false && it.key).map((it: KVItem) => `${encodeURIComponent(it.key)}=${encodeURIComponent(it.value)}`).join('&') })}
+                                            variables={upstreamVars}
+                                            keyPlaceholder="field"
+                                            valuePlaceholder="value" />
+                                    )}
+                                </div>
+                            )}
+                        </>
+                    )}
+
                     <Field label="Save response as">
                         <input type="text" value={d.outputVariable || ''} onChange={e => onChange({ outputVariable: e.target.value.replace(/[^\w]/g, '') })}
                             placeholder="apiResponse" className={inputCls} />
                     </Field>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        Reference the response downstream with <code>{'{{' + (d.outputVariable || 'apiResponse') + '}}'}</code> (whole payload) or dotted paths like <code>{'{{' + (d.outputVariable || 'apiResponse') + '.data.name}}'}</code>. Request timeout: 15s. If the server sends JSON, it&apos;s parsed automatically.
+                        Reference downstream with <code>{'{{' + (d.outputVariable || 'apiResponse') + '}}'}</code> or dotted paths like <code>{'{{' + (d.outputVariable || 'apiResponse') + '.data.name}}'}</code>. Timeout: 15s.
                     </p>
                 </div>
             );

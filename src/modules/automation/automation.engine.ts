@@ -30,6 +30,8 @@ export type MediaPayload = {
     mimetype?: string;   // optional override
 };
 
+export type WaitButton = { title: string; target: string };
+
 export type AutomationContext = {
     userId: string;
     channel: Channel;
@@ -43,6 +45,14 @@ export type AutomationContext = {
     // reference values via {{key}} or dotted paths like {{key.data.name}}.
     // Populated by the engine on entry; nodes may push into it.
     vars?: Record<string, any>;
+    // Set by runGraph before each executeNode call so an executor can
+    // inspect the surrounding graph (used by send_dm to find outgoing
+    // edges keyed by quick-reply title). Not persisted.
+    _runtime?: { edges: any[]; currentNodeId: string };
+    // Set by an executor (currently action_ig_send_dm / action_send_dm)
+    // when it wants the flow to pause here and resume on the next
+    // matching contact reply. runGraph breaks the loop and returns.
+    waitState?: { nodeId: string; buttons: WaitButton[] };
     source?: 'dm' | 'comment';
     // Channel-specific context
     instanceId?: string;      // alChatBot WhatsAppInstance.id (which WA number received the msg)
@@ -274,6 +284,7 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
             } else if (text) {
                 await ctx.sendMessage(text);
             }
+            signalWaitFromQuickReplies(d.quickReplies, ctx);
             return true;
         }
         case 'action_ig_reply_comment': {
@@ -311,6 +322,7 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
             } else if (payload.kind === 'text' && payload.text) {
                 await ctx.sendMessage(payload.text);
             }
+            signalWaitFromQuickReplies(d.quickReplies, ctx);
             return true;
         }
         case 'action_reply_comment': {
@@ -452,13 +464,31 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
     }
 }
 
-async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: AutomationContext): Promise<number> {
+// Called by DM executors that emit quick replies. Looks at the outgoing
+// edges of the current node keyed by sourceHandle=<button title>; when
+// any button is wired to a downstream node the executor asks runGraph
+// to pause, and a resume path is stashed for later on-reply matching.
+function signalWaitFromQuickReplies(quickReplies: any, ctx: AutomationContext) {
+    if (!ctx._runtime || !Array.isArray(quickReplies) || quickReplies.length === 0) return;
+    const { edges, currentNodeId } = ctx._runtime;
+    const outEdges = edges.filter(e => e.source === currentNodeId);
+    const buttons: WaitButton[] = [];
+    for (const qr of quickReplies) {
+        const title = String(qr?.title || '').trim();
+        if (!title) continue;
+        const edge = outEdges.find(e => (e.sourceHandle || '') === title);
+        if (edge?.target) buttons.push({ title, target: edge.target });
+    }
+    if (buttons.length > 0) ctx.waitState = { nodeId: currentNodeId, buttons };
+}
+
+async function runGraph(startQueue: string[], nodes: any[], edges: any[], ctx: AutomationContext): Promise<number> {
     const byId: Record<string, any> = {};
     for (const n of nodes) byId[n.id] = n;
     const outgoing = (id: string, handle?: string) =>
         edges.filter(e => e.source === id && (handle === undefined || (e.sourceHandle || null) === handle));
 
-    let queue: string[] = outgoing(triggerId).map(e => e.target);
+    let queue: string[] = [...startQueue];
     const visited = new Set<string>();
     let steps = 0;
     let executed = 0;
@@ -469,14 +499,20 @@ async function runGraph(triggerId: string, nodes: any[], edges: any[], ctx: Auto
         visited.add(nid);
         const node = byId[nid];
         if (!node) continue;
+        ctx._runtime = { edges, currentNodeId: nid };
         const result = await executeNode(node, ctx);
         executed++;
+        // Wait signal: pause here; the DB row persisted by the caller
+        // holds the {button → next-node} mapping until the contact
+        // replies again.
+        if (ctx.waitState) break;
         if (node.type === 'condition') {
             queue.push(...outgoing(nid, result ? 'true' : 'false').map(e => e.target));
         } else {
             queue.push(...outgoing(nid).map(e => e.target));
         }
     }
+    ctx._runtime = undefined;
     return executed;
 }
 
@@ -485,10 +521,6 @@ export class AutomationEngine {
     // default AI-agent reply to avoid double responses.
     static async handleMessage(ctx: AutomationContext): Promise<{ matched: boolean; overrideAgentId?: string }> {
         try {
-            const automations = await prisma.automation.findMany({
-                where: { userId: ctx.userId, isActive: true }
-            });
-            let matched = false;
             // action_ai_reply calls ctx.runAgent(agentId). We stash the
             // ID here and let the channel handler swap in that agent
             // instead of the instance/account default when it emits its
@@ -499,9 +531,65 @@ export class AutomationEngine {
             // Fresh variable bag per handleMessage call — action_http_request
             // and any future producers stash values here for downstream nodes.
             if (!ctx.vars) ctx.vars = {};
+
+            // Wait-state resume: if this contact was mid-flow waiting on
+            // a quick-reply tap and their message matches one of the
+            // registered button titles, resume from that branch instead
+            // of re-running triggers.
+            const wait = ctx.source === 'dm'
+                ? await prisma.automationWaitState.findUnique({
+                    where: { channel_contactId: { channel: ctx.channel, contactId: ctx.contactId } }
+                }).catch(() => null)
+                : null;
+            if (wait && wait.expiresAt > new Date()) {
+                const buttons = (wait.buttons as any[] || []).filter(b => b && b.title && b.target) as WaitButton[];
+                const reply = (ctx.text || '').trim().toLowerCase();
+                const clicked = buttons.find(b => b.title.trim().toLowerCase() === reply);
+                if (clicked) {
+                    const auto = await prisma.automation.findUnique({ where: { id: wait.automationId } });
+                    if (auto?.isActive) {
+                        const nodes = (auto.nodes as any[]) || [];
+                        const edges = (auto.edges as any[]) || [];
+                        ctx.waitState = undefined;
+                        try {
+                            await runGraph([clicked.target], nodes, edges, ctx);
+                        } catch (e: any) {
+                            logger.error({ err: e?.message, waitId: wait.id }, '[Automation] resume run failed');
+                        }
+                        await prisma.automationWaitState.delete({ where: { id: wait.id } }).catch(() => {});
+                        // If the resumed branch parked on another QR node
+                        // we persist the new wait state below via the
+                        // normal path.
+                        if (ctx.waitState) {
+                            await prisma.automationWaitState.upsert({
+                                where: { channel_contactId: { channel: ctx.channel, contactId: ctx.contactId } },
+                                update: {
+                                    automationId: auto.id, nodeId: ctx.waitState.nodeId, buttons: ctx.waitState.buttons as any,
+                                    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+                                },
+                                create: {
+                                    channel: ctx.channel, contactId: ctx.contactId,
+                                    automationId: auto.id, nodeId: ctx.waitState.nodeId, buttons: ctx.waitState.buttons as any,
+                                    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+                                },
+                            }).catch(e => logger.warn({ err: e.message }, '[Automation] wait upsert failed'));
+                        }
+                        return { matched: true, overrideAgentId };
+                    }
+                }
+                // Reply didn't match — drop the stale wait so normal
+                // triggers get a chance and future flows aren't shadowed.
+                await prisma.automationWaitState.delete({ where: { id: wait.id } }).catch(() => {});
+            }
+
+            const automations = await prisma.automation.findMany({
+                where: { userId: ctx.userId, isActive: true }
+            });
+            let matched = false;
             for (const auto of automations) {
                 const nodes = (auto.nodes as any[]) || [];
                 const edges = (auto.edges as any[]) || [];
+                const outgoing = (id: string) => edges.filter(e => e.source === id).map(e => e.target);
                 for (const node of nodes) {
                     if (typeof node?.type !== 'string' || !node.type.startsWith('trigger_')) continue;
                     if (!triggerMatches(node, ctx)) continue;
@@ -512,8 +600,9 @@ export class AutomationEngine {
                     let status: 'success' | 'failure' = 'success';
                     let errorMessage: string | null = null;
                     let executed = 0;
+                    ctx.waitState = undefined;
                     try {
-                        executed = await runGraph(node.id, nodes, edges, ctx);
+                        executed = await runGraph(outgoing(node.id), nodes, edges, ctx);
                     } catch (runErr: any) {
                         status = 'failure';
                         errorMessage = String(runErr?.message || runErr || 'Unknown error').slice(0, 2000);
@@ -536,6 +625,24 @@ export class AutomationEngine {
                             startedAt,
                         }
                     }).catch(e => logger.warn({ err: e.message }, '[Automation] execution log failed'));
+                    // If a DM node with wired quick-reply handles parked
+                    // the run, persist the resume plan so the contact's
+                    // next message can dispatch to the correct branch.
+                    if (ctx.waitState) {
+                        await prisma.automationWaitState.upsert({
+                            where: { channel_contactId: { channel: ctx.channel, contactId: ctx.contactId } },
+                            update: {
+                                automationId: auto.id, nodeId: ctx.waitState.nodeId, buttons: ctx.waitState.buttons as any,
+                                expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+                            },
+                            create: {
+                                channel: ctx.channel, contactId: ctx.contactId,
+                                automationId: auto.id, nodeId: ctx.waitState.nodeId, buttons: ctx.waitState.buttons as any,
+                                expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+                            },
+                        }).catch(e => logger.warn({ err: e.message }, '[Automation] wait upsert failed'));
+                        ctx.waitState = undefined;
+                    }
                 }
             }
             return { matched, overrideAgentId };

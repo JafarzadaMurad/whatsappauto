@@ -1256,6 +1256,25 @@ model AutomationExecution {
   @@index([automationId, startedAt(sort: Desc)])
 }
 
+// Pauses an automation graph mid-run while it waits for a specific
+// quick-reply reply from the contact. When they message back with a
+// matching button label, the engine resumes from the edge that came
+// off that button's handle. Rows are single-active-per-channel-per-contact.
+model AutomationWaitState {
+  id           String   @id @default(uuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  channel      String   // 'instagram' | 'whatsapp'
+  contactId    String   // IGSID or WA remoteJid
+  nodeId       String   // the node that emitted the quick replies
+  buttons      Json     // [{ title, target }] — target is the next-node id off this button's edge
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@unique([channel, contactId])
+  @@index([expiresAt])
+}
+
 // Cached profile of a person who messaged an Instagram business account
 model InstagramContact {
   id         String   @id @default(uuid())

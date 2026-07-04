@@ -419,8 +419,17 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
         channelKey === 'wa' ? 'bg-emerald-500'   :
                               'bg-muted-foreground/40';
 
+    // Per-button output handles for DM nodes with quick replies. Each
+    // handle uses the button title as its id so the engine can key the
+    // wait state's resume-target off the sourceHandle at runtime.
+    const isDmWithQr =
+        (type === 'action_ig_send_dm' || (type === 'action_send_dm' && (d.kind || 'text') === 'text'))
+        && Array.isArray(d.quickReplies)
+        && d.quickReplies.length > 0;
+    const qrList: { title?: string }[] = isDmWithQr ? d.quickReplies : [];
+
     return (
-        <div className={`relative rounded-xl border-2 bg-card min-w-[180px] max-w-[240px] ${selected ? c.border : "border-border"} shadow-md overflow-hidden`}>
+        <div className={`relative rounded-xl border-2 bg-card min-w-[200px] max-w-[260px] ${selected ? c.border : "border-border"} shadow-md overflow-hidden`}>
             <div className={`absolute left-0 top-0 bottom-0 w-1 ${ribbon}`} />
             {!isTrigger && <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-muted-foreground" />}
             <div className={`flex items-center gap-2 pl-4 pr-3 py-2 rounded-t-[10px] ${c.bg}`}>
@@ -431,14 +440,34 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
                 )}
             </div>
             <div className="pl-4 pr-3 py-2 text-xs text-muted-foreground break-words"><TextWithChips text={summary} /></div>
+            {isDmWithQr && (
+                <div className="border-t border-border/40">
+                    {qrList.map((qr, i) => {
+                        const title = String(qr?.title || '').trim() || `Button ${i + 1}`;
+                        return (
+                            <div key={i} className="relative pl-4 pr-4 py-1.5 text-[10px] border-t border-border/30 first:border-t-0 flex items-center justify-between bg-secondary/20">
+                                <span className="text-muted-foreground/60 mr-1.5">▸</span>
+                                <span className="truncate flex-1 font-medium text-foreground/80">{title}</span>
+                                <Handle
+                                    id={title}
+                                    type="source"
+                                    position={Position.Right}
+                                    style={{ position: 'absolute', top: '50%', right: -6, transform: 'translateY(-50%)' }}
+                                    className="!w-3 !h-3 !bg-violet-500 !border-2 !border-card"
+                                />
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
             {isCondition ? (
                 <>
                     <Handle id="true" type="source" position={Position.Right} style={{ top: "40%" }} className="!w-3 !h-3 !bg-emerald-500" />
                     <Handle id="false" type="source" position={Position.Right} style={{ top: "70%" }} className="!w-3 !h-3 !bg-red-500" />
                 </>
-            ) : (
+            ) : !isDmWithQr ? (
                 <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-muted-foreground" />
-            )}
+            ) : null}
         </div>
     );
 }

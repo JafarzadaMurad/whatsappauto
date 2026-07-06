@@ -473,12 +473,21 @@ function signalWaitFromQuickReplies(quickReplies: any, ctx: AutomationContext) {
     const { edges, currentNodeId } = ctx._runtime;
     const outEdges = edges.filter(e => e.source === currentNodeId);
     const buttons: WaitButton[] = [];
+    const misses: string[] = [];
     for (const qr of quickReplies) {
         const title = String(qr?.title || '').trim();
         if (!title) continue;
         const edge = outEdges.find(e => (e.sourceHandle || '') === title);
         if (edge?.target) buttons.push({ title, target: edge.target });
+        else misses.push(title);
     }
+    logger.info({
+        currentNodeId,
+        outEdgeCount: outEdges.length,
+        sourceHandles: outEdges.map(e => e.sourceHandle || null),
+        wired: buttons.map(b => b.title),
+        missing: misses,
+    }, '[Automation] QR wait-signal computed');
     if (buttons.length > 0) ctx.waitState = { nodeId: currentNodeId, buttons };
 }
 
@@ -539,12 +548,22 @@ export class AutomationEngine {
             const wait = ctx.source === 'dm'
                 ? await prisma.automationWaitState.findUnique({
                     where: { channel_contactId: { channel: ctx.channel, contactId: ctx.contactId } }
-                }).catch(() => null)
+                }).catch((e) => { logger.warn({ err: e?.message }, '[Automation] wait findUnique failed'); return null; })
                 : null;
+            logger.info({
+                source: ctx.source,
+                channel: ctx.channel,
+                contactId: ctx.contactId,
+                text: ctx.text,
+                waitFound: !!wait,
+                waitExpired: wait ? wait.expiresAt <= new Date() : null,
+                waitButtons: wait ? ((wait.buttons as any[]) || []).map((b: any) => b?.title) : [],
+            }, '[Automation] wait-state lookup');
             if (wait && wait.expiresAt > new Date()) {
                 const buttons = (wait.buttons as any[] || []).filter(b => b && b.title && b.target) as WaitButton[];
                 const reply = (ctx.text || '').trim().toLowerCase();
                 const clicked = buttons.find(b => b.title.trim().toLowerCase() === reply);
+                logger.info({ reply, clicked: clicked?.title || null, target: clicked?.target || null }, '[Automation] wait-state match');
                 if (clicked) {
                     const auto = await prisma.automation.findUnique({ where: { id: wait.automationId } });
                     if (auto?.isActive) {

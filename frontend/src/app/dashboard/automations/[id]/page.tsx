@@ -53,6 +53,10 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "WhatsApp · Send Message", category: "action", icon: MessageSquare, channel: "wa",
         defaultData: { text: "", media: null }
     },
+    action_wa_send_poll: {
+        label: "WhatsApp · Send Poll", category: "action", icon: GitBranch, channel: "wa",
+        defaultData: { question: "", options: ["", ""], selectableCount: 1 }
+    },
     // ─── Instagram actions ───
     action_ig_send_dm: {
         label: "Instagram · Send DM", category: "action", icon: Send, channel: "ig",
@@ -151,7 +155,7 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
 const PALETTE: { category: "trigger" | "action" | "logic"; label: string; channel?: NodeChannel; types: string[] }[] = [
     { category: "trigger", channel: "wa", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
     { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
-    { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message"] },
+    { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message", "action_wa_send_poll"] },
     { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment", "action_ig_hide_comment", "action_ig_delete_comment"] },
     { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
     { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
@@ -384,6 +388,11 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
         const m = d.media?.url ? ` 📎 ${d.media.kind || 'image'}` : '';
         summary = (t || (d.media?.url ? '(media only)' : '(empty)')) + m;
     }
+    else if (type === "action_wa_send_poll") {
+        const q = d.question || '(no question)';
+        const opts = (d.options || []).filter((o: any) => String(o || '').trim()).length;
+        summary = `${q} · ${opts} option${opts === 1 ? '' : 's'}`;
+    }
     else if (type === "action_ig_send_dm") {
         const t = d.text || '';
         const m = d.media?.url ? ` 📎 ${d.media.kind || 'image'}` : '';
@@ -419,14 +428,22 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
         channelKey === 'wa' ? 'bg-emerald-500'   :
                               'bg-muted-foreground/40';
 
-    // Per-button output handles for DM nodes with quick replies. Each
-    // handle uses the button title as its id so the engine can key the
-    // wait state's resume-target off the sourceHandle at runtime.
+    // Per-option output handles for nodes that emit user-choosable
+    // branches — IG DMs with quick replies AND WA polls. Each handle
+    // uses the option label as its id so the engine can key the wait
+    // state's resume-target off the sourceHandle at runtime.
     const isDmWithQr =
         (type === 'action_ig_send_dm' || (type === 'action_send_dm' && (d.kind || 'text') === 'text'))
         && Array.isArray(d.quickReplies)
         && d.quickReplies.length > 0;
-    const qrList: { title?: string }[] = isDmWithQr ? d.quickReplies : [];
+    const isPollWithOptions =
+        type === 'action_wa_send_poll'
+        && Array.isArray(d.options)
+        && d.options.filter((o: any) => String(o || '').trim()).length > 0;
+    const optionList: { title?: string }[] = isDmWithQr
+        ? d.quickReplies
+        : (isPollWithOptions ? d.options.map((o: string) => ({ title: o })) : []);
+    const hasBranches = isDmWithQr || isPollWithOptions;
 
     return (
         <div className={`relative rounded-xl border-2 bg-card min-w-[200px] max-w-[260px] ${selected ? c.border : "border-border"} shadow-md overflow-hidden`}>
@@ -440,10 +457,10 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
                 )}
             </div>
             <div className="pl-4 pr-3 py-2 text-xs text-muted-foreground break-words"><TextWithChips text={summary} /></div>
-            {isDmWithQr && (
+            {hasBranches && (
                 <div className="border-t border-border/40">
-                    {qrList.map((qr, i) => {
-                        const title = String(qr?.title || '').trim() || `Button ${i + 1}`;
+                    {optionList.map((opt, i) => {
+                        const title = String(opt?.title || '').trim() || `Option ${i + 1}`;
                         return (
                             <div key={i} className="relative pl-4 pr-4 py-1.5 text-[10px] border-t border-border/30 first:border-t-0 flex items-center justify-between bg-secondary/20">
                                 <span className="text-muted-foreground/60 mr-1.5">▸</span>
@@ -465,7 +482,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
                     <Handle id="true" type="source" position={Position.Right} style={{ top: "40%" }} className="!w-3 !h-3 !bg-emerald-500" />
                     <Handle id="false" type="source" position={Position.Right} style={{ top: "70%" }} className="!w-3 !h-3 !bg-red-500" />
                 </>
-            ) : !isDmWithQr ? (
+            ) : !hasBranches ? (
                 <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-muted-foreground" />
             ) : null}
         </div>
@@ -1597,6 +1614,55 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                     <p className="text-[10px] text-muted-foreground">When both text and image/video/document are set, the text is used as caption.</p>
                 </div>
             );
+        case 'action_wa_send_poll': {
+            const options: string[] = Array.isArray(d.options) ? d.options : ["", ""];
+            const setOpts = (list: string[]) => onChange({ options: list });
+            return (
+                <div className="space-y-3">
+                    <Field label="Question">
+                        <VariableTextEditor value={d.question || ''} onChange={(v) => onChange({ question: v })} rows={2}
+                            variables={upstreamVars} />
+                    </Field>
+                    <Field label="Selectable options">
+                        <select value={String(d.selectableCount || 1)}
+                            onChange={e => onChange({ selectableCount: Number(e.target.value) })}
+                            className={inputCls}>
+                            <option value="1">Single choice</option>
+                            <option value="2">Multiple choice</option>
+                        </select>
+                    </Field>
+                    <div className="border-t border-border pt-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-muted-foreground">Options (2–12)</span>
+                            {options.length < 12 && (
+                                <button onClick={() => setOpts([...options, ''])}
+                                    className="text-[11px] text-primary hover:underline">+ Add</button>
+                            )}
+                        </div>
+                        {options.map((opt, i) => (
+                            <div key={i} className="flex gap-1.5">
+                                <input type="text" value={opt} placeholder={`Option ${i + 1}`}
+                                    onChange={e => {
+                                        const next = [...options];
+                                        next[i] = e.target.value;
+                                        setOpts(next);
+                                    }}
+                                    className={inputCls} />
+                                {options.length > 2 && (
+                                    <button onClick={() => setOpts(options.filter((_, j) => j !== i))}
+                                        className="text-muted-foreground hover:text-red-400 px-1.5">
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Each option becomes an output handle. Wire a downstream node to a handle and it fires when the contact votes for that option. Requires at least 2 non-empty options. WhatsApp caps polls at 12 choices.
+                    </p>
+                </div>
+            );
+        }
         case 'action_ig_send_dm':
             return (
                 <div className="space-y-3">

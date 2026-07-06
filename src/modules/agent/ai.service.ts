@@ -1814,6 +1814,11 @@ export class AiService {
                 source: 'dm',
                 instanceId,
                 sendMessage: async (t) => { await sock.sendMessage(remoteJid, { text: t }); },
+                sendPoll: async (name, values, selectableCount) => {
+                    await sock.sendMessage(remoteJid, {
+                        poll: { name, values, selectableCount: selectableCount || 1 } as any,
+                    });
+                },
                 sendMedia: async (p) => {
                     // Map MediaPayload → Baileys message shape
                     let msg: any;

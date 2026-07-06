@@ -65,6 +65,10 @@ export type AutomationContext = {
     sendMessage: (text: string) => Promise<void>;
     sendMedia?: (payload: MediaPayload) => Promise<void>;
     sendDm?: (payload: RichDmPayload) => Promise<void>;
+    // WhatsApp-only: emits a native poll. Options double as branch
+    // labels — the engine wires each option to its own outgoing edge
+    // via the wait-state mechanism so votes resume from the right node.
+    sendPoll?: (name: string, options: string[], selectableCount?: number) => Promise<void>;
     replyComment?: (text: string) => Promise<void>;
     hideComment?: () => Promise<void>;
     deleteComment?: () => Promise<void>;
@@ -261,6 +265,23 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
             } else if (text) {
                 await ctx.sendMessage(text);
             }
+            return true;
+        }
+        case 'action_wa_send_poll': {
+            // WhatsApp native poll. Options double as branch labels —
+            // each wired option triggers the corresponding downstream
+            // node when the contact votes.
+            const question = d.question ? interpolate(String(d.question), ctx) : '';
+            const rawOptions: string[] = Array.isArray(d.options)
+                ? d.options.map((o: any) => interpolate(String(o || ''), ctx).trim()).filter((s: string) => s)
+                : [];
+            const selectable = Number(d.selectableCount) === 2 ? 2 : 1;
+            if (question && rawOptions.length >= 2 && ctx.sendPoll) {
+                await ctx.sendPoll(question, rawOptions, selectable);
+            } else if (question) {
+                await ctx.sendMessage(question);
+            }
+            signalWaitFromOptions(d.options, ctx, 'poll');
             return true;
         }
         case 'action_ig_send_dm': {
@@ -464,32 +485,44 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
     }
 }
 
-// Called by DM executors that emit quick replies. Looks at the outgoing
-// edges of the current node keyed by sourceHandle=<button title>; when
-// any button is wired to a downstream node the executor asks runGraph
-// to pause, and a resume path is stashed for later on-reply matching.
-function signalWaitFromQuickReplies(quickReplies: any, ctx: AutomationContext) {
-    if (!ctx._runtime || !Array.isArray(quickReplies) || quickReplies.length === 0) return;
+// Called by nodes that emit user-choosable options (IG quick replies,
+// WA polls). Looks at the outgoing edges of the current node keyed by
+// sourceHandle=<option label>; when any option is wired to a downstream
+// node the executor asks runGraph to pause and a resume path is stashed
+// for the eventual matching reply.
+function signalWaitFromOptions(options: unknown, ctx: AutomationContext, label = 'options') {
+    if (!ctx._runtime || !Array.isArray(options) || options.length === 0) return;
     const { edges, currentNodeId } = ctx._runtime;
     const outEdges = edges.filter(e => e.source === currentNodeId);
     const buttons: WaitButton[] = [];
     const misses: string[] = [];
-    for (const qr of quickReplies) {
-        const title = String(qr?.title || '').trim();
+    for (const opt of options) {
+        // Accept both `"Option A"` and `{ title: "Option A" }` shapes so
+        // the same helper covers QR (title-based objects) and polls
+        // (plain strings).
+        const title = typeof opt === 'string'
+            ? opt.trim()
+            : String((opt as any)?.title || '').trim();
         if (!title) continue;
         const edge = outEdges.find(e => (e.sourceHandle || '') === title);
         if (edge?.target) buttons.push({ title, target: edge.target });
         else misses.push(title);
     }
     logger.info({
+        label,
         currentNodeId,
         outEdgeCount: outEdges.length,
         sourceHandles: outEdges.map(e => e.sourceHandle || null),
         wired: buttons.map(b => b.title),
         missing: misses,
-    }, '[Automation] QR wait-signal computed');
+    }, '[Automation] wait-signal computed');
     if (buttons.length > 0) ctx.waitState = { nodeId: currentNodeId, buttons };
 }
+
+// Backwards-compat wrapper for the old name (still called from QR
+// executors below).
+const signalWaitFromQuickReplies = (quickReplies: any, ctx: AutomationContext) =>
+    signalWaitFromOptions(quickReplies, ctx, 'quick-replies');
 
 async function runGraph(startQueue: string[], nodes: any[], edges: any[], ctx: AutomationContext): Promise<number> {
     const byId: Record<string, any> = {};

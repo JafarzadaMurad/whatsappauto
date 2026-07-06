@@ -1468,12 +1468,36 @@ function collectUpstreamVariables(nodeId: string, nodes: Node[], edges: Edge[]):
         const t = String((n as any).type);
         const d: any = (n as any).data || {};
         if (t.startsWith('trigger_')) {
-            // Contact-based vars — every trigger surfaces these via the
-            // engine's aliasing (name↔username, message↔comment).
-            ['name', 'username', 'message', 'comment'].forEach(v => vars.add(v));
-            // post_url is only meaningful for post/comment triggers.
-            if (t === 'trigger_ig_post' || t === 'trigger_ig_comment' || t === 'trigger_comment') {
-                vars.add('post_url');
+            // WhatsApp triggers — plain contact + message text. No
+            // @handle, no comment, no post URL.
+            if (
+                t.startsWith('trigger_wa_')
+                || (t === 'trigger_keyword' && d.channel === 'whatsapp')
+                || (t === 'trigger_any_message' && d.channel === 'whatsapp')
+                || (t === 'trigger_new_contact' && d.channel === 'whatsapp')
+            ) {
+                ['name', 'message'].forEach(v => vars.add(v));
+            }
+            // Instagram DM triggers — @handle + display name + message.
+            else if (
+                t === 'trigger_ig_dm'
+                || t === 'trigger_ig_keyword'
+                || t === 'trigger_ig_any'
+                || t === 'trigger_ig_new_contact'
+                || (t === 'trigger_keyword' && d.channel === 'instagram')
+                || (t === 'trigger_any_message' && d.channel === 'instagram')
+                || (t === 'trigger_new_contact' && d.channel === 'instagram')
+            ) {
+                ['username', 'name', 'message'].forEach(v => vars.add(v));
+            }
+            // Instagram post / comment triggers — full comment context.
+            else if (t === 'trigger_ig_post' || t === 'trigger_ig_comment' || t === 'trigger_comment') {
+                ['username', 'name', 'comment', 'post_url'].forEach(v => vars.add(v));
+            }
+            // channel="any" legacy triggers — keep the intersection
+            // safe on both sides.
+            else if (t === 'trigger_keyword' || t === 'trigger_any_message' || t === 'trigger_new_contact') {
+                ['name', 'message'].forEach(v => vars.add(v));
             }
         }
         if (t === 'action_http_request' && d.outputVariable) {

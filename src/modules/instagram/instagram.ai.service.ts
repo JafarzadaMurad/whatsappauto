@@ -268,6 +268,7 @@ export class InstagramAiService {
         });
         const { matched, overrideAgentId } = await AutomationEngine.handleMessage({
             userId: account.userId,
+            workspaceId: accountWorkspaceId || undefined,
             channel: 'instagram',
             text: messageText,
             contactId: senderId,
@@ -545,6 +546,7 @@ export class InstagramAiService {
         // been handled.
         const { matched, overrideAgentId } = await AutomationEngine.handleMessage({
             userId: account.userId,
+            workspaceId: account.workspaceId || undefined,
             channel: 'instagram',
             text: commentText,
             contactId: from.id,

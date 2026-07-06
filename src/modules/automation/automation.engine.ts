@@ -34,6 +34,12 @@ export type WaitButton = { title: string; target: string };
 
 export type AutomationContext = {
     userId: string;
+    // Workspace the incoming event belongs to. When set, the engine
+    // scans every automation in the workspace (across users) — matches
+    // the mental model of a workspace being one shared "account". Older
+    // automations still keyed only to userId are picked up via the OR
+    // fallback in handleMessage.
+    workspaceId?: string;
     channel: Channel;
     text: string;
     contactId: string;        // remoteJid (WhatsApp) or IGSID (Instagram)
@@ -634,9 +640,21 @@ export class AutomationEngine {
                 await prisma.automationWaitState.delete({ where: { id: wait.id } }).catch(() => {});
             }
 
-            const automations = await prisma.automation.findMany({
-                where: { userId: ctx.userId, isActive: true }
-            });
+            // Workspace scope wins when the channel handler supplied
+            // one — same-workspace automations owned by other users are
+            // still relevant (single team, shared resources). Fall
+            // through to userId scope for legacy events without a
+            // workspaceId and legacy automations that never had one.
+            const where: any = { isActive: true };
+            if (ctx.workspaceId) {
+                where.OR = [
+                    { workspaceId: ctx.workspaceId },
+                    { AND: [{ workspaceId: null }, { userId: ctx.userId }] },
+                ];
+            } else {
+                where.userId = ctx.userId;
+            }
+            const automations = await prisma.automation.findMany({ where });
             let matched = false;
             for (const auto of automations) {
                 const nodes = (auto.nodes as any[]) || [];

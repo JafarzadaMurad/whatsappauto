@@ -1806,6 +1806,7 @@ export class AiService {
             const waContact = await prisma.contact.findFirst({ where: { instanceId, remoteJid } });
             const autoResult = await AutomationEngine.handleMessage({
                 userId: instance.userId,
+                workspaceId: instance.workspaceId || undefined,
                 channel: 'whatsapp',
                 text: triggerText,
                 contactId: remoteJid,

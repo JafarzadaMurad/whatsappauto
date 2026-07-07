@@ -1,3 +1,5 @@
+import { MarketingShell } from "@/components/marketing/MarketingShell";
+
 export const metadata = {
     title: "Terms of Service — alChatBot",
     description: "Terms of Service for the alChatBot AI messaging platform.",
@@ -5,6 +7,7 @@ export const metadata = {
 
 export default function TermsPage() {
     return (
+        <MarketingShell>
         <div className="max-w-3xl mx-auto px-6 py-16">
             <h1 className="text-3xl font-bold mb-2">Terms of Service</h1>
             <p className="text-muted-foreground mb-8">Last updated: July 2026</p>
@@ -156,5 +159,6 @@ export default function TermsPage() {
                 </section>
             </div>
         </div>
+        </MarketingShell>
     );
 }

@@ -1,5 +1,8 @@
+import { MarketingShell } from "@/components/marketing/MarketingShell";
+
 export default function PrivacyPage() {
     return (
+        <MarketingShell>
         <div className="max-w-3xl mx-auto px-6 py-16">
             <h1 className="text-3xl font-bold mb-8">Privacy Policy</h1>
             <p className="text-muted-foreground mb-4">Last updated: April 2026</p>
@@ -31,5 +34,6 @@ export default function PrivacyPage() {
                 </section>
             </div>
         </div>
+        </MarketingShell>
     );
 }

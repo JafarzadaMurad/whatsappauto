@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bot, MessageSquare, Github, Twitter, Linkedin } from "lucide-react";
+import { Bot, MessageSquare, Mail } from "lucide-react";
 
 /**
  * Public marketing shell — header + footer wrapper reused by the
@@ -65,17 +65,10 @@ function MarketingFooter() {
                     <p className="text-xs text-muted-foreground leading-relaxed max-w-xs">
                         AI-powered messaging for WhatsApp, Instagram, and Meta Ads. Handle every conversation without hiring another rep.
                     </p>
-                    <div className="flex items-center gap-3 mt-4 text-muted-foreground">
-                        <a href="https://twitter.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">
-                            <Twitter className="w-4 h-4" />
-                        </a>
-                        <a href="https://linkedin.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">
-                            <Linkedin className="w-4 h-4" />
-                        </a>
-                        <a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">
-                            <Github className="w-4 h-4" />
-                        </a>
-                    </div>
+                    <a href="mailto:murad.cafarzada212@gmail.com"
+                        className="inline-flex items-center gap-1.5 mt-4 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        <Mail className="w-3.5 h-3.5" /> murad.cafarzada212@gmail.com
+                    </a>
                 </div>
 
                 <FooterCol title="Product" links={[

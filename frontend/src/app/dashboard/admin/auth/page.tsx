@@ -21,6 +21,8 @@ const PROVIDERS: Provider[] = [
         keys: [
             { key: 'GOOGLE_CLIENT_ID', label: 'Client ID', placeholder: '....apps.googleusercontent.com', isSecret: false,
                 hint: 'Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs. Public — exposed to the frontend so the button can render.' },
+            { key: 'GOOGLE_CLIENT_SECRET', label: 'Client Secret', placeholder: '', isSecret: true,
+                hint: 'Same OAuth client. Required for the Google Calendar connector (server-side token exchange). Not needed for the sign-in button alone.' },
         ]
     },
     {

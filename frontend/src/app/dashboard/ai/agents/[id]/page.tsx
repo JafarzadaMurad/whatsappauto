@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save, Check } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -46,6 +46,7 @@ const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
     reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
     polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question — the poll itself IS the question, so write NO chat text in the same turn (no greeting before or after, the customer sees both at once otherwise). After the customer taps, their pick arrives as the next user turn with the option name as content; treat that as their answer and move on. NEVER re-send the same poll just because you saw a previous one; if the answer is in history, use it.',
+    google_calendar: 'Google Calendar: listCalendarEvents to check availability before proposing a slot, createCalendarEvent to book once the customer confirms date+time+attendee email. Time values must be full ISO strings with timezone (e.g. 2026-07-10T14:00:00+04:00). Always echo the confirmed slot back to the customer in their own words after createCalendarEvent succeeds. cancelCalendarEvent removes a booking by id.',
 };
 
 type ValueSpec =
@@ -387,6 +388,11 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [expandedTool, setExpandedTool] = useState<string | null>(null);
     const [testStates, setTestStates] = useState<Record<string, { values: Record<string, string>; response: any; loading: boolean }>>({});
     const [skillPrompts, setSkillPrompts] = useState<Record<string, string>>({});
+    // Google Calendar connection status — refreshed on mount so the
+    // google_calendar skill card can show either a Connect CTA or the
+    // linked account. Kept out of the agent PUT payload; the workspace
+    // owns the connection, not individual agents.
+    const [googleCalendarStatus, setGoogleCalendarStatus] = useState<{ connected: boolean; email: string | null; calendarId: string | null } | null>(null);
     // Which enabled skill cards have their config panel visible. A
     // skill toggling ON auto-expands; toggling OFF removes it. Manually
     // collapsing keeps the skill enabled but hides the long panel so
@@ -456,6 +462,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                 try {
                     const opsRes = await api.get(`/operators/agent/${id}`);
                     if (opsRes.data?.success) setOperators(opsRes.data.operators || []);
+                } catch { /* not critical */ }
+                // Google Calendar connection status — for the skill CTA.
+                try {
+                    const gcRes = await api.get('/google/oauth/status');
+                    if (gcRes.data?.success) setGoogleCalendarStatus({
+                        connected: !!gcRes.data.connected,
+                        email: gcRes.data.email,
+                        calendarId: gcRes.data.calendarId,
+                    });
                 } catch { /* not critical */ }
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
@@ -1820,6 +1835,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
                                     { id: 'live_operator', name: 'Live Operators', desc: 'Agent can ask human teammates over WhatsApp for things only they know (pricing, approvals). Replies route back to the customer automatically.' },
                                     { id: 'polls', name: 'Polls', desc: 'Send interactive WhatsApp polls (2–12 options) so the customer can tap a choice instead of typing.' },
+                                    { id: 'google_calendar', name: 'Google Calendar', desc: 'Agent can list events, check availability, and book meetings on the workspace\'s connected Google Calendar.' },
                                 ].map(skill => {
                                     const enabled = skills.includes(skill.id);
                                     const expanded = expandedSkills.has(skill.id);
@@ -2275,6 +2291,43 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                             <p className="text-[11px] text-muted-foreground mt-2 italic">
                                                                 Order controls who gets pinged first when the agent escalates. If the first operator doesn't reply within their timeout, the ticket is forwarded to the next one in order.
                                                             </p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Google Calendar specific: connection status + Connect CTA */}
+                                                    {skill.id === 'google_calendar' && (
+                                                        <div>
+                                                            {googleCalendarStatus === null ? (
+                                                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking connection…
+                                                                </div>
+                                                            ) : googleCalendarStatus.connected ? (
+                                                                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 space-y-1">
+                                                                    <div className="text-xs font-medium text-emerald-300 flex items-center gap-1.5">
+                                                                        <Check className="w-3.5 h-3.5" /> Connected
+                                                                    </div>
+                                                                    <div className="text-[11px] text-muted-foreground">
+                                                                        Account: <span className="font-mono text-foreground/80">{googleCalendarStatus.email}</span>
+                                                                        {" · "}Calendar: <span className="font-mono text-foreground/80">{googleCalendarStatus.calendarId || 'primary'}</span>
+                                                                    </div>
+                                                                    <a href="/dashboard/connectors" className="inline-block text-[11px] text-primary hover:underline">
+                                                                        Manage in Connectors →
+                                                                    </a>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
+                                                                    <div className="text-xs font-medium text-amber-300">
+                                                                        No Google Calendar connected to this workspace yet.
+                                                                    </div>
+                                                                    <p className="text-[11px] text-muted-foreground">
+                                                                        The agent can't call any calendar tool until the workspace owner links a Google account. One connection covers every agent with this skill on.
+                                                                    </p>
+                                                                    <a href="/dashboard/connectors"
+                                                                        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                                                                        Connect Google Calendar →
+                                                                    </a>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

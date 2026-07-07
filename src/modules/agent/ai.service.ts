@@ -637,6 +637,64 @@ function buildOperatorAgentTools(opts: {
     };
 }
 
+function buildGoogleCalendarTools(workspaceId: string) {
+    // Lazy import so a workspace that never enables this skill doesn't
+    // pull the module (and any googleapis chain) into memory.
+    const svc = () => import('../google/google-calendar.service');
+    const humanErr = (e: any): string => {
+        const msg = e?.response?.data?.error?.message || e?.message || 'Calendar request failed';
+        return String(msg).slice(0, 300);
+    };
+    return {
+        listCalendarEvents: makeTool(
+            'List events on the connected Google Calendar between two ISO timestamps. Use to check availability before proposing a booking slot. Returns id, title, start, end, attendees, htmlLink.',
+            z.object({
+                timeMin: z.string().describe('ISO datetime with timezone offset, e.g. "2026-07-10T00:00:00+04:00".'),
+                timeMax: z.string().describe('ISO datetime with timezone offset. Must be after timeMin.'),
+                q: z.string().optional().describe('Optional keyword filter — matches summary/description/attendees.'),
+            }),
+            async ({ timeMin, timeMax, q }) => {
+                try {
+                    const events = await (await svc()).listEvents(workspaceId, { timeMin, timeMax, q });
+                    return { success: true, count: events.length, events };
+                } catch (e: any) { return { success: false, error: humanErr(e) }; }
+            }
+        ),
+        createCalendarEvent: makeTool(
+            'Create a new event on the connected Google Calendar. Only call after the customer has confirmed date, time, and (if inviting them by email) their address. Attendees receive a Google-side invite.',
+            z.object({
+                summary: z.string().describe('Short event title. Example: "Consultation with Ali Novruzov".'),
+                description: z.string().optional().describe('Optional longer notes shown inside the event.'),
+                start: z.string().describe('ISO datetime with timezone offset, e.g. "2026-07-10T14:00:00+04:00".'),
+                end: z.string().describe('ISO datetime with timezone offset. Typically 30–60 min after start.'),
+                timezone: z.string().optional().describe('IANA timezone, e.g. "Asia/Baku". Optional if start/end already carry offsets.'),
+                attendeeEmails: z.array(z.string()).optional().describe('Optional array of guest emails. Sends them a Google Calendar invite.'),
+            }),
+            async ({ summary, description, start, end, timezone, attendeeEmails }) => {
+                try {
+                    const ev = await (await svc()).createEvent(workspaceId, {
+                        summary, description, start, end, timezone,
+                        attendees: attendeeEmails,
+                    });
+                    return { success: true, event: ev };
+                } catch (e: any) { return { success: false, error: humanErr(e) }; }
+            }
+        ),
+        cancelCalendarEvent: makeTool(
+            'Cancel (delete) a calendar event by its id. The id comes from listCalendarEvents or createCalendarEvent.',
+            z.object({
+                eventId: z.string().describe('The event id previously returned by listCalendarEvents or createCalendarEvent.'),
+            }),
+            async ({ eventId }) => {
+                try {
+                    await (await svc()).deleteEvent(workspaceId, eventId);
+                    return { success: true };
+                } catch (e: any) { return { success: false, error: humanErr(e) }; }
+            }
+        ),
+    };
+}
+
 function buildSelfPauseTool(workspaceId: string, userId: string, contactPhone: string) {
     return {
         pauseAgent: makeTool(
@@ -1516,6 +1574,7 @@ export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     reminder: 'Reminder: when the latest user turn carries [REMINDER_TURN: customer silent for Xh], write ONE short warm follow-up based on history. No restart, no verbatim repeat, no apology for writing again.',
     live_operator: 'Live operator: listOperators, then askOperator({operatorId, question}). System delivers the reply — write a short holding line after asking.',
     polls: 'Polls: sendPoll({name, options, multi?}) sends an interactive choice question — the poll itself IS the question, so write NO chat text in the same turn (no greeting before or after, the customer sees both at once otherwise). After the customer taps, their pick arrives as the next user turn with the option name as content; treat that as their answer and move on. NEVER re-send the same poll just because you saw a previous one; if the answer is in history, use it.',
+    google_calendar: 'Google Calendar: listCalendarEvents to check availability before proposing a slot, createCalendarEvent to book once the customer confirms date+time+attendee email. Time values must be full ISO strings with timezone (e.g. 2026-07-10T14:00:00+04:00). Always echo the confirmed slot back to the customer in their own words after createCalendarEvent succeeds. cancelCalendarEvent removes a booking by id.',
 };
 
 // Owner-supplied skill prompts are APPENDED to the built-in usage rules,
@@ -1605,6 +1664,11 @@ export function buildToolsForSkills(
             tools = { ...tools, ...buildPollsTool(instanceId, remoteJid) };
             prompts.push(resolveSkillPrompt('polls', skillPrompts));
         }
+    }
+
+    if (skills.includes('google_calendar') && workspaceId) {
+        tools = { ...tools, ...buildGoogleCalendarTools(workspaceId) };
+        prompts.push(resolveSkillPrompt('google_calendar', skillPrompts));
     }
 
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };

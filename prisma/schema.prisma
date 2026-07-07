@@ -49,6 +49,7 @@ model Workspace {
   customTables      CustomTable[]
   clients           Client[]
   campaigns         Campaign[]
+  googleCalendar    GoogleCalendarConnection?
   instagramAccounts InstagramAccount[]
   automations       Automation[]
   userFields        UserField[]
@@ -1274,6 +1275,24 @@ model AutomationWaitState {
 
   @@unique([channel, contactId])
   @@index([expiresAt])
+}
+
+// Per-workspace Google Calendar connection. Populated after the OAuth
+// flow completes; the refreshToken is long-lived and exchanged for a
+// short-lived access token on every calendar API call. One connection
+// per workspace — pick one calendar (default `primary`) as the target
+// for the AI agent's schedule/book skill.
+model GoogleCalendarConnection {
+  id            String   @id @default(uuid())
+  workspaceId   String   @unique
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectedById String   // user who ran the OAuth flow (audit trail)
+  email         String   // Google account email the tokens belong to
+  refreshToken  String   @db.Text
+  calendarId    String   @default("primary")
+  scopes        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 // Cached profile of a person who messaged an Instagram business account

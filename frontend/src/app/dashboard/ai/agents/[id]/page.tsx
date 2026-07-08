@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save, Check } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save, Check, Plug } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -32,6 +32,21 @@ type ActivityItem = {
     toolCalls: ActivityToolCall[];
     durationMs: number;
 };
+
+// Inline Google Calendar brand logo. Uses Google's four brand colors
+// so the connector card is instantly recognisable — the "Google
+// Calendar" label alone reads generic, the mark makes it obvious.
+function GoogleCalendarLogo({ className = "" }: { className?: string }) {
+    return (
+        <svg viewBox="0 0 24 24" className={`w-5 h-5 flex-shrink-0 ${className}`} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="19" height="19" rx="2.5" fill="#ffffff" stroke="#dadce0" strokeWidth="0.5" />
+            {/* Colored corner ribbon */}
+            <path d="M2.5 5a2.5 2.5 0 0 1 2.5-2.5h14a2.5 2.5 0 0 1 2.5 2.5v1.75H2.5V5z" fill="#4285F4" />
+            {/* 31 numeral, Google-blue */}
+            <text x="12" y="17.6" fontFamily="'Google Sans','Roboto',Arial,sans-serif" fontSize="9" fontWeight="700" fill="#4285F4" textAnchor="middle">31</text>
+        </svg>
+    );
+}
 
 // Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts.
 // Each entry is the BARE tool-usage rule — any prompt the owner writes
@@ -1828,15 +1843,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                             </h3>
                             <p className="text-sm text-muted-foreground mb-3">Enable capabilities for this agent. Each enabled skill opens its own configuration panel below.</p>
                             <div className="space-y-3">
-                                {[
+                                {([
                                     { id: 'crm', name: 'CRM Management', desc: 'Create/update clients, track statuses and tags' },
                                     { id: 'user_fields', name: 'User Fields', desc: 'Read and write custom fields you defined on the Contacts page (age, city, purpose, …)' },
                                     { id: 'tables', name: 'Data Tables', desc: 'Query and search custom data tables' },
                                     { id: 'http', name: 'HTTP API Requests', desc: 'Call external APIs (GET/POST/etc) with custom headers and body' },
                                     { id: 'live_operator', name: 'Live Operators', desc: 'Agent can ask human teammates over WhatsApp for things only they know (pricing, approvals). Replies route back to the customer automatically.' },
                                     { id: 'polls', name: 'Polls', desc: 'Send interactive WhatsApp polls (2–12 options) so the customer can tap a choice instead of typing.' },
-                                    { id: 'google_calendar', name: 'Google Calendar', desc: 'Agent can list events, check availability, and book meetings on the workspace\'s connected Google Calendar.' },
-                                ].map(skill => {
+                                    { id: 'google_calendar', name: 'Google Calendar', desc: 'Agent can list events, check availability, and book meetings on the workspace\'s connected Google Calendar.', brand: 'google-calendar', isConnector: true },
+                                ] as { id: string; name: string; desc: string; brand?: string; isConnector?: boolean }[]).map(skill => {
                                     const enabled = skills.includes(skill.id);
                                     const expanded = expandedSkills.has(skill.id);
                                     const promptVal = skillPrompts[skill.id] ?? '';
@@ -1853,12 +1868,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                 <input type="checkbox" checked={enabled}
                                                     onChange={() => toggleSkill(skill.id)}
                                                     className="w-4 h-4 accent-primary rounded cursor-pointer" />
+                                                {skill.brand === 'google-calendar' && <GoogleCalendarLogo />}
                                                 <button type="button"
                                                     onClick={() => enabled && toggleSkillExpand(skill.id)}
                                                     className={`flex-1 text-left ${enabled ? 'cursor-pointer' : 'cursor-default'}`}
                                                     disabled={!enabled}>
                                                     <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
                                                         {skill.name}
+                                                        {skill.isConnector && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-md px-1.5 py-0.5 uppercase tracking-wider">
+                                                                <Plug className="w-2.5 h-2.5" /> Connector
+                                                            </span>
+                                                        )}
                                                         {enabled && summaryChip && (
                                                             <span className="text-[10px] font-normal bg-secondary/60 text-muted-foreground border border-border rounded-md px-1.5 py-0.5">
                                                                 {summaryChip}
@@ -2302,30 +2323,36 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                                                     <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking connection…
                                                                 </div>
                                                             ) : googleCalendarStatus.connected ? (
-                                                                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 space-y-1">
-                                                                    <div className="text-xs font-medium text-emerald-300 flex items-center gap-1.5">
-                                                                        <Check className="w-3.5 h-3.5" /> Connected
+                                                                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 flex items-start gap-3">
+                                                                    <GoogleCalendarLogo className="!w-7 !h-7 mt-0.5" />
+                                                                    <div className="flex-1 min-w-0 space-y-1">
+                                                                        <div className="text-xs font-medium text-emerald-300 flex items-center gap-1.5">
+                                                                            <Check className="w-3.5 h-3.5" /> Google Calendar connected
+                                                                        </div>
+                                                                        <div className="text-[11px] text-muted-foreground truncate">
+                                                                            Account: <span className="font-mono text-foreground/80">{googleCalendarStatus.email}</span>
+                                                                            {" · "}Calendar: <span className="font-mono text-foreground/80">{googleCalendarStatus.calendarId || 'primary'}</span>
+                                                                        </div>
+                                                                        <a href="/dashboard/connectors" className="inline-block text-[11px] text-primary hover:underline">
+                                                                            Manage in Connectors →
+                                                                        </a>
                                                                     </div>
-                                                                    <div className="text-[11px] text-muted-foreground">
-                                                                        Account: <span className="font-mono text-foreground/80">{googleCalendarStatus.email}</span>
-                                                                        {" · "}Calendar: <span className="font-mono text-foreground/80">{googleCalendarStatus.calendarId || 'primary'}</span>
-                                                                    </div>
-                                                                    <a href="/dashboard/connectors" className="inline-block text-[11px] text-primary hover:underline">
-                                                                        Manage in Connectors →
-                                                                    </a>
                                                                 </div>
                                                             ) : (
-                                                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
-                                                                    <div className="text-xs font-medium text-amber-300">
-                                                                        No Google Calendar connected to this workspace yet.
+                                                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-3">
+                                                                    <GoogleCalendarLogo className="!w-7 !h-7 mt-0.5" />
+                                                                    <div className="flex-1 min-w-0 space-y-2">
+                                                                        <div className="text-xs font-medium text-amber-300">
+                                                                            No Google Calendar connected to this workspace yet.
+                                                                        </div>
+                                                                        <p className="text-[11px] text-muted-foreground">
+                                                                            The agent can't call any calendar tool until the workspace owner links a Google account. One connection covers every agent with this skill on.
+                                                                        </p>
+                                                                        <a href="/dashboard/connectors"
+                                                                            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                                                                            Connect Google Calendar →
+                                                                        </a>
                                                                     </div>
-                                                                    <p className="text-[11px] text-muted-foreground">
-                                                                        The agent can't call any calendar tool until the workspace owner links a Google account. One connection covers every agent with this skill on.
-                                                                    </p>
-                                                                    <a href="/dashboard/connectors"
-                                                                        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                                                                        Connect Google Calendar →
-                                                                    </a>
                                                                 </div>
                                                             )}
                                                         </div>

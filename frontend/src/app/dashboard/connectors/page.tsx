@@ -2,8 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Blocks, Calendar, Check, Loader2, Unplug, X, ChevronDown } from "lucide-react";
+import { Blocks, Check, Loader2, Unplug, X, ChevronDown } from "lucide-react";
 import api from "@/lib/api";
+
+function GoogleCalendarLogo({ className = "" }: { className?: string }) {
+    return (
+        <svg viewBox="0 0 24 24" className={`w-6 h-6 flex-shrink-0 ${className}`} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="19" height="19" rx="2.5" fill="#ffffff" stroke="#dadce0" strokeWidth="0.5" />
+            <path d="M2.5 5a2.5 2.5 0 0 1 2.5-2.5h14a2.5 2.5 0 0 1 2.5 2.5v1.75H2.5V5z" fill="#4285F4" />
+            <text x="12" y="17.6" fontFamily="'Google Sans','Roboto',Arial,sans-serif" fontSize="9" fontWeight="700" fill="#4285F4" textAnchor="middle">31</text>
+        </svg>
+    );
+}
 
 type CalendarItem = { id: string; summary: string; primary?: boolean };
 type GoogleStatus = {
@@ -139,8 +149,8 @@ export default function ConnectorsPage() {
                 <div className="grid gap-4">
                     <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
                         <div className="flex items-start gap-4">
-                            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 flex-shrink-0">
-                                <Calendar className="w-6 h-6" />
+                            <div className="p-2.5 rounded-xl bg-white/95 flex-shrink-0 shadow-sm">
+                                <GoogleCalendarLogo className="!w-8 !h-8" />
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">

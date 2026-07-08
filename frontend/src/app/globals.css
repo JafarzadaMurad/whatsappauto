@@ -152,3 +152,34 @@
     scrollbar-color: hsl(240 3.7% 22%) transparent;
   }
 }
+
+/* Documentation prose — sensible spacing for the plain <p>/<ul>/<ol>
+   tags inside DocsSection/DocsSubSection bodies. Kept scoped to
+   .doc-prose so it doesn't touch dashboard content. */
+.doc-prose p {
+  margin: 0 0 1rem 0;
+  line-height: 1.7;
+  color: hsl(0 0% 85%);
+}
+.doc-prose ul,
+.doc-prose ol {
+  margin: 0 0 1rem 0;
+  padding-left: 1.5rem;
+}
+.doc-prose ul { list-style: disc; }
+.doc-prose ol { list-style: decimal; }
+.doc-prose li {
+  margin: 0.4rem 0;
+  line-height: 1.65;
+  color: hsl(0 0% 85%);
+}
+.doc-prose li > ul,
+.doc-prose li > ol {
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.doc-prose strong { color: hsl(0 0% 98%); font-weight: 600; }
+.doc-prose h4 { color: hsl(0 0% 96%); font-weight: 600; font-size: 1rem; margin-top: 1.4rem; margin-bottom: 0.6rem; }
+.doc-prose a { color: hsl(47 95% 60%); }
+.doc-prose a:hover { text-decoration: underline; }
+

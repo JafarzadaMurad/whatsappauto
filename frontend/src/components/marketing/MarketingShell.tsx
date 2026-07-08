@@ -32,8 +32,7 @@ function MarketingHeader() {
                 <nav className="hidden md:flex items-center gap-8 text-sm">
                     <Link href="/features" className="text-muted-foreground hover:text-foreground transition-colors">Features</Link>
                     <Link href="/pricing" className="text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
-                    <Link href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">Privacy</Link>
-                    <Link href="/terms" className="text-muted-foreground hover:text-foreground transition-colors">Terms</Link>
+                    <Link href="/docs" className="text-muted-foreground hover:text-foreground transition-colors">Docs</Link>
                 </nav>
 
                 <div className="flex items-center gap-2">
@@ -74,6 +73,7 @@ function MarketingFooter() {
                 <FooterCol title="Product" links={[
                     { label: "Features", href: "/features" },
                     { label: "Pricing", href: "/pricing" },
+                    { label: "Documentation", href: "/docs" },
                     { label: "Log in", href: "/login" },
                     { label: "Sign up", href: "/register" },
                 ]} />

@@ -6,13 +6,16 @@ const updateUserSchema = z.object({
     role: z.enum(['USER', 'ADMIN']).optional(),
     planId: z.string().nullable().optional(),
     subscriptionStatus: z.enum(['none', 'trialing', 'active', 'past_due', 'canceled']).optional(),
-    subscriptionEndsAt: z.string().datetime().nullable().optional()
+    subscriptionEndsAt: z.string().datetime().nullable().optional(),
+    hiddenSections: z.array(z.string().max(60)).optional(),
+    lockedSections: z.array(z.string().max(60)).optional(),
 });
 
 const SAFE_USER_SELECT = {
     id: true, email: true, name: true, role: true,
     planId: true, subscriptionStatus: true, subscriptionEndsAt: true,
     stripeCustomerId: true,
+    hiddenSections: true, lockedSections: true,
     createdAt: true, updatedAt: true,
     plan: { select: { id: true, name: true, price: true, currency: true, interval: true } }
 } as const;
@@ -42,6 +45,8 @@ export class AdminController {
             if (data.planId !== undefined) updateData.planId = data.planId;
             if (data.subscriptionStatus !== undefined) updateData.subscriptionStatus = data.subscriptionStatus;
             if (data.subscriptionEndsAt !== undefined) updateData.subscriptionEndsAt = data.subscriptionEndsAt ? new Date(data.subscriptionEndsAt) : null;
+            if (data.hiddenSections !== undefined) updateData.hiddenSections = data.hiddenSections;
+            if (data.lockedSections !== undefined) updateData.lockedSections = data.lockedSections;
 
             const user = await prisma.user.update({
                 where: { id },

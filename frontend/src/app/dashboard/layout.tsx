@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -105,7 +105,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             icon: Users,
             isGroup: true,
             children: [
-                { name: 'Contacts', href: '/dashboard/contacts', icon: Users, section: 'contacts' }
+                { name: 'Contacts', href: '/dashboard/contacts', icon: Users, section: 'contacts' },
+                { name: 'Deals', href: '/dashboard/crm/deals', icon: Briefcase, section: 'deals' },
             ]
         },
         {
@@ -137,6 +138,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'Users', href: '/dashboard/admin/users', icon: Users },
+                { name: 'User Access', href: '/dashboard/admin/user-access', icon: UserCog },
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
                 { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },
                 { name: 'AI Models', href: '/dashboard/admin/ai-models', icon: Bot },
@@ -182,16 +184,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="p-2 flex-1 overflow-y-auto overflow-x-hidden">
                     <nav className="space-y-1">
                         {navLinks.map((item: any) => {
+                            // Admin-managed per-user visibility overrides.
+                            // `hiddenSections` removes the leaf entirely;
+                            // `lockedSections` still renders it with a lock
+                            // icon (routes 403 server-side). Admins bypass.
+                            const hidden = new Set((user?.hiddenSections || []) as string[]);
+                            const locked = new Set((user?.lockedSections || []) as string[]);
+                            const isAdmin = user?.role === 'ADMIN';
+                            const isHidden = (section?: string) => !isAdmin && !!section && hidden.has(section);
+                            const isLocked = (section?: string) => !isAdmin && !!section && locked.has(section);
+
                             // Hide leaf entries whose section the active member can't view.
                             // Group entries are hidden when every child is hidden.
                             // The Admin group (no section keys) is left untouched since
                             // it's already gated on User.role === 'ADMIN'.
                             if (!item.isGroup && item.section && !canSection(item.section)) return null;
+                            if (!item.isGroup && isHidden(item.section)) return null;
                             if (item.isGroup && item.children) {
-                                const visibleChildren = item.children.filter((c: any) => !c.section || canSection(c.section));
+                                const visibleChildren = item.children.filter((c: any) => (!c.section || canSection(c.section)) && !isHidden(c.section));
                                 if (visibleChildren.length === 0 && item.name !== 'Admin') return null;
                                 item = { ...item, children: visibleChildren };
                             }
+                            // Add lock hint to leaf/child items whose section is locked.
+                            const itemLocked = !item.isGroup && isLocked(item.section);
                             if (item.isGroup) {
                                 const expanded = expandedGroups[item.name] ?? true;
                                 const setExpanded = (v: boolean) => setExpandedGroups(p => ({ ...p, [item.name]: v }));
@@ -244,6 +259,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                                     {item.children?.map((child: any) => {
                                                         const isChildActive = pathname.startsWith(child.href);
                                                         const badge = (child as any).badge as number | undefined;
+                                                        const childLocked = isLocked(child.section);
+                                                        if (childLocked) {
+                                                            return (
+                                                                <div key={child.name} title="Locked by admin"
+                                                                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-sm text-muted-foreground/50 cursor-not-allowed">
+                                                                    <child.icon className="w-4 h-4 flex-shrink-0" />
+                                                                    <span className="truncate flex-1">{child.name}</span>
+                                                                    <Lock className="w-3 h-3 flex-shrink-0 text-amber-400/80" />
+                                                                </div>
+                                                            );
+                                                        }
                                                         return (
                                                             <Link
                                                                 key={child.name}
@@ -284,6 +310,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         </a>
                                     );
                                 }
+                                if (itemLocked) {
+                                    return (
+                                        <div key={item.name} title={`${item.name} — locked by admin`}
+                                            className="relative flex justify-center p-2.5 rounded-xl text-muted-foreground/50 cursor-not-allowed">
+                                            <Icon className="w-5 h-5" />
+                                            <Lock className="absolute -top-0.5 -right-0.5 w-3 h-3 text-amber-400/80" />
+                                        </div>
+                                    );
+                                }
                                 return (
                                     <Link key={item.name} href={item.href!} title={item.name}
                                         className={`flex justify-center p-2.5 rounded-xl transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
@@ -301,6 +336,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                         <span className="truncate flex-1">{item.name}</span>
                                         <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />
                                     </a>
+                                );
+                            }
+
+                            if (itemLocked) {
+                                return (
+                                    <div key={item.name} title="Locked by admin"
+                                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-muted-foreground/50 cursor-not-allowed">
+                                        <Icon className="w-5 h-5 flex-shrink-0" />
+                                        <span className="truncate flex-1">{item.name}</span>
+                                        <Lock className="w-3.5 h-3.5 flex-shrink-0 text-amber-400/80" />
+                                    </div>
                                 );
                             }
 

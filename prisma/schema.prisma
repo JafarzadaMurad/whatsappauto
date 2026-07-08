@@ -50,6 +50,8 @@ model Workspace {
   clients           Client[]
   campaigns         Campaign[]
   googleCalendar    GoogleCalendarConnection?
+  dealPipelines     DealPipeline[]
+  deals             Deal[]
   instagramAccounts InstagramAccount[]
   automations       Automation[]
   userFields        UserField[]
@@ -185,6 +187,14 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Admin-managed per-user visibility overrides. Each entry is a
+  // sidebar `section` key ("analytics", "campaigns", …). Entries listed
+  // in `hiddenSections` are removed from the sidebar entirely; entries
+  // in `lockedSections` still render but with a lock icon and the
+  // routes 403 on the server. Empty arrays = default full access.
+  hiddenSections String[] @default([])
+  lockedSections String[] @default([])
 
   // Subscription
   planId               String?
@@ -882,6 +892,7 @@ model Client {
   // context on every turn; one-shots are consumed on the next reply.
   operatorDirectives  OperatorDirective[]
   agentChatMessages   AgentChatMessage[]
+  deals               Deal[]
 
   // Click-to-WhatsApp first-touch attribution: the ad metadata
   // captured the first time we saw this contact arrive via an
@@ -1338,3 +1349,97 @@ model DashboardWidget {
 
   @@index([workspaceId, position])
 }
+
+// ─── Deals / Sales Pipeline ────────────────────────────────────────
+// A pipeline is a Kanban board (Sales, Onboarding, Support…). Stages
+// are its columns (New, Qualified, Won). Deals are the cards moving
+// through them. Each deal can be linked to a CRM Client so the whole
+// funnel view stays connected to actual conversations.
+model DealPipeline {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?    @db.Text
+  color       String?    // hex or Tailwind hue for UI accents
+  currency    String     @default("USD")
+  isDefault   Boolean    @default(false)  // shown first / auto-picked
+  order       Int        @default(0)      // sidebar sort order
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  stages      DealStage[]
+  deals       Deal[]
+
+  @@index([workspaceId, order])
+}
+
+model DealStage {
+  id          String     @id @default(uuid())
+  pipelineId  String
+  pipeline    DealPipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  name        String
+  order       Int        @default(0)      // column order left → right
+  color       String?    // header tint (Tailwind hue: violet, emerald, …)
+  // Terminal-state stages: `isWon` marks success columns (revenue
+  // counted), `isLost` marks failure columns. Non-terminal stages
+  // sit in the middle of the funnel.
+  isWon       Boolean    @default(false)
+  isLost      Boolean    @default(false)
+  // Probability heuristic (0-100). Used for a weighted forecast sum
+  // shown at the top of the pipeline view.
+  probability Int?
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  deals       Deal[]
+
+  @@index([pipelineId, order])
+}
+
+model Deal {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  pipelineId  String
+  pipeline    DealPipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stageId     String
+  stage       DealStage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  // Linked CRM contact — nullable so operators can jot down a deal
+  // without a matching contact yet (e.g. lead came in over a call).
+  clientId    String?
+  client      Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  title           String
+  description     String?    @db.Text
+  value           Decimal?   @db.Decimal(14, 2)  // monetary value
+  expectedCloseAt DateTime?
+
+  // Drag-and-drop position within the current stage's column. Reordered
+  // whenever a deal is moved or dropped inside the same column.
+  order       Int        @default(0)
+  // Optional assignee (workspace member). Kept as a plain userId so we
+  // don't need another join table just for this.
+  assignedUserId String?
+
+  // Free-form tags — Kanban chips.
+  tags        String[]  @default([])
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([workspaceId, pipelineId])
+  @@index([stageId, order])
+  @@index([clientId])
+}
+

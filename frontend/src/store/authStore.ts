@@ -7,6 +7,11 @@ interface User {
     email: string;
     role?: string;
     emailVerified?: boolean;
+    // Admin-managed per-user visibility. Section keys listed in
+    // hiddenSections are removed from the sidebar entirely; entries in
+    // lockedSections still render with a lock icon and gated route.
+    hiddenSections?: string[];
+    lockedSections?: string[];
 }
 
 interface AuthState {

@@ -227,6 +227,10 @@ model User {
   // Workspaces
   ownedWorkspaces      Workspace[]       @relation("WorkspaceOwner")
   workspaceMemberships WorkspaceMember[]
+
+  // Deals — reverse relations for the pipelines and cards this user created
+  dealPipelines DealPipeline[]
+  deals         Deal[]
 }
 
 model Instance {

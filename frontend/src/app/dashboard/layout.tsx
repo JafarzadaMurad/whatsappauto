@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -122,6 +122,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         },
         { name: 'Automations', href: '/dashboard/automations', icon: Workflow, section: 'automations' },
         { name: 'Connectors', href: '/dashboard/connectors', icon: Blocks },
+        // Opens the public docs site in a new tab so operators can keep
+        // their workspace open while reading. `external` flag tells the
+        // renderer below to use <a target="_blank"> instead of <Link>.
+        { name: 'Docs', href: '/docs', icon: BookOpen, external: true },
         { name: 'Campaigns', href: '/dashboard/campaigns', icon: Send, section: 'campaigns' },
         { name: 'API Keys', href: '/dashboard/api-keys', icon: Key, section: 'apikeys' },
         { name: 'MCP', href: '/dashboard/mcp', icon: Plug, section: 'mcp' },
@@ -265,13 +269,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                             const isActive = pathname === item.href;
                             const Icon = item.icon;
+                            // External items open in a new tab so operators
+                            // can flip between the docs and their workspace
+                            // without losing context.
+                            const external = (item as any).external === true;
 
                             if (collapsed) {
+                                if (external) {
+                                    return (
+                                        <a key={item.name} href={item.href!} title={item.name}
+                                            target="_blank" rel="noreferrer"
+                                            className="flex justify-center p-2.5 rounded-xl transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                                            <Icon className="w-5 h-5" />
+                                        </a>
+                                    );
+                                }
                                 return (
                                     <Link key={item.name} href={item.href!} title={item.name}
                                         className={`flex justify-center p-2.5 rounded-xl transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}`}>
                                         <Icon className="w-5 h-5" />
                                     </Link>
+                                );
+                            }
+
+                            if (external) {
+                                return (
+                                    <a key={item.name} href={item.href!}
+                                        target="_blank" rel="noreferrer"
+                                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                                        <Icon className="w-5 h-5 flex-shrink-0" />
+                                        <span className="truncate flex-1">{item.name}</span>
+                                        <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />
+                                    </a>
                                 );
                             }
 

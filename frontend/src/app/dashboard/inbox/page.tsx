@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { Inbox, Loader2, MessageSquare, MessageCircle, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap, ExternalLink, Trash2 } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, MessageCircle, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap, ExternalLink, Trash2, Briefcase } from "lucide-react";
 import api from "@/lib/api";
 import io, { Socket } from "socket.io-client";
 import { usePermChatWrite } from "@/store/workspaceStore";
@@ -138,6 +138,10 @@ export default function InboxPage() {
     // "Talk to agent" side panel — operator-typed directives that
     // steer how the agent handles the open conversation.
     const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+
+    // "Add to deal" modal — lets the operator drop the current contact
+    // into any CRM pipeline without leaving the inbox.
+    const [addToDealOpen, setAddToDealOpen] = useState(false);
 
     // Pagination state for the open chat
     const [hasMore, setHasMore] = useState(false);
@@ -589,6 +593,12 @@ export default function InboxPage() {
                                         <span className="hidden sm:inline">{agentPaused ? 'Resume agent' : 'Pause agent'}</span>
                                     </button>
                                 )}
+                                <button onClick={() => setAddToDealOpen(true)}
+                                    title="Add this contact to a CRM pipeline"
+                                    className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 bg-secondary/40 text-muted-foreground border-border hover:bg-secondary/70 hover:text-foreground">
+                                    <Briefcase className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Add to deal</span>
+                                </button>
                                 <button onClick={() => setAgentPanelOpen(v => !v)}
                                     title="Talk to the AI agent handling this chat"
                                     className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 ${agentPanelOpen
@@ -655,8 +665,158 @@ export default function InboxPage() {
                         onClose={() => setAgentPanelOpen(false)}
                     />
                 )}
+                {selected && addToDealOpen && (
+                    <AddToDealModal
+                        conversation={selected}
+                        onClose={() => setAddToDealOpen(false)}
+                    />
+                )}
             </div>
             )}
+        </div>
+    );
+}
+
+// ─── Add-to-deal modal (compact) ─────────────────────────────────
+function AddToDealModal({ conversation, onClose }: {
+    conversation: { accountId: string; phone: string; name: string | null; channel: string; remoteJid: string };
+    onClose: () => void;
+}) {
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [pipelines, setPipelines] = useState<any[]>([]);
+    const [pipelineId, setPipelineId] = useState<string>('');
+    const [stageId, setStageId] = useState<string>('');
+    const [title, setTitle] = useState<string>('');
+    const [value, setValue] = useState<string>('');
+    const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const r = await api.get('/crm/pipelines');
+                if (r.data?.success) {
+                    const list = r.data.pipelines;
+                    setPipelines(list);
+                    const preferred = list.find((p: any) => p.isDefault) || list[0];
+                    if (preferred) {
+                        setPipelineId(preferred.id);
+                        setStageId(preferred.stages[0]?.id || '');
+                    }
+                }
+                // Default title uses the contact name / phone.
+                setTitle(`${conversation.name || conversation.phone} — new deal`);
+            } catch (e: any) {
+                setError(e.response?.data?.message || e.message);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, [conversation.accountId, conversation.phone, conversation.name]);
+
+    const activePipeline = pipelines.find(p => p.id === pipelineId);
+
+    const submit = async () => {
+        if (!title.trim() || !pipelineId) return;
+        setSaving(true);
+        setError(null);
+        try {
+            // Look up the CRM client id for this conversation.
+            const cRes = await api.get(`/directives/by-contact?accountId=${conversation.accountId}&phone=${conversation.phone}`);
+            const clientId: string | null = cRes.data?.clientId || null;
+
+            const payload: any = {
+                pipelineId,
+                stageId: stageId || undefined,
+                title: title.trim(),
+                value: value ? Number(value) : null,
+                clientId,
+            };
+            const r = await api.post('/crm/deals', payload);
+            if (r.data?.success) {
+                setSuccess(true);
+                setTimeout(onClose, 900);
+            }
+        } catch (e: any) {
+            setError(e.response?.data?.message || 'Could not create deal.');
+        } finally { setSaving(false); }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                        <Briefcase className="w-5 h-5 text-primary" /> Add to deal
+                    </h2>
+                    <button onClick={onClose}><XIcon className="w-4 h-4 text-muted-foreground" /></button>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/30 p-3 mb-4 flex items-center gap-2 text-sm">
+                    {conversation.channel === 'instagram'
+                        ? <Camera className="w-4 h-4 text-pink-400" />
+                        : <MessageSquare className="w-4 h-4 text-emerald-400" />}
+                    <span className="font-medium">{conversation.name || conversation.phone}</span>
+                    <span className="text-[10px] text-muted-foreground/60 font-mono ml-auto">{conversation.phone}</span>
+                </div>
+
+                {loading ? (
+                    <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                ) : pipelines.length === 0 ? (
+                    <div className="text-center py-6 text-sm text-muted-foreground">
+                        No pipelines yet. Create one first at{' '}
+                        <a href="/dashboard/crm/deals" target="_blank" rel="noreferrer" className="text-primary hover:underline">Deals</a>.
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-xs text-muted-foreground">Pipeline</label>
+                            <select value={pipelineId} onChange={e => {
+                                setPipelineId(e.target.value);
+                                const p = pipelines.find(x => x.id === e.target.value);
+                                setStageId(p?.stages[0]?.id || '');
+                            }}
+                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm">
+                                {pipelines.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted-foreground">Stage</label>
+                            <select value={stageId} onChange={e => setStageId(e.target.value)}
+                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm">
+                                {activePipeline?.stages.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted-foreground">Deal title</label>
+                            <input value={title} onChange={e => setTitle(e.target.value)}
+                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted-foreground">Value ({activePipeline?.currency || 'USD'}) — optional</label>
+                            <input value={value} onChange={e => setValue(e.target.value.replace(/[^0-9.]/g, ''))}
+                                placeholder="0"
+                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                    </div>
+                )}
+
+                {error && <div className="mt-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded-lg">{error}</div>}
+                {success && (
+                    <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs px-3 py-2 rounded-lg flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5" /> Deal created — closing…
+                    </div>
+                )}
+
+                <div className="flex justify-end gap-2 mt-5">
+                    <button onClick={onClose} className="text-xs px-3 py-2 rounded-lg border border-border">Cancel</button>
+                    <button onClick={submit} disabled={saving || success || pipelines.length === 0 || !title.trim() || !pipelineId}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                        {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Briefcase className="w-3.5 h-3.5" />}
+                        Create deal
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

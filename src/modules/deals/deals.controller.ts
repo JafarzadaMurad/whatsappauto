@@ -150,6 +150,43 @@ export const updatePipeline = async (req: Request, res: Response) => {
     }
 };
 
+export const duplicatePipeline = async (req: Request, res: Response) => {
+    try {
+        const ws = getWs(req);
+        const userId = getUserId(req);
+        if (!ws || !userId) return res.status(400).json({ success: false, message: 'context missing' });
+        const id = req.params.id as string;
+        const source = await prisma.dealPipeline.findFirst({
+            where: { id, workspaceId: ws },
+            include: { stages: { orderBy: { order: 'asc' } } },
+        });
+        if (!source) return res.status(404).json({ success: false, message: 'pipeline not found' });
+
+        const existingCount = await prisma.dealPipeline.count({ where: { workspaceId: ws } });
+        const copy = await prisma.dealPipeline.create({
+            data: {
+                userId, workspaceId: ws,
+                name: `${source.name} (copy)`,
+                description: source.description,
+                color: source.color,
+                currency: source.currency,
+                isDefault: false,
+                order: existingCount,
+                stages: {
+                    create: source.stages.map(s => ({
+                        name: s.name, color: s.color, order: s.order,
+                        isWon: s.isWon, isLost: s.isLost, probability: s.probability,
+                    })),
+                },
+            },
+            include: { stages: { orderBy: { order: 'asc' } } },
+        });
+        return res.status(201).json({ success: true, pipeline: copy });
+    } catch (e: any) {
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
+
 export const deletePipeline = async (req: Request, res: Response) => {
     try {
         const ws = getWs(req);

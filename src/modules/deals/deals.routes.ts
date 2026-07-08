@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import {
-    listPipelines, createPipeline, updatePipeline, deletePipeline,
+    listPipelines, createPipeline, updatePipeline, duplicatePipeline, deletePipeline,
     createStage, updateStage, reorderStages, deleteStage,
     listDeals, createDeal, updateDeal, moveDeals, deleteDeal,
 } from './deals.controller';
@@ -11,10 +11,11 @@ const router = Router();
 router.use(authMiddleware);
 
 // Pipelines
-router.get('/pipelines',       listPipelines);
-router.post('/pipelines',      createPipeline);
-router.patch('/pipelines/:id', updatePipeline);
-router.delete('/pipelines/:id', deletePipeline);
+router.get('/pipelines',                listPipelines);
+router.post('/pipelines',               createPipeline);
+router.patch('/pipelines/:id',          updatePipeline);
+router.post('/pipelines/:id/duplicate', duplicatePipeline);
+router.delete('/pipelines/:id',         deletePipeline);
 
 // Stages
 router.post('/pipelines/:pipelineId/stages',                  createStage);

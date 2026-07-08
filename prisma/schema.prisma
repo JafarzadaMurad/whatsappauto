@@ -451,6 +451,10 @@ model Agent {
   // Default is whisper-1 because it's the most permissive about input
   // formats (webm/ogg/m4a all work).
   whisperModel    String   @default("whisper-1")
+  // IANA timezone used to render {{date}}/{{day}}/{{time}} placeholders
+  // in the system prompt at each turn. Defaults to UTC so a fresh agent
+  // still works; the editor exposes a country/timezone picker.
+  timezone        String   @default("UTC")
   // Sticky routing. isRouter=true marks this agent as a dispatcher —
   // it gets the handoffTo + unassignAgent tools and is allowed to be
   // selected as Instance.routerAgentId. routerDescription is a short

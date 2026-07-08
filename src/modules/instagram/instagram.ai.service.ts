@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
-import { buildToolsForSkills, applyAnthropicCacheControl, extractCacheUsage, type HttpToolTemplate } from '../agent/ai.service';
+import { buildToolsForSkills, applyAnthropicCacheControl, extractCacheUsage, interpolateAgentPrompt, type HttpToolTemplate } from '../agent/ai.service';
 import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
 import { extractIgReferrer } from '../ads/ad-referrer';
@@ -701,7 +701,7 @@ export class InstagramAiService {
             ? 'You are responding to an Instagram Direct Message. Your reply MUST be under 900 characters. If tool output is large, summarize the key items briefly instead of pasting raw JSON.'
             : 'You are responding to an Instagram comment on a post. Your reply MUST be under 900 characters and concise.';
 
-        const systemPrompt = (agent.systemPrompt || 'You are a helpful assistant.') +
+        const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) +
             `\n\n${platformNote}\nContact ID: ${contactId}` +
             skillPrompt +
             directivesBlock;

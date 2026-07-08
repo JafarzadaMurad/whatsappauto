@@ -1563,6 +1563,52 @@ export function buildMemoryTools(agentId: string, remoteJid: string) {
     };
 }
 
+// ─── System-prompt variables ───────────────────────────────────────
+// Interpolates {{channel}}, {{date}}, {{day}}, {{month}}, {{year}},
+// {{time}}, {{datetime}} into the agent's raw system prompt. Called
+// once per model call (not per token), so a slightly heavier
+// Intl.DateTimeFormat here is fine — accuracy matters more than perf.
+export function interpolateAgentPrompt(
+    raw: string,
+    opts: { channel?: 'whatsapp' | 'instagram' | string; timezone?: string; now?: Date }
+): string {
+    if (!raw) return raw;
+    const tz = opts.timezone || 'UTC';
+    const now = opts.now || new Date();
+    const channel = String(opts.channel || '').toLowerCase();
+    const channelLabel = channel === 'whatsapp' ? 'WhatsApp' : channel === 'instagram' ? 'Instagram' : (channel || 'chat');
+    // Build formatters lazily and swallow bad-timezone errors so a
+    // misconfigured picker never breaks the model call.
+    const safeFmt = (opts: Intl.DateTimeFormatOptions): string => {
+        try { return new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: tz }).format(now); }
+        catch { return new Intl.DateTimeFormat('en-GB', opts).format(now); }
+    };
+    const day       = safeFmt({ weekday: 'long' });                    // Wednesday
+    const dayNum    = safeFmt({ day: '2-digit' });                     // 08
+    const monthName = safeFmt({ month: 'long' });                      // July
+    const monthNum  = safeFmt({ month: '2-digit' });                   // 07
+    const year      = safeFmt({ year: 'numeric' });                    // 2026
+    const date      = safeFmt({ day: '2-digit', month: 'long', year: 'numeric' }); // 08 July 2026
+    const iso       = safeFmt({ day: '2-digit', month: '2-digit', year: 'numeric' }).split('/').reverse().join('-'); // yyyy-mm-dd best-effort
+    const time      = safeFmt({ hour: '2-digit', minute: '2-digit', hour12: false }); // 14:30
+    const datetime  = `${date} ${time}`;
+
+    const table: Record<string, string> = {
+        channel: channelLabel,
+        whatsapp: channel === 'whatsapp' ? 'true' : 'false',
+        instagram: channel === 'instagram' ? 'true' : 'false',
+        date, day, day_number: dayNum,
+        month: monthName, month_number: monthNum,
+        year, time, datetime,
+        iso_date: iso,
+        timezone: tz,
+    };
+    return raw.replace(/\{\{\s*([\w]+)\s*\}\}/g, (m, key: string) => {
+        const k = key.toLowerCase();
+        return k in table ? table[k] : m;
+    });
+}
+
 // ─── Skill Registry ───
 export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     tables: 'Tables: call listTables first, then searchTable or getTableRows.',
@@ -2121,7 +2167,9 @@ export class AiService {
                 ? `\n\n📌 OPERATOR DIRECTIVES (live instructions from the human operator handling this conversation — these OVERRIDE any conflicting style or behavior in your base instructions):\n${activeDirectives.map(d => `- ${d.text}`).join('\n')}`
                 : '';
 
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt + routerPrompt + directivesBlock;
+            const rawPrompt = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
+            const interpolated = interpolateAgentPrompt(rawPrompt, { channel: 'whatsapp', timezone: (agent as any).timezone });
+            const systemPrompt = interpolated + contactContext + skillPrompt + routerPrompt + directivesBlock;
 
             // When the operator hit "Run now", inject a synthetic user
             // turn so the model has something to react to even if the
@@ -2389,7 +2437,7 @@ export class AiService {
         );
         const tools = wrapToolsForDryRun(liveTools);
 
-        const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.')
+        const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone })
             + contactContext
             + skillPrompt
             + '\n\n[Test session — your replies and tool calls are visible to the operator. Behave normally.]';
@@ -2500,7 +2548,7 @@ export class AiService {
             content: m.content || '',
         }));
 
-        const baseSystem = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
+        const baseSystem = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone });
         const composePrompt =
             `${baseSystem}\n\n[Live operator handoff — internal note]:\n` +
             `Earlier in this same chat the customer asked: "${request.question}".\n` +
@@ -2621,7 +2669,7 @@ export class AiService {
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, remoteJid, skillPrompts, instanceId, contactName,
             );
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful WhatsApp assistant.') + contactContext + skillPrompt;
+            const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
 
             const result = await generateText({
                 model: aiModel,
@@ -2729,7 +2777,7 @@ export class AiService {
                 skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
                 agent.id, remoteJid, skillPrompts, accountId, contactName,
             );
-            const systemPrompt = (agent.systemPrompt || 'You are a helpful Instagram assistant.') + contactContext + skillPrompt;
+            const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful Instagram assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
 
             const result = await generateText({
                 model: aiModel,

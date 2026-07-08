@@ -48,6 +48,74 @@ function GoogleCalendarLogo({ className = "" }: { className?: string }) {
     );
 }
 
+// ─── Prompt-time helpers ─────────────────────────────────────────────
+// Inserts `token` at the current caret position in `textarea` and
+// returns the updated value. If the textarea isn't focused (or ref is
+// null) the token just gets appended.
+function insertAtCursor(textarea: HTMLTextAreaElement | null, current: string, token: string): string {
+    if (!textarea) return current + token;
+    const start = textarea.selectionStart ?? current.length;
+    const end = textarea.selectionEnd ?? current.length;
+    const next = current.slice(0, start) + token + current.slice(end);
+    // Restore caret after React's re-render commits.
+    requestAnimationFrame(() => {
+        textarea.focus();
+        const pos = start + token.length;
+        textarea.setSelectionRange(pos, pos);
+    });
+    return next;
+}
+
+// Small strip of clickable chips rendered above the system-prompt
+// textarea. Clicking a chip inserts `{{variable}}` at the caret.
+function PromptVariablePalette({ onInsert }: { onInsert: (token: string) => void }) {
+    const vars = [
+        { name: 'channel', label: 'channel' },
+        { name: 'date', label: 'date' },
+        { name: 'day', label: 'day' },
+        { name: 'month', label: 'month' },
+        { name: 'year', label: 'year' },
+        { name: 'time', label: 'time' },
+        { name: 'datetime', label: 'datetime' },
+        { name: 'timezone', label: 'timezone' },
+    ];
+    return (
+        <div className="flex flex-wrap gap-1.5 mt-1 mb-1.5">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70 self-center mr-1">Insert:</span>
+            {vars.map(v => (
+                <button key={v.name} type="button"
+                    onClick={() => onInsert(`{{${v.name}}}`)}
+                    title={`Insert {{${v.name}}}`}
+                    className="inline-flex items-center gap-0.5 text-[11px] font-mono px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-500/40 text-violet-300 hover:bg-violet-500/25">
+                    <span className="opacity-50">{'{{'}</span>{v.label}<span className="opacity-50">{'}}'}</span>
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// Timezone picker rendered inline in the System Prompt header. Uses
+// Intl.supportedValuesOf when available (Node/modern browsers) so we
+// don't ship a huge hardcoded list; falls back to a short common set.
+function TimezonePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    const zones: string[] = (() => {
+        try {
+            const anyIntl: any = Intl as any;
+            if (typeof anyIntl.supportedValuesOf === 'function') {
+                return anyIntl.supportedValuesOf('timeZone') as string[];
+            }
+        } catch { /* ignore */ }
+        return ['UTC', 'Europe/London', 'Europe/Berlin', 'Europe/Moscow', 'Asia/Baku', 'Asia/Istanbul', 'Asia/Dubai', 'Asia/Tehran', 'Asia/Tashkent', 'Asia/Almaty', 'Asia/Tokyo', 'Asia/Kolkata', 'America/New_York', 'America/Los_Angeles'];
+    })();
+    return (
+        <select value={value} onChange={e => onChange(e.target.value)}
+            title="Timezone used to resolve {{date}}, {{day}}, {{time}} in the prompt"
+            className="text-[11px] bg-secondary/60 border border-border rounded-md px-1.5 py-0.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 max-w-[180px]">
+            {zones.map(z => <option key={z} value={z}>{z}</option>)}
+        </select>
+    );
+}
+
 // Mirror of backend DEFAULT_SKILL_PROMPTS in src/modules/agent/ai.service.ts.
 // Each entry is the BARE tool-usage rule — any prompt the owner writes
 // in the skill panel is APPENDED to this, not replacing it.
@@ -391,8 +459,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const [reminderHours, setReminderHours] = useState(24);
     const [promptModalOpen, setPromptModalOpen] = useState(false);
     const [promptInlineRows, setPromptInlineRows] = useState(6);
+    const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const promptModalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const [whisperLanguage, setWhisperLanguage] = useState<string>("");
     const [whisperModel, setWhisperModel] = useState<string>("whisper-1");
+    // IANA timezone (e.g. "Asia/Baku"). Drives the {{date}}, {{time}},
+    // {{day}} placeholders the model sees at run time. Default UTC so
+    // freshly-cloned agents still work; the picker lets owners pin to
+    // their customer base's timezone.
+    const [timezone, setTimezone] = useState<string>("UTC");
     const [isRouter, setIsRouter] = useState(false);
     const [routerDescription, setRouterDescription] = useState("");
     const [routableAgentIds, setRoutableAgentIds] = useState<string[]>([]);
@@ -458,6 +533,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setReminderHours(Number(a.reminderHours) || 24);
                     setWhisperLanguage(a.whisperLanguage || "");
                     setWhisperModel(a.whisperModel || "whisper-1");
+                    setTimezone((a as any).timezone || "UTC");
                     setIsRouter(!!a.isRouter);
                     setRouterDescription(a.routerDescription || "");
                     setRoutableAgentIds((a.routableAgentIds || []) as string[]);
@@ -710,7 +786,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
-                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds,
+                httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, timezone, isRouter, routerDescription: routerDescription || null, routableAgentIds,
             });
             const res = await api.get(`/agents/${id}`);
             if (res.data.success) setAgent(res.data.agent);
@@ -748,7 +824,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     const toggleActive = async () => {
         try {
-            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
+            await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, timezone, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
             setAgent({ ...agent, isActive: !agent.isActive });
         } catch (err) { console.error(err); }
     };
@@ -1512,6 +1588,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
                                 <div className="flex items-center gap-1">
                                     <span className="text-[10px] text-muted-foreground tabular-nums">{systemPrompt.length.toLocaleString()} chars</span>
+                                    <TimezonePicker value={timezone} onChange={setTimezone} />
                                     <button type="button" onClick={() => setPromptInlineRows(r => Math.max(4, r - 4))}
                                         title="Shrink inline editor"
                                         className="p-1 text-muted-foreground hover:text-foreground rounded">
@@ -1529,7 +1606,10 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     </button>
                                 </div>
                             </div>
-                            <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={promptInlineRows}
+                            <PromptVariablePalette
+                                onInsert={(token) => setSystemPrompt(prev => insertAtCursor(promptTextareaRef.current, prev, token))}
+                            />
+                            <textarea ref={promptTextareaRef} value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={promptInlineRows}
                                 className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm resize-y" />
                         </div>
 
@@ -1557,7 +1637,12 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                             </button>
                                         </div>
                                     </div>
-                                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
+                                    <div className="px-5 pt-3 border-b border-border/40">
+                                        <PromptVariablePalette
+                                            onInsert={(token) => setSystemPrompt(prev => insertAtCursor(promptModalTextareaRef.current, prev, token))}
+                                        />
+                                    </div>
+                                    <textarea ref={promptModalTextareaRef} value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
                                         autoFocus spellCheck={false}
                                         className="flex-1 w-full bg-card text-foreground p-5 text-sm font-mono leading-relaxed focus:outline-none resize-none rounded-b-2xl" />
                                 </div>

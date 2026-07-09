@@ -48,6 +48,23 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "Instagram · Post", category: "trigger", icon: Camera, channel: "ig",
         defaultData: { accountId: "any", mediaId: "any", keywords: "", caseSensitive: false, matchMode: "contains" }
     },
+    // ─── Deal-scope triggers ───
+    trigger_deal_created: {
+        label: "Deal · Created", category: "trigger", icon: Zap, channel: "generic",
+        defaultData: {}
+    },
+    trigger_deal_stage_changed: {
+        label: "Deal · Stage Changed", category: "trigger", icon: Zap, channel: "generic",
+        defaultData: { stageId: "any" }
+    },
+    // ─── Deal-scope send-message (channel-aware) ───
+    action_deal_send_message: {
+        label: "Send Message", category: "action", icon: MessageSquare, channel: "generic",
+        defaultData: {
+            whatsapp: { text: "", media: null },
+            instagram: { text: "", media: null, quickReplies: [] },
+        }
+    },
     // ─── WhatsApp actions ───
     action_wa_send_message: {
         label: "WhatsApp · Send Message", category: "action", icon: MessageSquare, channel: "wa",
@@ -152,13 +169,27 @@ const CATEGORY_COLOR: Record<string, { bg: string; border: string; text: string;
     logic: { bg: "bg-amber-500/10", border: "border-amber-500/40", text: "text-amber-400", dot: "bg-amber-500" },
 };
 
-const PALETTE: { category: "trigger" | "action" | "logic"; label: string; channel?: NodeChannel; types: string[] }[] = [
+type PaletteGroup = { category: "trigger" | "action" | "logic"; label: string; channel?: NodeChannel; types: string[] };
+
+const PALETTE: PaletteGroup[] = [
     { category: "trigger", channel: "wa", label: "WhatsApp · Triggers", types: ["trigger_wa_keyword", "trigger_wa_any", "trigger_wa_new_contact"] },
     { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
     { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message", "action_wa_send_poll"] },
     { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment", "action_ig_hide_comment", "action_ig_delete_comment"] },
     { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
     { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
+];
+
+// When editing a deal-scope automation, the palette collapses to
+// deal-flavoured triggers, the channel-aware unified send-message, and
+// the same generic actions. Channel-specific triggers/actions don't
+// apply because the deal event fires without a channel until a linked
+// contact is resolved.
+const DEAL_PALETTE: PaletteGroup[] = [
+    { category: "trigger", channel: "generic", label: "Deal · Triggers",   types: ["trigger_deal_created", "trigger_deal_stage_changed"] },
+    { category: "action",  channel: "generic", label: "Messaging",         types: ["action_deal_send_message"] },
+    { category: "action",  channel: "generic", label: "Generic Actions",   types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
+    { category: "logic",   channel: "generic", label: "Logic",             types: ["condition"] },
 ];
 
 // Channel-tinted background per palette group. Uses lucide colour
@@ -418,6 +449,13 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
         summary = `${m} ${u}${v}`;
     }
     else if (type === "condition") summary = `${d.field} ${d.operator} ${d.value || "?"}`;
+    else if (type === "trigger_deal_created") summary = 'on deal created';
+    else if (type === "trigger_deal_stage_changed") summary = d.stageId && d.stageId !== 'any' ? 'stage → specific' : 'any stage change';
+    else if (type === "action_deal_send_message") {
+        const wa = d.whatsapp?.text || '';
+        const ig = d.instagram?.text || '';
+        summary = wa || ig ? `${wa ? 'WA: ' + wa.slice(0, 25) : ''}${wa && ig ? ' · ' : ''}${ig ? 'IG: ' + ig.slice(0, 25) : ''}` : '(both channels empty)';
+    }
 
     // Channel-tinted left ribbon so IG vs WA vs Generic is legible at
     // a glance without needing to read the label.
@@ -494,15 +532,30 @@ const nodeTypes = Object.keys(NODE_META).reduce((acc, t) => { acc[t] = FlowNode;
 let idCounter = 1;
 const genId = () => `n${Date.now()}_${idCounter++}`;
 
+export function AutomationEditor({ id }: { id: string }) {
+    return (
+        <ReactFlowProvider>
+            <Editor id={id} />
+        </ReactFlowProvider>
+    );
+}
+
 function Editor({ id }: { id: string }) {
     const [name, setName] = useState("");
     const [isActive, setIsActive] = useState(false);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    // When this automation is scoped to a deal pipeline, the palette
+    // swaps to deal triggers + generic actions + the unified send-message
+    // node. Channel-specific triggers (WA keyword, IG DM, comments…)
+    // are hidden because they don't apply.
+    const [pipelineId, setPipelineId] = useState<string | null>(null);
+    const dealScope = !!pipelineId;
     const [agents, setAgents] = useState<any[]>([]);
     const [igAccounts, setIgAccounts] = useState<any[]>([]);
     const [waInstances, setWaInstances] = useState<any[]>([]);
     const [userFields, setUserFields] = useState<any[]>([]);
+    const [pipelineStages, setPipelineStages] = useState<{ id: string; name: string }[]>([]);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -541,6 +594,16 @@ function Editor({ id }: { id: string }) {
                     setIsActive(a.isActive);
                     setNodes((a.nodes || []) as Node[]);
                     setEdges((a.edges || []) as Edge[]);
+                    if (a.pipelineId) {
+                        setPipelineId(a.pipelineId);
+                        // Fetch pipeline stages for the trigger config dropdown.
+                        api.get('/crm/pipelines').then(r => {
+                            if (r.data?.success) {
+                                const p = (r.data.pipelines as any[]).find(x => x.id === a.pipelineId);
+                                if (p) setPipelineStages((p.stages as any[]).map((s: any) => ({ id: s.id, name: s.name })));
+                            }
+                        }).catch(() => {});
+                    }
                 }
                 if (agRes.data.success) setAgents(agRes.data.agents);
                 if (igRes.data.success) setIgAccounts(igRes.data.accounts || []);
@@ -678,13 +741,14 @@ function Editor({ id }: { id: string }) {
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
-                            <NodeConfig node={selectedNode} nodes={nodes} edges={edges} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                            <NodeConfig node={selectedNode} nodes={nodes} edges={edges} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} pipelineStages={pipelineStages} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                         </div>
                     )}
 
                     {/* Add Node modal */}
                     {addNodeOpen && (
                         <AddNodeModal
+                            palette={dealScope ? DEAL_PALETTE : PALETTE}
                             onPick={(t) => { addNode(t); setAddNodeOpen(false); }}
                             onClose={() => setAddNodeOpen(false)}
                         />
@@ -700,12 +764,12 @@ function Editor({ id }: { id: string }) {
 // ─── Add Node modal (centered, searchable, tab-filtered, channel-tinted) ───
 type PaletteTab = 'all' | 'trigger' | 'action';
 
-function AddNodeModal({ onPick, onClose }: { onPick: (type: string) => void; onClose: () => void }) {
+function AddNodeModal({ palette = PALETTE, onPick, onClose }: { palette?: PaletteGroup[]; onPick: (type: string) => void; onClose: () => void }) {
     const [query, setQuery] = useState("");
     const [tab, setTab] = useState<PaletteTab>('all');
     const q = query.trim().toLowerCase();
 
-    const groups = PALETTE
+    const groups = palette
         .filter(g => tab === 'all' || (tab === 'trigger' && g.category === 'trigger') || (tab === 'action' && (g.category === 'action' || g.category === 'logic')))
         .map(g => ({
             ...g,
@@ -1508,7 +1572,7 @@ function collectUpstreamVariables(nodeId: string, nodes: Node[], edges: Edge[]):
     return Array.from(vars);
 }
 
-function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userFields, onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; onChange: (p: Record<string, any>) => void }) {
+function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userFields, pipelineStages = [], onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; pipelineStages?: { id: string; name: string }[]; onChange: (p: Record<string, any>) => void }) {
     // Only variables actually reachable from this node's upstream
     // chain — no hardcoded fallback list, so a floating node's palette
     // is empty until it's wired to a trigger.
@@ -1624,6 +1688,101 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                 </div>
             );
 
+        // ─── Deal-scope triggers + actions ───
+        case 'trigger_deal_created':
+            return (
+                <div className="space-y-3">
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Fires as soon as a new deal is created inside this pipeline — from Kanban, Table, or the &ldquo;Add to deal&rdquo; button in the inbox.
+                    </p>
+                </div>
+            );
+        case 'trigger_deal_stage_changed':
+            return (
+                <div className="space-y-3">
+                    <Field label="Only when the deal enters">
+                        <select value={d.stageId || 'any'} onChange={e => onChange({ stageId: e.target.value })} className={inputCls}>
+                            <option value="any">Any stage</option>
+                            {pipelineStages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        Fires when a deal moves into the selected stage. Leave on &ldquo;Any&rdquo; to react to every stage move.
+                    </p>
+                </div>
+            );
+        case 'action_deal_send_message': {
+            const activeTab = (d.__tab as 'whatsapp' | 'instagram') || 'whatsapp';
+            const setActive = (tab: 'whatsapp' | 'instagram') => onChange({ __tab: tab });
+            const wa = d.whatsapp || {};
+            const ig = d.instagram || {};
+            const setWa = (patch: any) => onChange({ whatsapp: { ...wa, ...patch } });
+            const setIg = (patch: any) => onChange({ instagram: { ...ig, ...patch } });
+            return (
+                <div className="space-y-3">
+                    <div className="inline-flex rounded-lg border border-border overflow-hidden w-full">
+                        <button type="button" onClick={() => setActive('whatsapp')}
+                            className={`flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium ${activeTab === 'whatsapp' ? 'bg-emerald-500/20 text-emerald-300' : 'text-muted-foreground hover:text-foreground'}`}>
+                            WhatsApp
+                        </button>
+                        <button type="button" onClick={() => setActive('instagram')}
+                            className={`flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium ${activeTab === 'instagram' ? 'bg-pink-500/20 text-pink-300' : 'text-muted-foreground hover:text-foreground'}`}>
+                            Instagram
+                        </button>
+                    </div>
+                    {activeTab === 'whatsapp' ? (
+                        <>
+                            <Field label="WhatsApp message text">
+                                <VariableTextEditor value={wa.text || ''} onChange={(t) => setWa({ text: t })} rows={4}
+                                    variables={upstreamVars} />
+                            </Field>
+                            <Field label="WhatsApp attachment (optional)">
+                                <MediaPicker media={wa.media} onChange={(m) => setWa({ media: m })} />
+                            </Field>
+                        </>
+                    ) : (
+                        <>
+                            <Field label="Instagram DM text">
+                                <VariableTextEditor value={ig.text || ''} onChange={(t) => setIg({ text: t })} rows={4}
+                                    variables={upstreamVars} />
+                            </Field>
+                            <Field label="Instagram attachment (optional)">
+                                <MediaPicker media={ig.media}
+                                    allowedKinds={["image", "video", "audio"]}
+                                    onChange={(m) => setIg({ media: m })} />
+                            </Field>
+                            <div className="border-t border-border pt-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-medium text-muted-foreground">Quick replies (max 13)</span>
+                                    {(ig.quickReplies || []).length < 13 && (
+                                        <button onClick={() => setIg({ quickReplies: [...(ig.quickReplies || []), { title: '' }] })}
+                                            className="text-[11px] text-primary hover:underline">+ Add</button>
+                                    )}
+                                </div>
+                                {(ig.quickReplies || []).map((r: any, i: number) => (
+                                    <div key={i} className="flex gap-1.5">
+                                        <input type="text" value={r.title} placeholder="Button label (max 20 chars)"
+                                            onChange={e => {
+                                                const next = [...(ig.quickReplies || [])];
+                                                next[i] = { ...next[i], title: e.target.value };
+                                                setIg({ quickReplies: next });
+                                            }}
+                                            className={inputCls} />
+                                        <button onClick={() => setIg({ quickReplies: (ig.quickReplies || []).filter((_: any, j: number) => j !== i) })}
+                                            className="text-muted-foreground hover:text-red-400 px-1.5">
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        The engine picks the right variant based on the linked contact&apos;s channel. Configure both so the flow works for every customer regardless of where they messaged you from.
+                    </p>
+                </div>
+            );
+        }
         // ─── New channel-specific actions ───
         case 'action_wa_send_message':
             return (

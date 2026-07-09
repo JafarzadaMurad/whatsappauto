@@ -40,6 +40,19 @@ export type AutomationContext = {
     // automations still keyed only to userId are picked up via the OR
     // fallback in handleMessage.
     workspaceId?: string;
+    // Deal-scope automations only match when the event carries the
+    // same pipelineId. Populated when the deals engine fires a
+    // trigger_deal_* event.
+    pipelineId?: string;
+    dealEvent?: {
+        kind: 'created' | 'stage_changed';
+        dealId: string;
+        dealTitle?: string;
+        dealValue?: number | null;
+        stageId?: string | null;
+        stageName?: string | null;
+        previousStageId?: string | null;
+    };
     channel: Channel;
     text: string;
     contactId: string;        // remoteJid (WhatsApp) or IGSID (Instagram)
@@ -113,6 +126,16 @@ function channelOk(data: any, channel: Channel): boolean {
 function triggerMatches(node: any, ctx: AutomationContext): boolean {
     const d = node.data || {};
     switch (node.type) {
+        // ─── Deal-scope triggers ───────────────────────────────────
+        case 'trigger_deal_created':
+            return !!ctx.dealEvent && ctx.dealEvent.kind === 'created';
+        case 'trigger_deal_stage_changed': {
+            if (!ctx.dealEvent || ctx.dealEvent.kind !== 'stage_changed') return false;
+            // Optional filter: match only when the deal is now on a specific stage.
+            const target = String(d.stageId || '').trim();
+            if (target && target !== 'any' && target !== ctx.dealEvent.stageId) return false;
+            return true;
+        }
         // ─── Legacy / generic (still recognized for backward compat) ───
         case 'trigger_keyword':
             return ctx.source !== 'comment' && channelOk(d, ctx.channel) && keywordMatches(d, ctx.text);
@@ -257,6 +280,46 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
     const d = node.data || {};
     switch (node.type) {
         case 'action_send_message':
+        case 'action_deal_send_message': {
+            // Channel-aware send used by deal automations. Picks the
+            // WA or IG variant based on the contact's channel so the
+            // operator can configure both at design time and let the
+            // engine route at runtime.
+            const isIg = ctx.channel === 'instagram';
+            const variant = isIg ? (d.instagram || {}) : (d.whatsapp || {});
+            const media = resolveMedia(variant, ctx);
+            const text = variant.text ? interpolate(String(variant.text), ctx) : '';
+            const qr = Array.isArray(variant.quickReplies)
+                ? variant.quickReplies
+                    .map((r: any) => ({ title: interpolate(String(r?.title || ''), ctx), payload: r?.payload ? String(r.payload) : undefined }))
+                    .filter((r: any) => r.title)
+                : undefined;
+            if (isIg) {
+                // Instagram DM
+                if (media && ctx.sendDm && (media.kind === 'image' || media.kind === 'video' || media.kind === 'audio')) {
+                    await ctx.sendDm({ kind: 'attachment', attachmentType: media.kind, url: media.url, quickReplies: qr });
+                    if (text) await ctx.sendDm({ kind: 'text', text });
+                } else if (text && ctx.sendDm) {
+                    await ctx.sendDm({ kind: 'text', text, quickReplies: qr });
+                } else if (text) {
+                    await ctx.sendMessage(text);
+                }
+                signalWaitFromQuickReplies(variant.quickReplies, ctx);
+            } else {
+                // WhatsApp
+                if (media && ctx.sendMedia) {
+                    if (text && (media.kind === 'image' || media.kind === 'video' || media.kind === 'document')) {
+                        await ctx.sendMedia({ ...media, caption: text });
+                    } else {
+                        await ctx.sendMedia(media);
+                        if (text) await ctx.sendMessage(text);
+                    }
+                } else if (text) {
+                    await ctx.sendMessage(text);
+                }
+            }
+            return true;
+        }
         case 'action_wa_send_message': {
             const media = resolveMedia(d, ctx);
             const text = d.text ? interpolate(String(d.text), ctx) : '';
@@ -654,6 +717,14 @@ export class AutomationEngine {
             } else {
                 where.userId = ctx.userId;
             }
+            // Deal-scope automations only run when a matching deal event
+            // is in flight; message flows must skip them. Conversely,
+            // message-scope automations shouldn't fire on deal events.
+            if (ctx.dealEvent && ctx.pipelineId) {
+                where.pipelineId = ctx.pipelineId;
+            } else {
+                where.pipelineId = null;
+            }
             const automations = await prisma.automation.findMany({ where });
             let matched = false;
             for (const auto of automations) {
@@ -718,6 +789,131 @@ export class AutomationEngine {
             return { matched, overrideAgentId };
         } catch (e: any) {
             logger.error({ err: e.message }, '[Automation] engine error');
+            return { matched: false };
+        }
+    }
+
+    // Deal-event entry point. The deals controller calls this whenever
+    // a deal is created or moved between stages. Runs pipeline-scoped
+    // automations whose triggers match the event. Send-message actions
+    // need channel context — we resolve the linked Client and derive
+    // the WA/IG send callbacks so trigger→send flows work end-to-end.
+    static async handleDealEvent(opts: {
+        userId: string;
+        workspaceId: string;
+        pipelineId: string;
+        dealId: string;
+        kind: 'created' | 'stage_changed';
+        dealTitle?: string;
+        dealValue?: number | null;
+        stageId?: string | null;
+        stageName?: string | null;
+        previousStageId?: string | null;
+    }): Promise<{ matched: boolean }> {
+        try {
+            const automations = await prisma.automation.findMany({
+                where: { isActive: true, pipelineId: opts.pipelineId },
+            });
+            if (automations.length === 0) return { matched: false };
+
+            // Look up the linked contact so send-message actions have a
+            // real channel + address to target. Optional — automations
+            // that only do tagging/HTTP still run when the deal has no
+            // linked client.
+            const deal = await prisma.deal.findUnique({
+                where: { id: opts.dealId },
+                include: { client: true },
+            });
+            const client = deal?.client;
+            const channel: Channel = (client?.channel === 'instagram' ? 'instagram' : 'whatsapp');
+            const contactId = client?.phone || '';
+            const contactName = client?.name || undefined;
+
+            // Build minimal per-channel send callbacks. Late imports so
+            // this module doesn't force the whole channel stack to load
+            // when a workspace has no deal automations.
+            let sendMessage: (t: string) => Promise<void> = async () => { /* no-op */ };
+            let sendMedia: ((p: MediaPayload) => Promise<void>) | undefined;
+            let sendDm: ((p: RichDmPayload) => Promise<void>) | undefined;
+            if (client) {
+                if (channel === 'whatsapp') {
+                    const inst = await prisma.instance.findFirst({
+                        where: { workspaceId: opts.workspaceId },
+                        orderBy: { updatedAt: 'desc' },
+                    });
+                    if (inst) {
+                        const { sessions } = await import('../whatsapp/instance.manager');
+                        const sock: any = sessions.get(inst.id);
+                        if (sock) {
+                            const remoteJid = client.phone.includes('@') ? client.phone : `${client.phone}@s.whatsapp.net`;
+                            sendMessage = async (t) => { await sock.sendMessage(remoteJid, { text: t }); };
+                            sendMedia = async (p) => {
+                                let msg: any;
+                                if (p.kind === 'image') msg = { image: { url: p.url }, caption: p.caption || undefined };
+                                else if (p.kind === 'video') msg = { video: { url: p.url }, caption: p.caption || undefined };
+                                else if (p.kind === 'audio') msg = { audio: { url: p.url }, mimetype: p.mimetype || 'audio/mp4', ptt: false };
+                                else msg = { document: { url: p.url }, mimetype: p.mimetype || 'application/octet-stream', fileName: p.filename || (p.url.split('/').pop() || 'file'), caption: p.caption || undefined };
+                                await sock.sendMessage(remoteJid, msg);
+                            };
+                        }
+                    }
+                } else {
+                    const account = await prisma.instagramAccount.findFirst({
+                        where: { workspaceId: opts.workspaceId },
+                        orderBy: { updatedAt: 'desc' },
+                    });
+                    if (account) {
+                        const { sendIgMessage, sendIgRichMessage } = await import('../instagram/instagram.ai.service');
+                        sendMessage = (t) => sendIgMessage(account.igUserId, client.phone, t, account.accessToken);
+                        sendDm = (p) => sendIgRichMessage(account.igUserId, client.phone, p, account.accessToken);
+                    }
+                }
+            }
+
+            const ctx: AutomationContext = {
+                userId: opts.userId,
+                workspaceId: opts.workspaceId,
+                pipelineId: opts.pipelineId,
+                dealEvent: {
+                    kind: opts.kind,
+                    dealId: opts.dealId,
+                    dealTitle: opts.dealTitle,
+                    dealValue: opts.dealValue ?? null,
+                    stageId: opts.stageId ?? null,
+                    stageName: opts.stageName ?? null,
+                    previousStageId: opts.previousStageId ?? null,
+                },
+                channel,
+                text: opts.dealTitle || '',
+                contactId,
+                contactName,
+                source: 'dm',
+                sendMessage,
+                sendMedia,
+                sendDm,
+            };
+
+            let matched = false;
+            for (const auto of automations) {
+                const nodes = (auto.nodes as any[]) || [];
+                const edges = (auto.edges as any[]) || [];
+                const outgoing = (id: string) => edges.filter(e => e.source === id).map(e => e.target);
+                for (const node of nodes) {
+                    if (typeof node?.type !== 'string' || !node.type.startsWith('trigger_')) continue;
+                    if (!triggerMatches(node, ctx)) continue;
+                    matched = true;
+                    logger.info({ automation: auto.name, trigger: node.type, dealId: opts.dealId }, '[Automation] deal trigger matched');
+                    ctx.waitState = undefined;
+                    try {
+                        await runGraph(outgoing(node.id), nodes, edges, ctx);
+                    } catch (e: any) {
+                        logger.error({ err: e?.message, automation: auto.name }, '[Automation] deal run error');
+                    }
+                }
+            }
+            return { matched };
+        } catch (e: any) {
+            logger.error({ err: e.message }, '[Automation] deal engine error');
             return { matched: false };
         }
     }

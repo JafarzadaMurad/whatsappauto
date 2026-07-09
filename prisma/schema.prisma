@@ -1161,6 +1161,13 @@ model Automation {
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  // Optional owner pipeline. When set, this automation is a deal-scope
+  // automation: its triggers fire on Deal events (created, stage
+  // changed) instead of on incoming messages. The pipeline detail page
+  // opens exactly one such automation via /api/crm/pipelines/:id/automation.
+  pipelineId  String?
+  pipeline    DealPipeline? @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
   name     String
   isActive Boolean @default(false)
 
@@ -1172,6 +1179,8 @@ model Automation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, pipelineId])
 }
 
 // ─── MCP (Model Context Protocol) ──────────────────────────────────
@@ -1378,6 +1387,7 @@ model DealPipeline {
 
   stages      DealStage[]
   deals       Deal[]
+  automations Automation[]
 
   @@index([workspaceId, order])
 }

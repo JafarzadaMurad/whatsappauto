@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import {
     listPipelines, createPipeline, updatePipeline, duplicatePipeline, deletePipeline,
+    ensurePipelineAutomation,
     createStage, updateStage, reorderStages, deleteStage,
     listDeals, createDeal, updateDeal, moveDeals, deleteDeal,
 } from './deals.controller';
@@ -15,6 +16,7 @@ router.get('/pipelines',                listPipelines);
 router.post('/pipelines',               createPipeline);
 router.patch('/pipelines/:id',          updatePipeline);
 router.post('/pipelines/:id/duplicate', duplicatePipeline);
+router.get('/pipelines/:id/automation', ensurePipelineAutomation);
 router.delete('/pipelines/:id',         deletePipeline);
 
 // Stages

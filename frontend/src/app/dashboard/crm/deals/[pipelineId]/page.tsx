@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
     ArrowLeft, Loader2, Plus, LayoutGrid, Table as TableIcon, X,
     Search, Trash2, Save, DollarSign, Calendar, User as UserIcon, Tag,
-    MessageSquare, Camera, ChevronDown, Check,
+    MessageSquare, Camera, ChevronDown, Check, MoreHorizontal, Workflow,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -142,6 +142,25 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ pipel
         } catch (e: any) { setError(e.response?.data?.message || e.message); }
     };
 
+    const reorderStages = async (ids: string[]) => {
+        if (!pipeline) return;
+        // Optimistic — reorder in-place, then persist.
+        const map = new Map(pipeline.stages.map(s => [s.id, s]));
+        const nextStages = ids.map((id, i) => ({ ...(map.get(id) as Stage), order: i }));
+        setPipeline(p => p ? { ...p, stages: nextStages } : p);
+        try {
+            await api.put(`/crm/pipelines/${pipeline.id}/stages/reorder`, { stageIds: ids });
+        } catch (e: any) {
+            setError(e.response?.data?.message || e.message);
+            // Roll back by refetching
+            const r = await api.get('/crm/pipelines');
+            if (r.data?.success) {
+                const p = (r.data.pipelines as Pipeline[]).find(x => x.id === pipeline.id);
+                if (p) setPipeline(p);
+            }
+        }
+    };
+
     const deleteStage = async (stageId: string) => {
         if (!pipeline) return;
         const stage = pipeline.stages.find(s => s.id === stageId);
@@ -258,6 +277,10 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ pipel
                             <TableIcon className="w-3.5 h-3.5" /> Table
                         </button>
                     </div>
+                    <Link href={`/dashboard/crm/deals/${pipeline.id}/automation`}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-violet-500/40 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20">
+                        <Workflow className="w-3.5 h-3.5" /> Automation
+                    </Link>
                     <button onClick={() => { setNewDealDefaultStage(undefined); setNewDealOpen(true); }}
                         className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90">
                         <Plus className="w-4 h-4" /> New deal
@@ -286,6 +309,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ pipel
                     onRecolorStage={(id, color) => updateStage(id, { color } as any)}
                     onDeleteStage={deleteStage}
                     onAddStage={addStage}
+                    onReorderStages={reorderStages}
                 />
             ) : (
                 <DealsTable
@@ -317,7 +341,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ pipel
 }
 
 // ─── Kanban Board ─────────────────────────────────────────────────
-function KanbanBoard({ pipeline, deals, onCardClick, onAddDeal, onDrop, dragging, setDragging, onRenameStage, onRecolorStage, onDeleteStage, onAddStage }: {
+function KanbanBoard({ pipeline, deals, onCardClick, onAddDeal, onDrop, dragging, setDragging, onRenameStage, onRecolorStage, onDeleteStage, onAddStage, onReorderStages }: {
     pipeline: Pipeline;
     deals: Deal[];
     onCardClick: (deal: Deal) => void;
@@ -329,83 +353,155 @@ function KanbanBoard({ pipeline, deals, onCardClick, onAddDeal, onDrop, dragging
     onRecolorStage: (id: string, color: string) => void;
     onDeleteStage: (id: string) => void;
     onAddStage: (afterStageId?: string) => void;
+    onReorderStages: (ids: string[]) => void;
 }) {
+    // Track a stage being dragged for reordering (separate from deal drag).
+    const [stageDrag, setStageDrag] = useState<{ id: string } | null>(null);
+
     return (
         <div className="overflow-x-auto -mx-2 px-2 pb-2">
-            <div className="flex gap-3 min-h-[60vh] items-start">
-                {pipeline.stages.map(stage => {
+            <div className="flex gap-0 min-h-[60vh] items-start">
+                {pipeline.stages.map((stage, i) => {
                     const tint = tintFor(stage.color);
                     const stageDeals = deals.filter(d => d.stageId === stage.id).sort((a, b) => a.order - b.order);
                     const stageSum = stageDeals.reduce((acc, d) => acc + (Number(d.value) || 0), 0);
                     return (
-                        <div key={stage.id}
-                            onDragOver={e => e.preventDefault()}
-                            onDrop={e => { e.preventDefault(); if (dragging) onDrop(dragging.id, stage.id); }}
-                            className={`w-72 flex-shrink-0 rounded-2xl border border-border bg-card overflow-hidden flex flex-col ${dragging && dragging.stageId !== stage.id ? `ring-2 ring-primary/40` : ''}`}>
-                            <StageHeader
-                                stage={stage}
-                                count={stageDeals.length}
-                                sum={stageSum}
-                                currency={pipeline.currency}
-                                onRename={(name) => onRenameStage(stage.id, name)}
-                                onRecolor={(color) => onRecolorStage(stage.id, color)}
-                                onDelete={() => onDeleteStage(stage.id)}
-                                onAddDeal={() => onAddDeal(stage.id)}
-                            />
-                            <div className="p-2 space-y-2 flex-1 min-h-[100px]">
-                                {stageDeals.map(deal => (
-                                    <div key={deal.id}
-                                        draggable
-                                        onDragStart={() => setDragging(deal)}
-                                        onDragEnd={() => setDragging(null)}
-                                        onClick={() => onCardClick(deal)}
-                                        className={`rounded-xl border border-border bg-secondary/30 p-3 hover:border-primary/50 hover:bg-secondary/50 cursor-grab active:cursor-grabbing transition-colors ${dragging?.id === deal.id ? 'opacity-40' : ''}`}>
-                                        <div className="text-sm font-medium truncate">{deal.title}</div>
-                                        {deal.value && (
-                                            <div className={`text-xs font-semibold mt-1 ${tint.text.replace('text-white', '').trim() || 'text-primary'}`}>
-                                                <span className={`inline-block w-1.5 h-1.5 rounded-full ${tint.dot} mr-1.5 align-middle`} />
-                                                {formatMoney(deal.value, pipeline.currency)}
-                                            </div>
-                                        )}
-                                        {deal.client && (
-                                            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
-                                                {deal.client.channel === 'instagram'
-                                                    ? <Camera className="w-3 h-3 text-pink-400 flex-shrink-0" />
-                                                    : <MessageSquare className="w-3 h-3 text-emerald-400 flex-shrink-0" />}
-                                                <span className="truncate">{deal.client.name || deal.client.phone}</span>
-                                            </div>
-                                        )}
-                                        {deal.tags.length > 0 && (
-                                            <div className="mt-2 flex gap-1 flex-wrap">
-                                                {deal.tags.slice(0, 3).map(t => (
-                                                    <span key={t} className="text-[9px] uppercase tracking-widest bg-secondary/60 border border-border rounded px-1.5 py-0.5">{t}</span>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {deal.expectedCloseAt && (
-                                            <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
-                                                <Calendar className="w-3 h-3" /> {new Date(deal.expectedCloseAt).toLocaleDateString()}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                                {stageDeals.length === 0 && (
-                                    <button onClick={() => onAddDeal(stage.id)}
-                                        className="w-full text-[11px] text-muted-foreground/50 italic py-6 border border-dashed border-border/60 rounded-lg hover:bg-secondary/20 hover:text-muted-foreground transition-colors">
-                                        Drop or click to add
-                                    </button>
-                                )}
+                        <div key={stage.id} className="group flex items-stretch">
+                            <div
+                                draggable={!dragging}
+                                onDragStart={(e) => {
+                                    if (dragging) return;
+                                    e.dataTransfer.setData('text/stage-id', stage.id);
+                                    setStageDrag({ id: stage.id });
+                                }}
+                                onDragEnd={() => setStageDrag(null)}
+                                onDragOver={e => {
+                                    e.preventDefault();
+                                    // If we're dragging a stage, let this be a drop target
+                                    // for reordering (below). If we're dragging a deal it
+                                    // stays a normal drop target for card moves.
+                                }}
+                                onDrop={e => {
+                                    e.preventDefault();
+                                    const draggedStageId = e.dataTransfer.getData('text/stage-id');
+                                    if (draggedStageId && draggedStageId !== stage.id) {
+                                        // Reorder: move draggedStageId to this stage's index.
+                                        const ids = pipeline.stages.map(s => s.id);
+                                        const from = ids.indexOf(draggedStageId);
+                                        const to = ids.indexOf(stage.id);
+                                        if (from > -1 && to > -1) {
+                                            const next = [...ids];
+                                            next.splice(from, 1);
+                                            next.splice(to, 0, draggedStageId);
+                                            onReorderStages(next);
+                                        }
+                                    } else if (dragging) {
+                                        onDrop(dragging.id, stage.id);
+                                    }
+                                }}
+                                className={`w-72 flex-shrink-0 rounded-2xl border border-border bg-card overflow-hidden flex flex-col mx-1.5 ${dragging && dragging.stageId !== stage.id ? `ring-2 ring-primary/40` : ''} ${stageDrag?.id === stage.id ? 'opacity-40' : ''}`}>
+                                <StageHeader
+                                    stage={stage}
+                                    count={stageDeals.length}
+                                    sum={stageSum}
+                                    currency={pipeline.currency}
+                                    onRename={(name) => onRenameStage(stage.id, name)}
+                                    onRecolor={(color) => onRecolorStage(stage.id, color)}
+                                    onDelete={() => onDeleteStage(stage.id)}
+                                    onAddDeal={() => onAddDeal(stage.id)}
+                                />
+                                <div className="p-2 space-y-2 flex-1 min-h-[100px]">
+                                    {stageDeals.map(deal => (
+                                        <DealCard key={deal.id}
+                                            deal={deal}
+                                            currency={pipeline.currency}
+                                            tintDot={tint.dot}
+                                            dragging={dragging}
+                                            setDragging={setDragging}
+                                            onClick={() => onCardClick(deal)}
+                                        />
+                                    ))}
+                                    {stageDeals.length === 0 && (
+                                        <button onClick={() => onAddDeal(stage.id)}
+                                            className="w-full text-[11px] text-muted-foreground/50 italic py-6 border border-dashed border-border/60 rounded-lg hover:bg-secondary/20 hover:text-muted-foreground transition-colors">
+                                            Drop or click to add
+                                        </button>
+                                    )}
+                                </div>
                             </div>
+                            {/* Between-stage insert affordance — appears on hover
+                                of the whole row. Injects a new stage after the
+                                current one. */}
+                            {i < pipeline.stages.length - 1 && (
+                                <div className="w-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => onAddStage(stage.id)}
+                                        title="Add stage here"
+                                        className="w-6 h-6 rounded-full bg-primary/15 border border-primary/40 text-primary hover:bg-primary/25 flex items-center justify-center">
+                                        <Plus className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            )}
+                            {/* Trailing hover-slot after the last stage — same
+                                affordance but appends at the end. */}
+                            {i === pipeline.stages.length - 1 && (
+                                <div className="w-8 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => onAddStage(stage.id)}
+                                        title="Add stage"
+                                        className="w-6 h-6 rounded-full bg-primary/15 border border-primary/40 text-primary hover:bg-primary/25 flex items-center justify-center">
+                                        <Plus className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     );
                 })}
-                {/* Add-stage column */}
-                <button onClick={() => onAddStage()}
-                    className="w-14 flex-shrink-0 rounded-2xl border-2 border-dashed border-border hover:border-primary/40 hover:bg-primary/5 flex items-center justify-center min-h-[200px] transition-colors group"
-                    title="Add stage">
-                    <Plus className="w-5 h-5 text-muted-foreground group-hover:text-primary" />
-                </button>
             </div>
+        </div>
+    );
+}
+
+function DealCard({ deal, currency, tintDot, dragging, setDragging, onClick }: {
+    deal: Deal;
+    currency: string;
+    tintDot: string;
+    dragging: Deal | null;
+    setDragging: (d: Deal | null) => void;
+    onClick: () => void;
+}) {
+    return (
+        <div
+            draggable
+            onDragStart={() => setDragging(deal)}
+            onDragEnd={() => setDragging(null)}
+            onClick={onClick}
+            className={`rounded-xl border border-border bg-secondary/30 p-3 hover:border-primary/50 hover:bg-secondary/50 cursor-grab active:cursor-grabbing transition-colors ${dragging?.id === deal.id ? 'opacity-40' : ''}`}>
+            <div className="text-sm font-medium truncate">{deal.title}</div>
+            {deal.value && (
+                <div className="text-xs font-semibold mt-1 text-primary">
+                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${tintDot} mr-1.5 align-middle`} />
+                    {formatMoney(deal.value, currency)}
+                </div>
+            )}
+            {deal.client && (
+                <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground truncate">
+                    {deal.client.channel === 'instagram'
+                        ? <Camera className="w-3 h-3 text-pink-400 flex-shrink-0" />
+                        : <MessageSquare className="w-3 h-3 text-emerald-400 flex-shrink-0" />}
+                    <span className="truncate">{deal.client.name || deal.client.phone}</span>
+                </div>
+            )}
+            {deal.tags.length > 0 && (
+                <div className="mt-2 flex gap-1 flex-wrap">
+                    {deal.tags.slice(0, 3).map(t => (
+                        <span key={t} className="text-[9px] uppercase tracking-widest bg-secondary/60 border border-border rounded px-1.5 py-0.5">{t}</span>
+                    ))}
+                </div>
+            )}
+            {deal.expectedCloseAt && (
+                <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <Calendar className="w-3 h-3" /> {new Date(deal.expectedCloseAt).toLocaleDateString()}
+                </div>
+            )}
         </div>
     );
 }
@@ -464,13 +560,12 @@ function StageHeader({ stage, count, sum, currency, onRename, onRecolor, onDelet
                     <span className="text-[10px] font-medium bg-white/20 rounded px-1.5 py-0.5">{count}</span>
                     <div className="relative" ref={menuRef}>
                         <button onClick={() => setMenuOpen(v => !v)}
+                            title="Stage options"
                             className="p-1 rounded hover:bg-white/20">
-                            <ChevronDown className="w-3.5 h-3.5" />
+                            <MoreHorizontal className="w-3.5 h-3.5" />
                         </button>
                         {menuOpen && (
                             <div className="absolute right-0 top-full mt-1 min-w-[180px] rounded-xl border border-border bg-card shadow-xl z-10 text-foreground text-xs overflow-hidden">
-                                <button onClick={() => { setEditing(true); setMenuOpen(false); }}
-                                    className="w-full text-left px-3 py-2 hover:bg-secondary/40">Rename</button>
                                 <button onClick={() => { onAddDeal(); setMenuOpen(false); }}
                                     className="w-full text-left px-3 py-2 hover:bg-secondary/40">Add deal here</button>
                                 <div className="border-t border-border/60 px-3 py-2">
@@ -484,7 +579,9 @@ function StageHeader({ stage, count, sum, currency, onRename, onRecolor, onDelet
                                     </div>
                                 </div>
                                 <button onClick={() => { onDelete(); setMenuOpen(false); }}
-                                    className="w-full text-left px-3 py-2 hover:bg-red-500/10 text-red-400 border-t border-border/60">Delete stage</button>
+                                    className="w-full text-left px-3 py-2 hover:bg-red-500/10 text-red-400 border-t border-border/60 flex items-center gap-1.5">
+                                    <Trash2 className="w-3 h-3" /> Delete stage
+                                </button>
                             </div>
                         )}
                     </div>

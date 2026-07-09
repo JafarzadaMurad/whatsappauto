@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
+import { AutomationEngine } from '../automation/automation.engine';
 
 const getWs = (req: Request): string | null => (req as any).workspaceId || null;
 const getUserId = (req: Request): string | null => (req as any).user?.id || null;
@@ -197,6 +198,41 @@ export const deletePipeline = async (req: Request, res: Response) => {
         await prisma.dealPipeline.delete({ where: { id } });
         return res.json({ success: true });
     } catch (e: any) {
+        return res.status(500).json({ success: false, message: e.message });
+    }
+};
+
+// ─── Pipeline automation (single, deal-scoped) ─────────────────────
+
+// Returns the automation attached to this pipeline (creating an empty
+// one if none exists). The frontend hits this once when the operator
+// clicks the Automation button on the pipeline detail page.
+export const ensurePipelineAutomation = async (req: Request, res: Response) => {
+    try {
+        const ws = getWs(req);
+        const userId = getUserId(req);
+        if (!ws || !userId) return res.status(400).json({ success: false, message: 'context missing' });
+        const pipelineId = req.params.id as string;
+
+        const pipeline = await prisma.dealPipeline.findFirst({ where: { id: pipelineId, workspaceId: ws } });
+        if (!pipeline) return res.status(404).json({ success: false, message: 'pipeline not found' });
+
+        let automation = await prisma.automation.findFirst({
+            where: { workspaceId: ws, pipelineId },
+        });
+        if (!automation) {
+            automation = await prisma.automation.create({
+                data: {
+                    userId, workspaceId: ws, pipelineId,
+                    name: `${pipeline.name} automation`,
+                    isActive: false,
+                    nodes: [], edges: [],
+                },
+            });
+        }
+        return res.json({ success: true, automation });
+    } catch (e: any) {
+        logger.error({ err: e.message }, '[deals] ensure automation failed');
         return res.status(500).json({ success: false, message: e.message });
     }
 };
@@ -417,6 +453,19 @@ export const createDeal = async (req: Request, res: Response) => {
                 stage: { select: { id: true, name: true, color: true, isWon: true, isLost: true } },
             },
         });
+        // Fire deal_created event (fire-and-forget so a slow automation
+        // doesn't block the HTTP response).
+        AutomationEngine.handleDealEvent({
+            userId, workspaceId: ws,
+            pipelineId: deal.pipelineId,
+            dealId: deal.id,
+            kind: 'created',
+            dealTitle: deal.title,
+            dealValue: deal.value ? Number(deal.value) : null,
+            stageId: deal.stageId,
+            stageName: deal.stage?.name,
+        }).catch(e => logger.warn({ err: e?.message }, '[deals] created event dispatch failed'));
+
         return res.status(201).json({ success: true, deal });
     } catch (e: any) {
         if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });
@@ -453,6 +502,7 @@ export const updateDeal = async (req: Request, res: Response) => {
             if (!stage) return res.status(400).json({ success: false, message: 'stage does not belong to this deal\'s pipeline' });
         }
 
+        const previousStageId = existing.stageId;
         const deal = await prisma.deal.update({
             where: { id },
             data: {
@@ -471,6 +521,20 @@ export const updateDeal = async (req: Request, res: Response) => {
                 stage: { select: { id: true, name: true, color: true, isWon: true, isLost: true } },
             },
         });
+        // Fire stage_changed event when the deal moved between stages.
+        if (data.stageId && data.stageId !== previousStageId) {
+            AutomationEngine.handleDealEvent({
+                userId: deal.userId, workspaceId: ws,
+                pipelineId: deal.pipelineId,
+                dealId: deal.id,
+                kind: 'stage_changed',
+                dealTitle: deal.title,
+                dealValue: deal.value ? Number(deal.value) : null,
+                stageId: deal.stageId,
+                stageName: deal.stage?.name,
+                previousStageId,
+            }).catch(e => logger.warn({ err: e?.message }, '[deals] stage_changed event dispatch failed'));
+        }
         return res.json({ success: true, deal });
     } catch (e: any) {
         if (e instanceof z.ZodError) return res.status(400).json({ success: false, errors: e.issues });

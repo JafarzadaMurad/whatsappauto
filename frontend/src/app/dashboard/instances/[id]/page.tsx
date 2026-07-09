@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { Send, Image as ImageIcon, File, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import api from "@/lib/api";
-import io from "socket.io-client";
+import { createSocket } from "@/lib/socket";
 
 interface Message {
     id: string;
@@ -34,7 +34,7 @@ export default function ChatInterface() {
         // In a real app we'd fetch historical messages from API
         // api.get(`/messages?instanceId=${id}`).then(res => setMessages(res.data.messages));
 
-        const socket = io(process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:2992');
+        const socket = createSocket();
 
         socket.on('connect', () => {
             console.log('socket connected for chat');

@@ -223,8 +223,8 @@ export class InstagramAiService {
         // Runs early so even messages that later match an automation
         // still surface in the UI.
         try {
-            const { io: ioSrv } = await import('../../server');
-            ioSrv.emit(`message.new-${account.id}`, {
+            const { emitToIgWorkspaceSync } = await import('../../lib/socket-rooms');
+            emitToIgWorkspaceSync(account.id, `message.new-${account.id}`, {
                 id: `ig-in-${Date.now()}`,
                 isFromMe: false,
                 content: messageText,
@@ -396,8 +396,8 @@ export class InstagramAiService {
         // Matches the message.new-{id} shape the WhatsApp path emits;
         // the id here is the IG account row id.
         try {
-            const { io: ioSrv } = await import('../../server');
-            ioSrv.emit(`message.new-${account.id}`, {
+            const { emitToIgWorkspaceSync } = await import('../../lib/socket-rooms');
+            emitToIgWorkspaceSync(account.id, `message.new-${account.id}`, {
                 id: `ig-out-${Date.now()}`,
                 isFromMe: true,
                 content: text,

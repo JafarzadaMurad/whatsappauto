@@ -1,8 +1,10 @@
 import http from 'http';
 import { Server } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import app from './app';
 import { config } from './config';
 import { logger } from './utils/logger';
+import { prisma } from './lib/prisma';
 import { startWebhookWorker } from './modules/webhook/webhook.dispatcher';
 import { startCampaignWorker } from './modules/campaign/campaign.queue';
 
@@ -28,8 +30,63 @@ export const io = new Server(server, {
     },
 });
 
+// ─── Socket.IO auth + workspace rooms ───────────────────────────────
+// Every browser tab hands us its JWT on the handshake. We verify it and
+// resolve which workspace the user is currently in, then join the
+// `workspace:<id>` room. Every downstream emit uses io.to(room, …) so a
+// customer in workspace A can NEVER see workspace B's QR codes or
+// incoming messages. Sockets without a valid token stay unjoined
+// (still connected — they just receive nothing until they authenticate).
+io.use(async (socket, next) => {
+    try {
+        const token = (socket.handshake.auth as any)?.token
+            || (socket.handshake.query as any)?.token
+            || null;
+        if (!token) return next(); // let the connection through, no rooms
+        const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
+        // Prefer an explicit workspace hint from the client; fall back
+        // to the first workspace membership. Same rule the auth
+        // middleware uses on REST calls.
+        const wsHint = String((socket.handshake.auth as any)?.workspaceId
+            || (socket.handshake.query as any)?.workspaceId
+            || '').trim();
+        let workspaceId: string | null = null;
+        if (wsHint) {
+            const member = await prisma.workspaceMember.findFirst({
+                where: { workspaceId: wsHint, userId: decoded.id },
+                select: { workspaceId: true },
+            });
+            if (member) workspaceId = member.workspaceId;
+        }
+        if (!workspaceId) {
+            const owned = await prisma.workspace.findFirst({
+                where: { ownerId: decoded.id },
+                select: { id: true },
+                orderBy: { createdAt: 'asc' },
+            });
+            workspaceId = owned?.id || null;
+        }
+        if (!workspaceId) {
+            const first = await prisma.workspaceMember.findFirst({
+                where: { userId: decoded.id },
+                select: { workspaceId: true },
+            });
+            workspaceId = first?.workspaceId || null;
+        }
+        (socket.data as any).userId = decoded.id;
+        (socket.data as any).workspaceId = workspaceId;
+        if (workspaceId) socket.join(`workspace:${workspaceId}`);
+        next();
+    } catch (e: any) {
+        // Bad token — still let the socket open (so the client can
+        // reconnect after refreshing its JWT), just don't join any room.
+        logger.warn({ err: e?.message }, '[socket] auth failed — connecting without rooms');
+        next();
+    }
+});
+
 io.on('connection', (socket) => {
-    logger.info(`Socket connected: ${socket.id}`);
+    logger.info(`Socket connected: ${socket.id} ws=${(socket.data as any)?.workspaceId || '-'}`);
 
     socket.on('disconnect', () => {
         logger.info(`Socket disconnected: ${socket.id}`);

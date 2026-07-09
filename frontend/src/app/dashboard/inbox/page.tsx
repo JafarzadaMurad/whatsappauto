@@ -3,7 +3,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Inbox, Loader2, MessageSquare, MessageCircle, Camera, Search, Send, Pause, Play, Phone, Check, CheckCheck, ArrowLeft, Paperclip, Mic, Square, X as XIcon, Sparkles, Zap, ExternalLink, Trash2, Briefcase } from "lucide-react";
 import api from "@/lib/api";
-import io, { Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
+import { createSocket } from "@/lib/socket";
 import { usePermChatWrite } from "@/store/workspaceStore";
 
 const PAGE_SIZE = 50;
@@ -236,8 +237,7 @@ export default function InboxPage() {
         const unique = Array.from(new Set(allAccounts));
         if (unique.length === 0) return;
 
-        const baseUrl = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/api\/?$/, '') || window.location.origin;
-        const socket: Socket = io(baseUrl, { transports: ['websocket'] });
+        const socket: Socket = createSocket();
 
         const onMsgNew = (accountId: string) => (payload: any) => {
             const cur = selectedRef.current;

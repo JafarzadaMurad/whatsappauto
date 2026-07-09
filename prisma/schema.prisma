@@ -196,6 +196,13 @@ model User {
   hiddenSections String[] @default([])
   lockedSections String[] @default([])
 
+  // Bypass plan-limit enforcement for WhatsApp instances (and other
+  // per-plan quotas gated by checkPlanLimit). Intended for the shared
+  // "integration" user that back-ends an external CRM — that user
+  // provisions one instance per manager, well past any retail plan.
+  // Admin-only toggle from the User Access page or DB.
+  unlimitedInstances Boolean @default(false)
+
   // Subscription
   planId               String?
   plan                 Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
@@ -294,6 +301,11 @@ model WebhookConfig {
   url      String
   events   String[] // e.g. ["message.new", "message.sent"]
   isActive Boolean  @default(true)
+  // HMAC secret used to sign every outgoing webhook payload as
+  // X-Webhook-Signature: sha256=<hex>. Auto-generated on create; the
+  // POST response returns it once so the caller can store it. Later
+  // GETs never expose it (the receiver already has it).
+  secret   String   @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

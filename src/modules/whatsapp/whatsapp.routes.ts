@@ -11,7 +11,13 @@ router.use(requirePerm('whatsapp', 'view'));
 
 router.get('/', whatsappController.listInstances);
 router.post('/', requirePerm('whatsapp', 'create'), whatsappController.createInstance);
+// Single-instance status + QR polling for headless integrations
+// (external CRMs). Both remain view-scope so read-only workspace
+// members can still power a CRM in their own space.
+router.get('/:id', whatsappController.getInstance);
+router.get('/:id/qr', whatsappController.getQr);
 router.post('/:id/restart', requirePerm('whatsapp', 'update'), whatsappController.restartInstance);
+router.post('/:id/logout', requirePerm('whatsapp', 'update'), whatsappController.logoutInstance);
 router.put('/:id', requirePerm('whatsapp', 'update'), whatsappController.updateInstance);
 router.delete('/:id', requirePerm('whatsapp', 'delete'), whatsappController.deleteInstance);
 

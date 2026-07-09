@@ -9,6 +9,7 @@ const updateUserSchema = z.object({
     subscriptionEndsAt: z.string().datetime().nullable().optional(),
     hiddenSections: z.array(z.string().max(60)).optional(),
     lockedSections: z.array(z.string().max(60)).optional(),
+    unlimitedInstances: z.boolean().optional(),
 });
 
 const SAFE_USER_SELECT = {
@@ -16,6 +17,7 @@ const SAFE_USER_SELECT = {
     planId: true, subscriptionStatus: true, subscriptionEndsAt: true,
     stripeCustomerId: true,
     hiddenSections: true, lockedSections: true,
+    unlimitedInstances: true,
     createdAt: true, updatedAt: true,
     plan: { select: { id: true, name: true, price: true, currency: true, interval: true } }
 } as const;
@@ -47,6 +49,7 @@ export class AdminController {
             if (data.subscriptionEndsAt !== undefined) updateData.subscriptionEndsAt = data.subscriptionEndsAt ? new Date(data.subscriptionEndsAt) : null;
             if (data.hiddenSections !== undefined) updateData.hiddenSections = data.hiddenSections;
             if (data.lockedSections !== undefined) updateData.lockedSections = data.lockedSections;
+            if (data.unlimitedInstances !== undefined) updateData.unlimitedInstances = data.unlimitedInstances;
 
             const user = await prisma.user.update({
                 where: { id },

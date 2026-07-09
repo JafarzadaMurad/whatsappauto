@@ -11,6 +11,7 @@ router.use(requirePerm('webhooks', 'view'));
 
 router.get('/', controller.listWebhooks);
 router.post('/', requirePerm('webhooks', 'create'), controller.createWebhook);
+router.post('/:id/rotate-secret', requirePerm('webhooks', 'update'), controller.rotateSecret.bind(controller));
 router.delete('/:id', requirePerm('webhooks', 'delete'), controller.deleteWebhook);
 
 export default router;

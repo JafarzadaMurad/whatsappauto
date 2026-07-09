@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
 import { AutomationEngine } from '../automation/automation.engine';
+import { emitToWorkspaceSync, emitToIgWorkspaceSync } from '../../lib/socket-rooms';
 
 // ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -334,7 +335,7 @@ function buildOperatorAgentTools(opts: {
                                 toolCalls: [],
                             },
                         }).catch(() => {});
-                        io.emit(`message.new-${req.instanceId}`, {
+                        emitToWorkspaceSync(req.instanceId, `message.new-${req.instanceId}`, {
                             id: `op-answer-${Date.now()}`,
                             isFromMe: true, content: answerForCustomer,
                             remoteJid: req.customerJid,
@@ -364,7 +365,7 @@ function buildOperatorAgentTools(opts: {
                                 toolCalls: [],
                             },
                         }).catch(() => {});
-                        io.emit(`message.new-${req.instanceId}`, {
+                        emitToWorkspaceSync(req.instanceId, `message.new-${req.instanceId}`, {
                             id: saved.id, isFromMe: true, content: answerForCustomer,
                             remoteJid: req.customerJid, status: 'DELIVERED',
                             timestamp: new Date().toISOString(),
@@ -422,7 +423,7 @@ function buildOperatorAgentTools(opts: {
                                 toolCalls: [],
                             },
                         }).catch(() => {});
-                        io.emit(`message.new-${igAccount.id}`, {
+                        emitToIgWorkspaceSync(igAccount.id, `message.new-${igAccount.id}`, {
                             id: `op-send-${Date.now()}`,
                             isFromMe: true, content: message,
                             remoteJid: customerJid,
@@ -453,7 +454,7 @@ function buildOperatorAgentTools(opts: {
                             toolCalls: [],
                         },
                     }).catch(() => {});
-                    io.emit(`message.new-${instanceId}`, {
+                    emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                         id: saved.id, isFromMe: true, content: message,
                         remoteJid: customerJid, status: 'DELIVERED',
                         timestamp: new Date().toISOString(),
@@ -2356,7 +2357,7 @@ export class AiService {
             // payload belongs to the conversation the operator has
             // open. Without it, the AI reply landed in the DB but the
             // open chat didn't repaint until the next manual refresh.
-            io.emit(`message.new-${instanceId}`, {
+            emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                 id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
                 remoteJid,
                 status: 'DELIVERED', timestamp: new Date().toISOString()
@@ -2585,7 +2586,7 @@ export class AiService {
                     content: text, timestamp: new Date(),
                 },
             });
-            io.emit(`message.new-${instanceId}`, {
+            emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                 id: `op-${request.ticket}`, isFromMe: true, content: text,
                 remoteJid: request.customerJid, status: 'DELIVERED',
                 timestamp: new Date().toISOString(),
@@ -2702,7 +2703,7 @@ export class AiService {
             if (client) {
                 await prisma.client.update({ where: { id: client.id }, data: { lastReminderAt: new Date() } });
             }
-            io.emit(`message.new-${instanceId}`, {
+            emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                 id: sentMsg?.key?.id || saved.id, isFromMe: true, content: text,
                 remoteJid,
                 status: 'DELIVERED', timestamp: new Date().toISOString(),

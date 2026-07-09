@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { InstanceManager } from './instance.manager';
+import { InstanceManager, getLatestQr, sessions } from './instance.manager';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
@@ -27,7 +27,16 @@ export class WhatsappController {
             const workspaceId = getWorkspaceId(req);
             const data = createInstanceSchema.parse(req.body);
 
-            await checkPlanLimit(userId, 'whatsapp');
+            // Admin-flagged integration accounts (external CRMs that
+            // provision one instance per end-user manager) bypass the
+            // retail plan quota.
+            const user = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { unlimitedInstances: true },
+            });
+            if (!user?.unlimitedInstances) {
+                await checkPlanLimit(userId, 'whatsapp');
+            }
 
             const instance = await prisma.instance.create({
                 data: {
@@ -101,6 +110,79 @@ export class WhatsappController {
             InstanceManager.startInstance(id);
 
             return res.json({ success: true, message: 'Instance restarting' });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Single instance ────────────────────────────────────────────
+    // Headless integrations (external CRM) need the current status
+    // without pulling the whole list.
+    async getInstance(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const instance = await prisma.instance.findFirst({
+                where: { id, workspaceId },
+                include: { agent: { select: { id: true, name: true, isRouter: true } } },
+            });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+            return res.json({ success: true, instance });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── QR polling endpoint ────────────────────────────────────────
+    // External CRM (PHP + shared hosting, no Socket.IO) polls this to
+    // show the QR in its own modal. Cheap: instance existence check
+    // hits the DB, QR itself is served from an in-memory map. Returns
+    // `qr: null` once a fresh QR isn't available (still-CONNECTING) or
+    // once the socket is CONNECTED — the caller knows to stop polling.
+    async getQr(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const instance = await prisma.instance.findFirst({
+                where: { id, workspaceId },
+                select: { id: true, status: true },
+            });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            if (instance.status === 'CONNECTED') {
+                return res.json({ success: true, status: 'CONNECTED', qr: null, qrExpiresAt: null });
+            }
+            const cached = getLatestQr(id);
+            return res.json({
+                success: true,
+                status: instance.status,
+                qr: cached?.qr || null,
+                qrExpiresAt: cached?.expiresAt.toISOString() || null,
+            });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Logout ─────────────────────────────────────────────────────
+    // Disconnects the phone but keeps the DB row so the CRM can offer
+    // a rebind by re-scanning the QR. Differs from DELETE which drops
+    // everything (messages, campaigns' backref, etc.).
+    async logoutInstance(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId } });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            const sock: any = sessions.get(id);
+            if (sock) {
+                try { await sock.logout(); } catch { /* baileys logout can throw on already-closed sockets */ }
+                try { await sock.end(undefined); } catch { /* soft-close */ }
+                sessions.delete(id);
+            }
+            await prisma.instance.update({ where: { id }, data: { status: 'DISCONNECTED' } });
+            return res.json({ success: true, message: 'Logged out' });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

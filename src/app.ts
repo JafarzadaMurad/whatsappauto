@@ -45,11 +45,24 @@ app.use(
     })
 );
 
-// Rate Limiting
+// Rate Limiting. Skips IPs listed in `TRUSTED_IPS` (comma-separated
+// env var) — the typical use case is a headless integration server
+// (external CRM on shared hosting) that funnels every one of its
+// managers' API calls through the same egress IP. Without the skip
+// list, 10 managers can burn through the 1000-per-15-min window in
+// minutes and stop the CRM cold.
+const TRUSTED_IPS = String(process.env.TRUSTED_IPS || '')
+    .split(',')
+    .map(ip => ip.trim())
+    .filter(Boolean);
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 1000, // limit each IP to 1000 requests per windowMs
     validate: { trustProxy: false, xForwardedForHeader: false },
+    skip: (req) => {
+        const ip = req.ip || '';
+        return TRUSTED_IPS.includes(ip);
+    },
 });
 app.use(limiter);
 

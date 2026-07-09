@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
-import io, { Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
+import { createSocket } from "@/lib/socket";
 
 interface Instance {
     id: string;
@@ -43,7 +44,7 @@ export default function WhatsAppPage() {
     useEffect(() => {
         fetchData();
 
-        const socket = io(process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:2992');
+        const socket = createSocket();
         socketRef.current = socket;
 
         return () => { socket.disconnect(); };

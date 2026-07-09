@@ -27,6 +27,51 @@ import { maybeRefreshProfilePicAsync } from './profile-pic';
 
 export const sessions = new Map<string, WASocket>();
 
+import { setInstanceWorkspace, forgetInstanceWorkspace, emitToWorkspaceSync } from '../../lib/socket-rooms';
+
+// Latest QR per instance kept in memory for the REST poll endpoint.
+// Baileys refreshes QR ~every 20s; anything older than QR_TTL_MS is
+// treated as stale (returned as null so the poller waits for a fresh one).
+// Cleared when the socket transitions to `open`.
+const QR_TTL_MS = 20_000;
+export const qrCodes = new Map<string, { qr: string; at: number }>();
+
+export function getLatestQr(instanceId: string): { qr: string; expiresAt: Date } | null {
+    const entry = qrCodes.get(instanceId);
+    if (!entry) return null;
+    if (Date.now() - entry.at > QR_TTL_MS) {
+        qrCodes.delete(instanceId);
+        return null;
+    }
+    return { qr: entry.qr, expiresAt: new Date(entry.at + QR_TTL_MS) };
+}
+
+// Fire an `instance.status` webhook so headless integrations (external
+// CRMs, dashboards) learn about connection flips without polling.
+async function dispatchInstanceStatus(instanceId: string, status: 'CONNECTED' | 'DISCONNECTED') {
+    try {
+        const inst = await prisma.instance.findUnique({
+            where: { id: instanceId },
+            select: { name: true },
+        });
+        const sock = sessions.get(instanceId) as any;
+        const rawId = String(sock?.user?.id || '');
+        const phone = rawId ? rawId.split(':')[0].split('@')[0] : null;
+        webhookQueue.add('instance-status', {
+            instanceId,
+            event: 'instance.status',
+            payload: {
+                status,
+                phone: phone || null,
+                name: inst?.name || null,
+            },
+        }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+    } catch (e: any) {
+        logger.warn({ err: e?.message, instanceId }, '[instance.status] dispatch failed');
+    }
+}
+
+
 // JSON.stringify turns a Buffer into { type: 'Buffer', data: [..] }, and
 // JSON.parse restores it as that same plain object — not a Buffer. The
 // Baileys poll-vote helpers (getAggregateVotesInPollMessage,
@@ -61,6 +106,11 @@ export class InstanceManager {
                 logger.error(`Instance ${instanceId} not found in DB`);
                 return;
             }
+
+            // Seed the workspace cache so hot broadcast paths (message.new,
+            // poll updates, receipts) can pick the right Socket.IO room
+            // without hitting the DB.
+            setInstanceWorkspace(instanceId, instanceDb.workspaceId || null);
 
             logger.info(`Starting WhatsApp instance: ${instanceId}`);
 
@@ -111,7 +161,11 @@ export class InstanceManager {
                 if (qr) {
                     try {
                         const qrDataUrl = await qrcode.toDataURL(qr);
-                        io.emit(`qr-${instanceId}`, qrDataUrl);
+                        // Cache the QR so the REST /qr endpoint can serve it
+                        // to headless integrations (e.g. an external CRM
+                        // that can't consume Socket.IO).
+                        qrCodes.set(instanceId, { qr: qrDataUrl, at: Date.now() });
+                        emitToWorkspaceSync(instanceId, `qr-${instanceId}`, qrDataUrl);
                         await prisma.instance.update({
                             where: { id: instanceId },
                             data: { status: 'CONNECTING' }
@@ -130,24 +184,32 @@ export class InstanceManager {
                             where: { id: instanceId },
                             data: { status: 'DISCONNECTED' }
                         });
+                        // instance.status webhook — lets the CRM show a
+                        // "phone offline" banner without polling.
+                        dispatchInstanceStatus(instanceId, 'DISCONNECTED').catch(() => {});
                         setTimeout(() => this.startInstance(instanceId), 3000);
                     } else {
                         logger.info(`Connection logged out for ${instanceId}`);
                         sessions.delete(instanceId);
+                        qrCodes.delete(instanceId);
                         await prisma.instance.update({
                             where: { id: instanceId },
                             data: { status: 'DISCONNECTED' }
                         });
+                        dispatchInstanceStatus(instanceId, 'DISCONNECTED').catch(() => {});
                         // Cleanup DB keys if needed
                     }
                 } else if (connection === 'open') {
                     logger.info(`Connected instance: ${instanceId}`);
+                    // QR is worthless the moment the session opens.
+                    qrCodes.delete(instanceId);
                     await prisma.instance.update({
                         where: { id: instanceId },
                         data: { status: 'CONNECTED' }
                     });
 
-                    io.emit(`status-${instanceId}`, 'CONNECTED');
+                    emitToWorkspaceSync(instanceId, `status-${instanceId}`, 'CONNECTED');
+                    dispatchInstanceStatus(instanceId, 'CONNECTED').catch(() => {});
                 }
             });
 
@@ -474,7 +536,7 @@ export class InstanceManager {
                                 }
                                 const optionNames = options.map(o => String(o.optionName || ''));
                                 const pollOptions = optionNames.map(name => ({ name, votes: tally.get(name) || 0 }));
-                                io.emit(`poll.update-${instanceId}`, {
+                                emitToWorkspaceSync(instanceId, `poll.update-${instanceId}`, {
                                     remoteJid: rJid,
                                     pollWaMsgId: pollMsgId,
                                     pollOptions,
@@ -565,7 +627,7 @@ export class InstanceManager {
                                 ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                             },
                         }).catch(() => {});
-                        io.emit(`message.new-${instanceId}`, {
+                        emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                             id: msg.key.id,
                             isFromMe: true,
                             content,
@@ -574,6 +636,32 @@ export class InstanceManager {
                             timestamp: ts.toISOString(),
                             ...(savedMedia ? { mediaUrl: savedMedia.mediaUrl, mediaMime: savedMedia.mediaMime, mediaName: savedMedia.mediaName } : {}),
                         });
+                        // Outbound messages also go over the webhook so
+                        // external CRMs stay in sync when their operators
+                        // reply from the bot's own inbox.
+                        const outFromMeUrl = savedMedia?.mediaUrl
+                            ? (savedMedia.mediaUrl.startsWith('http')
+                                ? savedMedia.mediaUrl
+                                : `${(process.env.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
+                            : null;
+                        webhookQueue.add('new-message', {
+                            instanceId,
+                            event: 'message.new',
+                            payload: {
+                                waMsgId: msg.key?.id || null,
+                                remoteJid,
+                                phone: (remoteJid.split(':')[0].split('@')[0] || '').replace(/\D/g, '') || null,
+                                pushName: null,
+                                isFromMe: true,
+                                type: msgType,
+                                text: content || null,
+                                mediaUrl: outFromMeUrl,
+                                mediaMime: savedMedia?.mediaMime || null,
+                                mediaName: savedMedia?.mediaName || null,
+                                timestamp: ts.toISOString(),
+                                raw: msg,
+                            },
+                        }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
                         continue;
                     }
 
@@ -639,13 +727,35 @@ export class InstanceManager {
                         }
                     } catch { /* never block message handling on CRM upsert */ }
 
+                    // Normalised webhook payload. External integrations
+                    // (PHP CRM, no-code tools) get a flat, easy-to-parse
+                    // shape; the original Baileys `msg` is preserved in
+                    // `raw` for anyone who needs the deep tree.
+                    const normalisedMediaUrl = savedMedia?.mediaUrl
+                        ? (savedMedia.mediaUrl.startsWith('http')
+                            ? savedMedia.mediaUrl
+                            : `${(process.env.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
+                        : null;
                     webhookQueue.add('new-message', {
                         instanceId,
                         event: 'message.new',
-                        payload: msg,
+                        payload: {
+                            waMsgId: msg.key?.id || null,
+                            remoteJid,
+                            phone: resolvedPhone,
+                            pushName: msg.pushName || null,
+                            isFromMe: false,
+                            type: msgType,
+                            text: finalContent || content || null,
+                            mediaUrl: normalisedMediaUrl,
+                            mediaMime: savedMedia?.mediaMime || null,
+                            mediaName: savedMedia?.mediaName || null,
+                            timestamp: ts.toISOString(),
+                            raw: msg,
+                        },
                     }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
 
-                    io.emit(`message.new-${instanceId}`, {
+                    emitToWorkspaceSync(instanceId, `message.new-${instanceId}`, {
                         id: msg.key.id,
                         isFromMe: false,
                         content,
@@ -782,9 +892,21 @@ export class InstanceManager {
                             data: { status },
                         });
                         if (updated.count > 0) {
-                            io.emit(`message.status-${instanceId}`, {
+                            emitToWorkspaceSync(instanceId, `message.status-${instanceId}`, {
                                 waMsgId: waId, status, remoteJid: u?.key?.remoteJid || null,
                             });
+                            // message.status webhook for headless
+                            // integrations that render delivery ticks
+                            // outside the bot's own inbox.
+                            webhookQueue.add('message-status', {
+                                instanceId,
+                                event: 'message.status',
+                                payload: {
+                                    waMsgId: waId,
+                                    status,
+                                    remoteJid: u?.key?.remoteJid || null,
+                                },
+                            }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
                         }
                     } catch (e: any) {
                         logger.warn({ err: e.message, waId }, '[receipts] update failed');
@@ -804,6 +926,8 @@ export class InstanceManager {
         if (sock) {
             sock.end(undefined);
             sessions.delete(instanceId);
+            qrCodes.delete(instanceId);
+            forgetInstanceWorkspace(instanceId);
             await prisma.instance.update({
                 where: { id: instanceId },
                 data: { status: 'DISCONNECTED' }

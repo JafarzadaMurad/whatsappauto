@@ -51,7 +51,7 @@ export async function createCheckoutSession(userId: string, planId: string): Pro
 
     const customerId = await getOrCreateCustomer(userId);
     const stripe = await getStripe();
-    const baseUrl = config.FRONTEND_URL || 'https://chatbot.tur.al';
+    const baseUrl = config.FRONTEND_URL || 'https://chatbot.tural.ai';
 
     const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
@@ -71,7 +71,7 @@ export async function createPortalSession(userId: string): Promise<string> {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user?.stripeCustomerId) throw new Error('No active subscription — subscribe first.');
     const stripe = await getStripe();
-    const baseUrl = config.FRONTEND_URL || 'https://chatbot.tur.al';
+    const baseUrl = config.FRONTEND_URL || 'https://chatbot.tural.ai';
     const session = await stripe.billingPortal.sessions.create({
         customer: user.stripeCustomerId,
         return_url: `${baseUrl}/dashboard/billing`

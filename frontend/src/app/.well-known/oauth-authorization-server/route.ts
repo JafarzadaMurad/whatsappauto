@@ -2,7 +2,7 @@
 // Forwarded to our backend so the canonical document is the same.
 
 export async function GET() {
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://chatbot.tur.al';
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://chatbot.tural.ai';
     return Response.json({
         issuer: base,
         authorization_endpoint: `${base}/api/mcp/oauth/authorize`,

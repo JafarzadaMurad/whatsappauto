@@ -11,7 +11,7 @@ import { config } from '../../../config';
 // (verified via the dashboard JWT) and decision.
 export async function authorizeRedirect(req: Request, res: Response) {
     const params = new URLSearchParams(req.query as any);
-    const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+    const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
     return res.redirect(`${base}/oauth/authorize?${params.toString()}`);
 }
 

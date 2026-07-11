@@ -94,6 +94,6 @@ export function resetPasswordEmail(name: string | null, url: string): { subject:
 }
 
 export function appUrl(path: string): string {
-    const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+    const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
     return `${base}${path.startsWith('/') ? path : '/' + path}`;
 }

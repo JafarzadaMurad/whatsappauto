@@ -28,7 +28,7 @@ async function getGoogleClientCredentials(): Promise<{ clientId: string; clientS
 }
 
 export function getRedirectUri() {
-    const base = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
+    const base = process.env.FRONTEND_URL || 'https://chatbot.tural.ai';
     return `${base.replace(/\/$/, '')}/api/google/oauth/callback`;
 }
 

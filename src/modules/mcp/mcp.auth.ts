@@ -4,7 +4,7 @@ import { config } from '../../config';
 import { getOrCreatePersonalWorkspace } from '../../lib/workspace-migration';
 
 function buildWwwAuth(error: string): string {
-    const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+    const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
     const resourceMeta = `${base}/.well-known/oauth-protected-resource`;
     return `Bearer realm="MCP", error="${error}", resource_metadata="${resourceMeta}"`;
 }

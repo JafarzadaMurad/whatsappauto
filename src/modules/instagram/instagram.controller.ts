@@ -22,7 +22,7 @@ function isDuplicate(key: string): boolean {
     return false;
 }
 function getRedirectUri() {
-    const base = config.FRONTEND_URL || 'https://chatbot.tur.al';
+    const base = config.FRONTEND_URL || 'https://chatbot.tural.ai';
     return `${base.replace(/\/$/, '')}/dashboard/instagram/callback`;
 }
 
@@ -101,7 +101,7 @@ export class InstagramController {
 
             // We need the userId from our auth - get it from the state or session
             // For now, redirect to frontend with token info to complete linking
-            const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
+            const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tural.ai';
             const params = new URLSearchParams({
                 igUserId,
                 username,
@@ -112,7 +112,7 @@ export class InstagramController {
         } catch (error: any) {
             const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
             logger.error({ err: error, responseData: error.response?.data, status: error.response?.status }, 'Instagram OAuth callback failed: ' + detail);
-            const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
+            const frontendUrl = process.env.FRONTEND_URL || 'https://chatbot.tural.ai';
             return res.redirect(`${frontendUrl}/dashboard/instagram?error=${encodeURIComponent(detail)}`);
         }
     }

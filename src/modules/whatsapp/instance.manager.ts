@@ -642,7 +642,7 @@ export class InstanceManager {
                         const outFromMeUrl = savedMedia?.mediaUrl
                             ? (savedMedia.mediaUrl.startsWith('http')
                                 ? savedMedia.mediaUrl
-                                : `${(process.env.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
+                                : `${(process.env.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
                             : null;
                         webhookQueue.add('new-message', {
                             instanceId,
@@ -734,7 +734,7 @@ export class InstanceManager {
                     const normalisedMediaUrl = savedMedia?.mediaUrl
                         ? (savedMedia.mediaUrl.startsWith('http')
                             ? savedMedia.mediaUrl
-                            : `${(process.env.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
+                            : `${(process.env.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '')}${savedMedia.mediaUrl.startsWith('/') ? '' : '/'}${savedMedia.mediaUrl}`)
                         : null;
                     webhookQueue.add('new-message', {
                         instanceId,

@@ -71,7 +71,7 @@ export class GoogleController {
         const code = String(req.query.code || '');
         const state = String(req.query.state || '');
         const err = String(req.query.error || '');
-        const base = process.env.FRONTEND_URL || 'https://chatbot.tur.al';
+        const base = process.env.FRONTEND_URL || 'https://chatbot.tural.ai';
         const finish = (params: Record<string, string>) => {
             const ctx = stateStore.get(state);
             const returnTo = ctx?.returnTo || '/dashboard/connectors';

@@ -17,7 +17,7 @@ import {
 const META_OAUTH_SCOPE = ['ads_read', 'business_management', 'public_profile'].join(',');
 
 function getRedirectUri(): string {
-    const base = config.FRONTEND_URL || 'https://chatbot.tur.al';
+    const base = config.FRONTEND_URL || 'https://chatbot.tural.ai';
     return `${base.replace(/\/$/, '')}/dashboard/meta/callback`;
 }
 

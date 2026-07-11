@@ -42,7 +42,7 @@ export function registerInstagramTools(reg: RegisterToolFn) {
             const cfgRows = await prisma.systemConfig.findMany({ where: { key: { in: ['META_IG_APP_ID'] } } });
             const appId = cfgRows.find(r => r.key === 'META_IG_APP_ID')?.value;
             if (!appId) return fail('Instagram is not configured on this platform (META_IG_APP_ID missing).');
-            const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+            const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
             const redirectUri = `${base}/dashboard/instagram/callback`;
             const scope = 'instagram_business_basic,instagram_business_manage_messages';
             const url = `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;

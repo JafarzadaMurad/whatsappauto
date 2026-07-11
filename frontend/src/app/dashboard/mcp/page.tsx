@@ -66,7 +66,7 @@ function SetupTab() {
     const [creating, setCreating] = useState(false);
     const [newKey, setNewKey] = useState<string | null>(null);
     const [name, setName] = useState('Claude Desktop');
-    const baseUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/mcp` : 'https://chatbot.tur.al/api/mcp';
+    const baseUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/mcp` : 'https://chatbot.tural.ai/api/mcp';
 
     const generate = async () => {
         setCreating(true);

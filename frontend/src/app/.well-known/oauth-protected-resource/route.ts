@@ -2,7 +2,7 @@
 // authorization server that protects our /api/mcp endpoint.
 
 export async function GET() {
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://chatbot.tur.al';
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://chatbot.tural.ai';
     return Response.json({
         resource: `${base}/api/mcp`,
         authorization_servers: [base],

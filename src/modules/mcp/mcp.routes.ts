@@ -21,7 +21,7 @@ const router: Router = Router();
 // ─── MCP discovery (no auth) ───
 // https://modelcontextprotocol.io/specification/draft/basic/transports/
 router.get('/.well-known/oauth-authorization-server', (_req, res) => {
-    const base = (config.FRONTEND_URL || 'https://chatbot.tur.al').replace(/\/$/, '');
+    const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
     res.json({
         issuer: base,
         authorization_endpoint: `${base}/api/mcp/oauth/authorize`,

@@ -31,6 +31,7 @@ import mcpRoutes from './modules/mcp/mcp.routes';
 import userFieldRoutes from './modules/userfield/userfield.routes';
 import workspaceRoutes from './modules/workspace/workspace.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
+import { userRouter as creditsUserRouter, adminPricingRouter, adminCreditsRouter } from './modules/credits/credits.routes';
 import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
@@ -104,6 +105,9 @@ app.use('/api/mcp', mcpRoutes);
 app.use('/api/user-fields', userFieldRoutes);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/credits', creditsUserRouter);
+app.use('/api/admin/ai-pricing', adminPricingRouter);
+app.use('/api/admin/credits', adminCreditsRouter);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

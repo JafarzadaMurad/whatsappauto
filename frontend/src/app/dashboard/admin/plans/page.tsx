@@ -16,6 +16,9 @@ type Plan = {
     maxInstagramAccounts: number;
     maxAutomations: number;
     monthlyMessageLimit: number;
+    monthlyCredits: number;
+    allowCustomApiKeys: boolean;
+    overageBehavior: "hard_block" | "top_up";
     isActive: boolean;
     isDefault?: boolean;
     trialDays?: number | null;
@@ -26,7 +29,9 @@ type Plan = {
 const emptyPlan = (): Plan => ({
     name: "", description: "", price: 0, currency: "USD", interval: "month",
     maxAgents: 1, maxWhatsappAccounts: 1, maxInstagramAccounts: 1, maxAutomations: 1,
-    monthlyMessageLimit: 1000, isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
+    monthlyMessageLimit: 1000,
+    monthlyCredits: 10000, allowCustomApiKeys: false, overageBehavior: "hard_block",
+    isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
 });
 
 export default function AdminPlansPage() {
@@ -162,6 +167,7 @@ export default function AdminPlansPage() {
                                 <li>Instagram accounts: {p.maxInstagramAccounts < 0 ? '∞' : p.maxInstagramAccounts}</li>
                                 <li>Automations: {p.maxAutomations < 0 ? '∞' : p.maxAutomations}</li>
                                 <li>Messages/month: {p.monthlyMessageLimit < 0 ? '∞' : p.monthlyMessageLimit}</li>
+                                <li className="text-primary/80 font-semibold">cai/month: {p.monthlyCredits?.toLocaleString?.() || 0}{p.allowCustomApiKeys && <span className="text-emerald-400 font-normal"> · own-key OK</span>}</li>
                             </ul>
                             <div className="flex items-center justify-between pt-2 border-t border-border">
                                 <span className="text-xs text-muted-foreground">{p._count?.users || 0} subscriber(s)</span>
@@ -227,6 +233,26 @@ export default function AdminPlansPage() {
                                 {num('Max Instagram accounts', 'maxInstagramAccounts')}
                             </div>
                             {num('Monthly message limit', 'monthlyMessageLimit')}
+                            <div className="pt-3 mt-3 border-t border-border space-y-3">
+                                <p className="text-xs font-semibold text-primary">cai credits</p>
+                                {num('Monthly cai', 'monthlyCredits', 'Aylıq cai budcəsi. Bütün AI çağırışları burdan çıxır.')}
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={editing.allowCustomApiKeys}
+                                        onChange={e => setEditing({ ...editing, allowCustomApiKeys: e.target.checked })}
+                                        className="w-4 h-4 accent-primary rounded" />
+                                    <span className="text-sm">Allow bring-your-own API keys</span>
+                                    <span className="text-[10px] text-muted-foreground">— Pro+ only</span>
+                                </label>
+                                <div>
+                                    <label className="text-xs font-medium text-muted-foreground">When cai runs out</label>
+                                    <select value={editing.overageBehavior}
+                                        onChange={e => setEditing({ ...editing, overageBehavior: e.target.value as any })}
+                                        className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                        <option value="hard_block" className="bg-card">Hard block (return 402)</option>
+                                        <option value="top_up" className="bg-card">Allow past zero (admin tops up manually)</option>
+                                    </select>
+                                </div>
+                            </div>
                             {editing.price === 0 && (
                                 <div>
                                     <label className="text-xs font-medium text-muted-foreground">Trial / free period (days, blank = no expiry)</label>

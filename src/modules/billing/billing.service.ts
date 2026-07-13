@@ -156,6 +156,27 @@ export async function handleWebhookEvent(event: any): Promise<void> {
                 where: { id: user.id },
                 data: { subscriptionStatus: event.type === 'invoice.paid' ? 'active' : 'past_due' }
             });
+            // ─── cai monthly reset ───
+            // On a successful invoice, refill every workspace this user
+            // owns: creditsUsedThisPeriod=0 and periodResetAt bumped to
+            // the invoice's period_end (falling back to now + 30d).
+            // Manual top-ups are consumed too so they don't stack forever.
+            if (event.type === 'invoice.paid') {
+                const periodEnd = (inv as any).lines?.data?.[0]?.period?.end
+                    || (inv as any).period_end
+                    || null;
+                const resetAt = periodEnd
+                    ? new Date(Number(periodEnd) * 1000)
+                    : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+                await prisma.workspace.updateMany({
+                    where: { ownerId: user.id },
+                    data: {
+                        creditsUsedThisPeriod: 0,
+                        creditTopUp: 0,
+                        periodResetAt: resetAt,
+                    },
+                });
+            }
             break;
         }
     }

@@ -34,6 +34,20 @@ model Workspace {
   stripeCustomerId     String?
   stripeSubscriptionId String?
 
+  // ─── cai credit system (per-workspace pool) ────────────────────────
+  // How many cai this workspace has consumed since the last reset.
+  // Ceil-rounded from real per-token cost * marginMultiplier. Compared
+  // against Plan.monthlyCredits before every platform-key LLM call.
+  creditsUsedThisPeriod Int      @default(0)
+  // When the pool refills. Set from Stripe's current_period_end on
+  // paid plans; from createdAt + 30d for the free / default plan.
+  // null = never resets (unlimited plan).
+  periodResetAt         DateTime?
+  // Manual admin top-ups. Added to Plan.monthlyCredits during the
+  // "remaining" calculation. Resets to 0 on the same period reset
+  // (unless we later decide top-ups roll over). Non-negative.
+  creditTopUp           Int      @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -66,6 +80,7 @@ model Workspace {
   agentChatMessages  AgentChatMessage[]
   adRoutes           AdRoute[]
   metaAdAccounts     MetaAdAccount[]
+  creditLedger       CreditLedger[]
 
   @@index([ownerId])
 }
@@ -163,6 +178,21 @@ model Plan {
 
   stripePriceId String? // Stripe Price ID (set when billing is wired up)
 
+  // ─── cai credit system ─────────────────────────────────────────────
+  // Monthly cai budget the workspace on this plan can spend on
+  // platform-provided LLM calls. Resets on Stripe billing cycle
+  // (invoice.paid), or 30 days from workspace creation for free plans.
+  monthlyCredits     Int     @default(0)
+  // Pro+ toggle: when true, workspaces on this plan may enter their
+  // own provider API keys (AiProvider.useOwnKey=true) so their calls
+  // don't count against the cai pool. When false, every LLM call is
+  // billed against monthlyCredits regardless of what apiKey is stored.
+  allowCustomApiKeys Boolean @default(false)
+  // Behaviour when a workspace runs out of cai mid-month.
+  // hard_block — throw 402 back to the caller, agent stops replying
+  // top_up      — allow past-zero calls, admin manually adds credits
+  overageBehavior    String  @default("hard_block")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -238,6 +268,9 @@ model User {
   // Deals — reverse relations for the pipelines and cards this user created
   dealPipelines DealPipeline[]
   deals         Deal[]
+
+  // cai — every LLM call this user triggered (for member-usage analytics)
+  creditLedger CreditLedger[]
 }
 
 model Instance {
@@ -429,6 +462,14 @@ model AiProvider {
 
   provider String // OPENAI, CLAUDE, GEMINI
   apiKey   String
+
+  // cai billing switch. When true, `apiKey` is the workspace's own
+  // provider key and every LLM call skips the credit meter. When false
+  // (default for new rows), `apiKey` is ignored at runtime — the platform
+  // key from SystemConfig is used and cai are deducted from the
+  // workspace pool. Only Pro+ plans (Plan.allowCustomApiKeys=true) are
+  // allowed to flip this on; the API returns 403 for others.
+  useOwnKey Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1427,6 +1468,61 @@ model DealStage {
   deals       Deal[]
 
   @@index([pipelineId, order])
+}
+
+// ─── cai credit system — pricing catalogue ────────────────────────
+// One row per model we bill. Admin edits inputCostPer1M /
+// outputCostPer1M to reflect the provider's actual per-1M-token USD
+// cost (source of truth: provider pricing page). `marginMultiplier`
+// is applied on top to yield the internal cai rate — 3.0 means we
+// charge 3× the raw cost, i.e. ~66% margin. The credit calculator
+// hits this table on every LLM completion; a background cache in
+// ai-pricing.ts avoids the query on the hot path.
+model AiPricing {
+  id                String   @id @default(uuid())
+  provider          String   // 'anthropic' | 'openai' | 'google'
+  model             String   // provider-specific model id (e.g. 'claude-opus-4-8')
+  inputCostPer1M    Float    // provider's real USD cost per 1M input tokens
+  outputCostPer1M   Float    // same for output tokens
+  cachedCostPer1M   Float    @default(0) // Anthropic prompt-cache read cost (usually 10% of input)
+  marginMultiplier  Float    @default(3.0) // applied on top of raw cost
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([provider, model])
+  @@index([isActive])
+}
+
+// One row per LLM call — audit trail + usage graph source.
+// `realCostUsd` records what the raw provider tokens cost us (or would
+// have cost us — for BYOK it still gets computed so we can show the
+// user "you saved $X by bringing your own key"). `creditsUsed` is the
+// cai actually deducted (0 for BYOK).
+model CreditLedger {
+  id            String   @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  provider      String   // 'anthropic' | 'openai' | 'google'
+  model         String
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  cachedTokens  Int      @default(0)
+  realCostUsd   Float    @default(0)
+  creditsUsed   Int      @default(0)
+  usedOwnKey    Boolean  @default(false)
+  // Where the call came from — drives per-feature analytics.
+  //   'whatsapp_reply' | 'instagram_dm' | 'campaign' | 'oversight'
+  //   'ads_gen' | 'mcp_tool' | 'router' | 'other'
+  cause         String   @default("other")
+
+  createdAt     DateTime @default(now())
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 model Deal {

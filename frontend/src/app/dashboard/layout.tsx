@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog, Coins, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -132,6 +132,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         { name: 'MCP', href: '/dashboard/mcp', icon: Plug, section: 'mcp' },
         { name: 'Webhooks', href: '/dashboard/webhooks', icon: LinkIcon, section: 'webhooks' },
         { name: 'Billing', href: '/dashboard/billing', icon: CreditCard, section: 'billing' },
+        { name: 'Usage', href: '/dashboard/usage', icon: Coins },
         ...(user?.role === 'ADMIN' ? [{
             name: 'Admin',
             icon: Shield,
@@ -142,6 +143,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
                 { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },
                 { name: 'AI Models', href: '/dashboard/admin/ai-models', icon: Bot },
+                { name: 'AI Pricing', href: '/dashboard/admin/ai-pricing', icon: Coins },
+                { name: 'Platform Keys', href: '/dashboard/admin/platform-keys', icon: KeyRound },
                 { name: 'Sign-in', href: '/dashboard/admin/auth', icon: LogIn },
                 { name: 'Email', href: '/dashboard/admin/email', icon: Mail },
             ]

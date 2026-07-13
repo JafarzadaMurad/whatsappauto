@@ -15,6 +15,7 @@ import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
 import { startReminderScheduler } from './modules/agent/reminder.scheduler';
+import { seedAiPricing } from './lib/ai-pricing.seed';
 
 const server = http.createServer(app);
 
@@ -134,6 +135,13 @@ server.listen(PORT, async () => {
     // for at least agent.reminderHours and ask the model to draft a
     // follow-up. Per-contact lock + max-reminders cap prevent nagging.
     startReminderScheduler();
+
+    // Idempotent: fill in the AiPricing table with default provider
+    // rates so the first cai bill goes out with real numbers rather
+    // than the fallback estimate. Admin-edited rows are never touched.
+    try { await seedAiPricing(); } catch (e: any) {
+        logger.error({ err: e.message }, '[ai-pricing] seed failed');
+    }
 });
 
 // Handle unhandled Promise rejections

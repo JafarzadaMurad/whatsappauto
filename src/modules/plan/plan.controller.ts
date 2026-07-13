@@ -14,6 +14,10 @@ const planSchema = z.object({
     maxInstagramAccounts: z.number().int().default(1),
     maxAutomations: z.number().int().default(1),
     monthlyMessageLimit: z.number().int().default(1000),
+    // cai credit system
+    monthlyCredits: z.number().int().nonnegative().default(0),
+    allowCustomApiKeys: z.boolean().default(false),
+    overageBehavior: z.enum(['hard_block', 'top_up']).default('hard_block'),
     isActive: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     trialDays: z.number().int().min(0).nullable().optional(),

@@ -10,6 +10,7 @@ import { buildToolsForSkills, applyAnthropicCacheControl, extractCacheUsage, int
 import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../automation/automation.engine';
 import { upsertCrmContact } from '../client/client.service';
 import { extractIgReferrer } from '../ads/ad-referrer';
+import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
 
 // makeTool used only for IG-specific tools (polls fallback). The
 // universal skill builder is imported from ai.service.ts so IG picks
@@ -751,6 +752,13 @@ export class InstagramAiService {
             messages: applyAnthropicCacheControl(providerInfo.provider, messages),
             ...(hasTools ? { tools, stopWhen: stepCountIs(5) } : {}),
         } as any);
+        void recordUsagePostHoc({
+            workspaceId: opts?.workspaceId || null,
+            userId: (agent as any).userId || null,
+            providerInfo,
+            model: agent.model,
+            cause: 'instagram_dm' as CreditCause,
+        }, result);
 
         // Directive bookkeeping — mirrors what WhatsApp's
         // handleIncomingMessage does. One-shot directives get their

@@ -7,6 +7,7 @@ import { logger } from '../../utils/logger';
 import { prisma } from '../../lib/prisma';
 import { config } from '../../config';
 import { sessions } from '../whatsapp/instance.manager';
+import { recordUsagePostHoc } from '../../lib/credit-guard';
 import IORedis from 'ioredis';
 
 const connection = new IORedis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -85,6 +86,13 @@ export const startCampaignWorker = () => {
                 system: systemPrompt,
                 messages: [{ role: 'user' as const, content: 'Start the conversation.' }],
             } as any);
+            void recordUsagePostHoc({
+                workspaceId: (agent as any).workspaceId || null,
+                userId: (agent as any).userId || null,
+                providerInfo,
+                model: agent.model,
+                cause: 'campaign',
+            }, result);
 
             const text = result.text;
             if (!text) throw new Error('AI returned empty response');

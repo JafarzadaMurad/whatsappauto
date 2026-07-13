@@ -203,6 +203,67 @@ export async function runWithCredits<T>(
 }
 
 /**
+ * Post-hoc usage recorder. Same accounting as runWithCredits() but
+ * runs AFTER an existing generateText() call the caller already made.
+ * Use this at LLM call sites that are too tangled to refactor into
+ * the runWithCredits() wrapper — you keep your aiModel construction
+ * and generateText() unchanged, then hand us the result and we
+ * price + record + decrement the workspace pool. Non-throwing:
+ * ledger write failures log but don't break the caller.
+ */
+export async function recordUsagePostHoc(
+    opts: {
+        workspaceId: string | null;
+        userId?: string | null;
+        providerInfo: { provider: string; apiKey: string; useOwnKey?: boolean };
+        model: string;
+        cause: CreditCause;
+    },
+    aiResult: any
+): Promise<void> {
+    const { workspaceId, userId, providerInfo, model, cause } = opts;
+    if (!workspaceId) return;
+    try {
+        // Fetch plan settings to know if BYOK is allowed (governs
+        // `usedOwnKey` — even if useOwnKey=true, we only honour it on
+        // a plan that has allowCustomApiKeys).
+        const ws = await loadWorkspaceCtx(workspaceId);
+        const usedOwnKey = !!providerInfo.useOwnKey && !!ws?.plan?.allowCustomApiKeys;
+
+        const usage = extractUsage(providerInfo.provider, aiResult);
+        const pricedProvider = providerLower(providerInfo.provider);
+        const { realCostUsd, credits } = await priceUsage(pricedProvider, model, usage);
+        const chargedCredits = usedOwnKey ? 0 : credits;
+
+        await prisma.$transaction([
+            prisma.creditLedger.create({
+                data: {
+                    workspaceId,
+                    userId: userId || null,
+                    provider: pricedProvider,
+                    model,
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens,
+                    cachedTokens: usage.cachedTokens || 0,
+                    realCostUsd,
+                    creditsUsed: chargedCredits,
+                    usedOwnKey,
+                    cause,
+                },
+            }),
+            ...(chargedCredits > 0
+                ? [prisma.workspace.update({
+                    where: { id: workspaceId },
+                    data: { creditsUsedThisPeriod: { increment: chargedCredits } },
+                })]
+                : []),
+        ]);
+    } catch (err: any) {
+        logger.error({ err: err.message, workspaceId, model }, '[credit-guard] post-hoc ledger write failed');
+    }
+}
+
+/**
  * Read-only helper for the /api/credits endpoint. Returns the cai
  * balance shape the user dashboard renders. `remaining` can go
  * negative for workspaces on overage → clamp to 0 for display.

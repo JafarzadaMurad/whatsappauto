@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
+import { recordUsagePostHoc } from '../../lib/credit-guard';
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -209,6 +210,13 @@ export async function runOversightAgent(oversightId: string): Promise<{ ok: bool
             system: prompt,
             messages: [{ role: 'user', content: 'Now produce the JSON.' }],
         } as any);
+        void recordUsagePostHoc({
+            workspaceId: (oversight as any).workspaceId || null,
+            userId: (agents[0] as any)?.userId || null,
+            providerInfo: { provider: oversight.provider.provider, apiKey: oversight.provider.apiKey },
+            model: oversight.model,
+            cause: 'oversight',
+        }, result);
 
         const text = result.text || '';
         const parsed = safeParseJson(text);

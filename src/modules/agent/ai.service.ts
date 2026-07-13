@@ -9,6 +9,7 @@ import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
 import { AutomationEngine } from '../automation/automation.engine';
 import { emitToWorkspaceSync, emitToIgWorkspaceSync } from '../../lib/socket-rooms';
+import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
 
 // ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
@@ -2227,6 +2228,13 @@ export class AiService {
                 ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
             } as any);
             const durationMs = Date.now() - t0;
+            void recordUsagePostHoc({
+                workspaceId: (agent as any).workspaceId || null,
+                userId: (agent as any).userId || null,
+                providerInfo,
+                model: agent.model,
+                cause: 'whatsapp_reply' as CreditCause,
+            }, result);
 
             if (process.env.AGENT_DEBUG === 'true') {
                 logger.info({
@@ -2478,6 +2486,13 @@ export class AiService {
             messages: applyAnthropicCacheControl(providerInfo.provider, messages as any),
             ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
         } as any);
+        void recordUsagePostHoc({
+            workspaceId,
+            userId: (agent as any).userId || null,
+            providerInfo,
+            model: agent.model,
+            cause: 'other' as CreditCause,
+        }, result);
 
         const reply = result.text || '';
         const richToolCalls = extractRichToolCalls(result.steps as any[]);
@@ -2564,6 +2579,7 @@ export class AiService {
 
         try {
             const aiModel = this.buildAiModel(agent);
+            const _providerInfo = (agent as any).provider;
             const result = await generateText({
                 model: aiModel,
                 system: composePrompt,
@@ -2576,6 +2592,13 @@ export class AiService {
                     { role: 'user', content: `[internal note] You just got the answer back: ${operatorAnswer}\nReply now, no greeting.` },
                 ],
             } as any);
+            void recordUsagePostHoc({
+                workspaceId: (agent as any).workspaceId || null,
+                userId: (agent as any).userId || null,
+                providerInfo: _providerInfo,
+                model: agent.model,
+                cause: 'whatsapp_reply' as CreditCause,
+            }, result);
             const text = (result.text || operatorAnswer).trim();
 
             await sock.sendMessage(request.customerJid, { text });
@@ -2678,6 +2701,13 @@ export class AiService {
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
                 ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
+            void recordUsagePostHoc({
+                workspaceId: wsId,
+                userId: (agent as any).userId || null,
+                providerInfo,
+                model: agent.model,
+                cause: 'whatsapp_reply' as CreditCause,
+            }, result);
 
             const text = (result.text || '').trim();
             if (!text) {
@@ -2786,6 +2816,13 @@ export class AiService {
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
                 ...(tools ? { tools, stopWhen: stepCountIs(5) } : {}),
             } as any);
+            void recordUsagePostHoc({
+                workspaceId: workspaceId || null,
+                userId: (agent as any).userId || null,
+                providerInfo,
+                model: agent.model,
+                cause: 'instagram_dm' as CreditCause,
+            }, result);
 
             const text = (result.text || '').trim();
             if (!text) {
@@ -2930,6 +2967,13 @@ export class AiService {
                 tools: opTools,
                 stopWhen: stepCountIs(10),
             } as any);
+            void recordUsagePostHoc({
+                workspaceId: (agent as any).workspaceId || null,
+                userId: (agent as any).userId || null,
+                providerInfo: (agent as any).provider,
+                model: agent.model,
+                cause: 'whatsapp_reply' as CreditCause,
+            }, result);
             const text = (result.text || '').trim();
 
             const calls = (result.steps || []).flatMap((s: any) => (s.toolCalls || []).map((tc: any) => tc.toolName));
@@ -3228,6 +3272,13 @@ Your text reply is for the operator. The customer never sees it. Keep it short a
             tools: allTools,
             stopWhen: stepCountIs(8),
         } as any);
+        void recordUsagePostHoc({
+            workspaceId: workspaceId || null,
+            userId: (agent as any).userId || null,
+            providerInfo,
+            model: agent.model,
+            cause: 'other' as CreditCause,
+        }, result);
 
         const reply = (result.text || '').trim();
         const richToolCalls = extractRichToolCalls(result.steps as any[]);

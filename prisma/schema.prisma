@@ -48,6 +48,12 @@ model Workspace {
   // (unless we later decide top-ups roll over). Non-negative.
   creditTopUp           Int      @default(0)
 
+  // User-supplied extension to the admin's copilot system prompt.
+  // Appended AFTER the admin base prompt so the workspace can add
+  // brand rules ("always reply in Russian", "never suggest deleting
+  // agents"). Empty by default; owner-editable from Settings.
+  copilotCustomPrompt   String?  @db.Text
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -81,6 +87,7 @@ model Workspace {
   adRoutes           AdRoute[]
   metaAdAccounts     MetaAdAccount[]
   creditLedger       CreditLedger[]
+  copilotSessions    CopilotSession[]
 
   @@index([ownerId])
 }
@@ -193,6 +200,16 @@ model Plan {
   // top_up      — allow past-zero calls, admin manually adds credits
   overageBehavior    String  @default("hard_block")
 
+  // ─── In-app copilot ────────────────────────────────────────────────
+  // The chat bubble on every /dashboard page that can list/create/update
+  // resources on the user's behalf. Text mode is standard cai billing;
+  // voice mode uses the Realtime API (much pricier per second) so it's
+  // gated separately and gets its own multiplier applied on top of the
+  // model's rate. Both default off so admins pick per-plan.
+  copilotEnabled         Boolean @default(false)
+  copilotVoiceEnabled    Boolean @default(false)
+  copilotVoiceMultiplier Float   @default(5.0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -270,7 +287,8 @@ model User {
   deals         Deal[]
 
   // cai — every LLM call this user triggered (for member-usage analytics)
-  creditLedger CreditLedger[]
+  creditLedger    CreditLedger[]
+  copilotSessions CopilotSession[]
 }
 
 model Instance {
@@ -1534,6 +1552,30 @@ model CreditLedger {
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([agentId, createdAt(sort: Desc)])
+}
+
+// In-app AI copilot conversation. One row per persistent chat session
+// (the chat bubble stays open across dashboard navigation — same
+// session id is reused until the user explicitly starts a new one).
+// `messages` stores the running transcript as JSON: [{role, content,
+// toolCalls?, at}]. Kept small — for archival we can split later.
+model CopilotSession {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  mode         String   @default("text") // 'text' | 'voice'
+  messages     Json     @default("[]")
+  title        String?  // auto-derived from first user message (for a future history sidebar)
+  totalCredits Int      @default(0)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([workspaceId, updatedAt(sort: Desc)])
+  @@index([userId, updatedAt(sort: Desc)])
 }
 
 model Deal {

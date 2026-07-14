@@ -19,6 +19,9 @@ type Plan = {
     monthlyCredits: number;
     allowCustomApiKeys: boolean;
     overageBehavior: "hard_block" | "top_up";
+    copilotEnabled: boolean;
+    copilotVoiceEnabled: boolean;
+    copilotVoiceMultiplier: number;
     isActive: boolean;
     isDefault?: boolean;
     trialDays?: number | null;
@@ -31,6 +34,7 @@ const emptyPlan = (): Plan => ({
     maxAgents: 1, maxWhatsappAccounts: 1, maxInstagramAccounts: 1, maxAutomations: 1,
     monthlyMessageLimit: 1000,
     monthlyCredits: 10000, allowCustomApiKeys: false, overageBehavior: "hard_block",
+    copilotEnabled: false, copilotVoiceEnabled: false, copilotVoiceMultiplier: 5.0,
     isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
 });
 
@@ -168,6 +172,7 @@ export default function AdminPlansPage() {
                                 <li>Automations: {p.maxAutomations < 0 ? '∞' : p.maxAutomations}</li>
                                 <li>Messages/month: {p.monthlyMessageLimit < 0 ? '∞' : p.monthlyMessageLimit}</li>
                                 <li className="text-primary/80 font-semibold">cai/month: {p.monthlyCredits?.toLocaleString?.() || 0}{p.allowCustomApiKeys && <span className="text-emerald-400 font-normal"> · own-key OK</span>}</li>
+                                {p.copilotEnabled && <li className="text-blue-400 font-semibold">In-app copilot{p.copilotVoiceEnabled && <span> · voice ({p.copilotVoiceMultiplier}×)</span>}</li>}
                             </ul>
                             <div className="flex items-center justify-between pt-2 border-t border-border">
                                 <span className="text-xs text-muted-foreground">{p._count?.users || 0} subscriber(s)</span>
@@ -252,6 +257,31 @@ export default function AdminPlansPage() {
                                         <option value="top_up" className="bg-card">Allow past zero (admin tops up manually)</option>
                                     </select>
                                 </div>
+                            </div>
+                            <div className="pt-3 mt-3 border-t border-border space-y-3">
+                                <p className="text-xs font-semibold text-blue-400">In-app copilot</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={editing.copilotEnabled}
+                                        onChange={e => setEditing({ ...editing, copilotEnabled: e.target.checked, copilotVoiceEnabled: e.target.checked ? editing.copilotVoiceEnabled : false })}
+                                        className="w-4 h-4 accent-primary rounded" />
+                                    <span className="text-sm">Enable chat copilot (text)</span>
+                                </label>
+                                <label className={`flex items-center gap-2 ${editing.copilotEnabled ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}>
+                                    <input type="checkbox" checked={editing.copilotVoiceEnabled} disabled={!editing.copilotEnabled}
+                                        onChange={e => setEditing({ ...editing, copilotVoiceEnabled: e.target.checked })}
+                                        className="w-4 h-4 accent-primary rounded" />
+                                    <span className="text-sm">Enable voice mode (Realtime API — expensive)</span>
+                                </label>
+                                {editing.copilotVoiceEnabled && (
+                                    <div>
+                                        <label className="text-xs font-medium text-muted-foreground">Voice cai multiplier</label>
+                                        <input type="number" step="0.1" min={1}
+                                            value={editing.copilotVoiceMultiplier}
+                                            onChange={e => setEditing({ ...editing, copilotVoiceMultiplier: Number(e.target.value) })}
+                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono" />
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">Multiplied on top of the Realtime model rate — 5× default protects margin.</p>
+                                    </div>
+                                )}
                             </div>
                             {editing.price === 0 && (
                                 <div>

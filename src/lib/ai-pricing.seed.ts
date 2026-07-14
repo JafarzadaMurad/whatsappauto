@@ -27,6 +27,9 @@ const DEFAULT_ROWS: Row[] = [
     { provider: 'anthropic', model: 'claude-haiku-4-5-20251001',    inputCostPer1M: 1,    outputCostPer1M: 5,   cachedCostPer1M: 0.1 },
     { provider: 'anthropic', model: 'claude-3-5-sonnet-latest',     inputCostPer1M: 3,    outputCostPer1M: 15,  cachedCostPer1M: 0.3 },
     { provider: 'anthropic', model: 'claude-3-5-haiku-latest',      inputCostPer1M: 0.8,  outputCostPer1M: 4,   cachedCostPer1M: 0.08 },
+    // OpenAI — Realtime (voice) — priced per audio token, 1 audio-sec ≈ 100 tokens
+    { provider: 'openai',    model: 'gpt-4o-realtime-preview-2024-12-17', inputCostPer1M: 40,   outputCostPer1M: 80,  cachedCostPer1M: 2.5 },
+    { provider: 'openai',    model: 'gpt-realtime',                      inputCostPer1M: 32,   outputCostPer1M: 64,  cachedCostPer1M: 0.4 },
     // OpenAI — GPT family
     { provider: 'openai',    model: 'gpt-5',                        inputCostPer1M: 2.5,  outputCostPer1M: 10,  cachedCostPer1M: 0.25 },
     { provider: 'openai',    model: 'gpt-5-mini',                   inputCostPer1M: 0.25, outputCostPer1M: 2,   cachedCostPer1M: 0.025 },

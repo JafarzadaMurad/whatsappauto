@@ -18,6 +18,10 @@ const planSchema = z.object({
     monthlyCredits: z.number().int().nonnegative().default(0),
     allowCustomApiKeys: z.boolean().default(false),
     overageBehavior: z.enum(['hard_block', 'top_up']).default('hard_block'),
+    // in-app copilot
+    copilotEnabled: z.boolean().default(false),
+    copilotVoiceEnabled: z.boolean().default(false),
+    copilotVoiceMultiplier: z.number().positive().default(5.0),
     isActive: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     trialDays: z.number().int().min(0).nullable().optional(),

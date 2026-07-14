@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import VerifyEmailBanner from "@/components/VerifyEmailBanner";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import Copilot from "@/components/copilot/Copilot";
 import api from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -145,6 +146,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'AI Models', href: '/dashboard/admin/ai-models', icon: Bot },
                 { name: 'AI Pricing', href: '/dashboard/admin/ai-pricing', icon: Coins },
                 { name: 'Platform Keys', href: '/dashboard/admin/platform-keys', icon: KeyRound },
+                { name: 'Copilot', href: '/dashboard/admin/copilot', icon: Bot },
                 { name: 'Sign-in', href: '/dashboard/admin/auth', icon: LogIn },
                 { name: 'Email', href: '/dashboard/admin/email', icon: Mail },
             ]
@@ -405,6 +407,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {children}
                 </main>
             </div>
+            <Copilot />
         </div>
     );
 }

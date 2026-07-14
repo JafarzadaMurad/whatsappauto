@@ -32,6 +32,7 @@ import userFieldRoutes from './modules/userfield/userfield.routes';
 import workspaceRoutes from './modules/workspace/workspace.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
 import { userRouter as creditsUserRouter, adminPricingRouter, adminCreditsRouter } from './modules/credits/credits.routes';
+import { copilotUserRouter, adminCopilotRouter } from './modules/copilot/copilot.routes';
 import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
@@ -108,6 +109,8 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/credits', creditsUserRouter);
 app.use('/api/admin/ai-pricing', adminPricingRouter);
 app.use('/api/admin/credits', adminCreditsRouter);
+app.use('/api/copilot', copilotUserRouter);
+app.use('/api/admin/copilot', adminCopilotRouter);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

@@ -235,7 +235,7 @@ export default function AdminPlansPage() {
                             {num('Monthly message limit', 'monthlyMessageLimit')}
                             <div className="pt-3 mt-3 border-t border-border space-y-3">
                                 <p className="text-xs font-semibold text-primary">cai credits</p>
-                                {num('Monthly cai', 'monthlyCredits', 'Aylıq cai budcəsi. Bütün AI çağırışları burdan çıxır.')}
+                                {num('Monthly cai', 'monthlyCredits', 'Monthly cai budget. Every AI call is drawn from this pool.')}
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={editing.allowCustomApiKeys}
                                         onChange={e => setEditing({ ...editing, allowCustomApiKeys: e.target.checked })}

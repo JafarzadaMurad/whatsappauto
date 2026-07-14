@@ -114,13 +114,13 @@ export default function UsagePage() {
             <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
                 <div className="flex items-baseline justify-between flex-wrap gap-4">
                     <div>
-                        <div className="text-sm text-muted-foreground">Bu ay istifadə</div>
+                        <div className="text-sm text-muted-foreground">Used this period</div>
                         <div className="text-3xl font-bold mt-1">
                             {balance.used.toLocaleString()} <span className="text-lg text-muted-foreground font-normal">/ {balance.totalBudget.toLocaleString()} cai</span>
                         </div>
                     </div>
                     <div className="text-right">
-                        <div className="text-sm text-muted-foreground">Qalıq</div>
+                        <div className="text-sm text-muted-foreground">Remaining</div>
                         <div className={`text-2xl font-bold mt-1 ${nearLimit ? 'text-amber-400' : 'text-emerald-400'}`}>
                             {balance.remaining.toLocaleString()} cai
                         </div>
@@ -136,16 +136,16 @@ export default function UsagePage() {
                         {balance.topUp > 0 && <span>+ Top-up: <span className="text-foreground font-mono">{balance.topUp.toLocaleString()}</span></span>}
                     </div>
                     {balance.periodResetAt && (
-                        <span>Növbəti reset: <span className="text-foreground">{new Date(balance.periodResetAt).toLocaleDateString()}</span></span>
+                        <span>Next reset: <span className="text-foreground">{new Date(balance.periodResetAt).toLocaleDateString()}</span></span>
                     )}
                 </div>
                 {balance.allowCustomApiKeys && (
                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 flex items-start gap-2 text-xs">
                         <Zap className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                         <div>
-                            <span className="text-emerald-400 font-semibold">Bring-your-own key aktivdir. </span>
-                            <span className="text-muted-foreground">Öz API açarını AI Providers səhifəsində əlavə etsən, həmin çağırışlar cai yeməyəcək.</span>
-                            {totalUsdSaved > 0 && <span className="text-emerald-400"> — Son 30 gündə ~${totalUsdSaved.toFixed(2)} qənaət etmisən.</span>}
+                            <span className="text-emerald-400 font-semibold">Bring-your-own key enabled. </span>
+                            <span className="text-muted-foreground">Add your own API key on the AI Providers page and calls made with it won't consume cai.</span>
+                            {totalUsdSaved > 0 && <span className="text-emerald-400"> — You've saved ~${totalUsdSaved.toFixed(2)} in the last 30 days.</span>}
                         </div>
                     </div>
                 )}
@@ -154,11 +154,11 @@ export default function UsagePage() {
             {/* Daily chart */}
             <div className="bg-card border border-border rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Son 30 gün</h2>
-                    <span className="text-xs text-muted-foreground">Cəmi: {daily.reduce((s, [, v]) => s + v, 0).toLocaleString()} cai</span>
+                    <h2 className="font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Last 30 days</h2>
+                    <span className="text-xs text-muted-foreground">Total: {daily.reduce((s, [, v]) => s + v, 0).toLocaleString()} cai</span>
                 </div>
                 {daily.length === 0 ? (
-                    <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">Hələ istifadə yoxdur.</div>
+                    <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">No usage yet.</div>
                 ) : (
                     <div className="h-32 flex items-end gap-1">
                         {daily.map(([day, val]) => (
@@ -178,7 +178,7 @@ export default function UsagePage() {
             {/* Cause breakdown */}
             {byCause.length > 0 && (
                 <div className="bg-card border border-border rounded-2xl p-6">
-                    <h2 className="font-semibold mb-4">İstifadə mənbəyinə görə</h2>
+                    <h2 className="font-semibold mb-4">Usage by source</h2>
                     <div className="space-y-2">
                         {byCause.map(([cause, val]) => {
                             const c = CAUSE_LABELS[cause] || CAUSE_LABELS.other;
@@ -201,17 +201,17 @@ export default function UsagePage() {
             {/* Recent ledger */}
             <div className="bg-card border border-border rounded-2xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-border">
-                    <h2 className="font-semibold">Son 100 çağırış</h2>
+                    <h2 className="font-semibold">Last 100 calls</h2>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-secondary/50 text-xs uppercase text-muted-foreground">
                             <tr>
-                                <th className="px-4 py-2 text-left">Vaxt</th>
-                                <th className="px-4 py-2 text-left">Səbəb</th>
+                                <th className="px-4 py-2 text-left">Time</th>
+                                <th className="px-4 py-2 text-left">Source</th>
                                 <th className="px-4 py-2 text-left">Model</th>
                                 <th className="px-4 py-2 text-right">In / Out</th>
-                                <th className="px-4 py-2 text-right">$ real</th>
+                                <th className="px-4 py-2 text-right">Real $</th>
                                 <th className="px-4 py-2 text-right">cai</th>
                                 <th className="px-4 py-2 text-left">User</th>
                             </tr>
@@ -233,7 +233,7 @@ export default function UsagePage() {
                                 </tr>
                             ))}
                             {history.length === 0 && (
-                                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Hələ istifadə yoxdur.</td></tr>
+                                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No usage yet.</td></tr>
                             )}
                         </tbody>
                     </table>

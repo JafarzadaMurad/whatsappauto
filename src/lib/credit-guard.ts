@@ -215,13 +215,14 @@ export async function recordUsagePostHoc(
     opts: {
         workspaceId: string | null;
         userId?: string | null;
+        agentId?: string | null;
         providerInfo: { provider: string; apiKey: string; useOwnKey?: boolean };
         model: string;
         cause: CreditCause;
     },
     aiResult: any
 ): Promise<void> {
-    const { workspaceId, userId, providerInfo, model, cause } = opts;
+    const { workspaceId, userId, agentId, providerInfo, model, cause } = opts;
     if (!workspaceId) return;
     try {
         // Fetch plan settings to know if BYOK is allowed (governs
@@ -240,6 +241,7 @@ export async function recordUsagePostHoc(
                 data: {
                     workspaceId,
                     userId: userId || null,
+                    agentId: agentId || null,
                     provider: pricedProvider,
                     model,
                     inputTokens: usage.inputTokens,

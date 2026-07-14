@@ -49,6 +49,7 @@ export class CreditsController {
                     inputTokens: true, outputTokens: true, cachedTokens: true,
                     realCostUsd: true, creditsUsed: true, usedOwnKey: true,
                     createdAt: true,
+                    agent: { select: { id: true, name: true } },
                     user: { select: { id: true, name: true, email: true } },
                 },
             });

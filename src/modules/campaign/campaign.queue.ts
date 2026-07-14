@@ -89,6 +89,7 @@ export const startCampaignWorker = () => {
             void recordUsagePostHoc({
                 workspaceId: (agent as any).workspaceId || null,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo,
                 model: agent.model,
                 cause: 'campaign',

@@ -564,6 +564,7 @@ model Agent {
   operatorDirectives OperatorDirective[]
   agentChatMessages  AgentChatMessage[]
   adRoutes           AdRoute[]
+  creditLedger       CreditLedger[]
 }
 
 // Facebook ad account connected via OAuth. One workspace can connect
@@ -1503,8 +1504,17 @@ model CreditLedger {
   id            String   @id @default(uuid())
   workspaceId   String
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // Kept only for the very rare non-agent LLM call. For agent-driven
+  // rows (99%+) it's the agent owner (i.e. redundant with agentId
+  // below) — the UI now surfaces agent name instead.
   userId        String?
   user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // The AI agent that produced this call. Null for the few non-agent
+  // paths (e.g. oversight, one-off tools). The Usage table renders
+  // this column instead of userId — much more informative to see
+  // "Sales bot burnt 6 cai" than "Murad burnt 6 cai".
+  agentId       String?
+  agent         Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
 
   provider      String   // 'anthropic' | 'openai' | 'google'
   model         String
@@ -1523,6 +1533,7 @@ model CreditLedger {
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([agentId, createdAt(sort: Desc)])
 }
 
 model Deal {

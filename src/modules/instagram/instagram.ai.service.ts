@@ -755,6 +755,7 @@ export class InstagramAiService {
         void recordUsagePostHoc({
             workspaceId: opts?.workspaceId || null,
             userId: (agent as any).userId || null,
+            agentId: agent.id,
             providerInfo,
             model: agent.model,
             cause: 'instagram_dm' as CreditCause,

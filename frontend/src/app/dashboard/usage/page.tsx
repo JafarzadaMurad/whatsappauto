@@ -31,6 +31,7 @@ type LedgerRow = {
     creditsUsed: number;
     usedOwnKey: boolean;
     createdAt: string;
+    agent: { id: string; name: string } | null;
     user: { id: string; name: string | null; email: string } | null;
 };
 
@@ -213,7 +214,7 @@ export default function UsagePage() {
                                 <th className="px-4 py-2 text-right">In / Out</th>
                                 <th className="px-4 py-2 text-right">Real $</th>
                                 <th className="px-4 py-2 text-right">cai</th>
-                                <th className="px-4 py-2 text-left">User</th>
+                                <th className="px-4 py-2 text-left">Agent</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -229,7 +230,7 @@ export default function UsagePage() {
                                             ? <span className="text-emerald-400">BYOK</span>
                                             : <span className="text-primary">{r.creditsUsed.toLocaleString()}</span>}
                                     </td>
-                                    <td className="px-4 py-2 text-xs text-muted-foreground">{r.user?.name || r.user?.email || '—'}</td>
+                                    <td className="px-4 py-2 text-xs text-muted-foreground">{r.agent?.name || '—'}</td>
                                 </tr>
                             ))}
                             {history.length === 0 && (

@@ -2231,6 +2231,7 @@ export class AiService {
             void recordUsagePostHoc({
                 workspaceId: (agent as any).workspaceId || null,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo,
                 model: agent.model,
                 cause: 'whatsapp_reply' as CreditCause,
@@ -2489,6 +2490,7 @@ export class AiService {
         void recordUsagePostHoc({
             workspaceId,
             userId: (agent as any).userId || null,
+            agentId: agent.id,
             providerInfo,
             model: agent.model,
             cause: 'other' as CreditCause,
@@ -2595,6 +2597,7 @@ export class AiService {
             void recordUsagePostHoc({
                 workspaceId: (agent as any).workspaceId || null,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo: _providerInfo,
                 model: agent.model,
                 cause: 'whatsapp_reply' as CreditCause,
@@ -2704,6 +2707,7 @@ export class AiService {
             void recordUsagePostHoc({
                 workspaceId: wsId,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo,
                 model: agent.model,
                 cause: 'whatsapp_reply' as CreditCause,
@@ -2819,6 +2823,7 @@ export class AiService {
             void recordUsagePostHoc({
                 workspaceId: workspaceId || null,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo,
                 model: agent.model,
                 cause: 'instagram_dm' as CreditCause,
@@ -2970,6 +2975,7 @@ export class AiService {
             void recordUsagePostHoc({
                 workspaceId: (agent as any).workspaceId || null,
                 userId: (agent as any).userId || null,
+                agentId: agent.id,
                 providerInfo: (agent as any).provider,
                 model: agent.model,
                 cause: 'whatsapp_reply' as CreditCause,
@@ -3275,6 +3281,7 @@ Your text reply is for the operator. The customer never sees it. Keep it short a
         void recordUsagePostHoc({
             workspaceId: workspaceId || null,
             userId: (agent as any).userId || null,
+            agentId: agent.id,
             providerInfo,
             model: agent.model,
             cause: 'other' as CreditCause,

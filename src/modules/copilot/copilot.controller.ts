@@ -40,13 +40,30 @@ async function loadPlanAccess(workspaceId: string) {
             id: true, name: true, planId: true,
             copilotCustomPrompt: true,
             plan: { select: { copilotEnabled: true, copilotVoiceEnabled: true, copilotVoiceMultiplier: true } },
+            owner: {
+                select: {
+                    planId: true,
+                    plan: { select: { copilotEnabled: true, copilotVoiceEnabled: true, copilotVoiceMultiplier: true } },
+                },
+            },
         },
     });
     if (!ws) return null;
-    // Fallback: workspaces without an explicit planId inherit the
-    // default (free) plan's copilot flags. Without this a workspace
-    // that never went through checkout stays copilot-less even when
-    // the admin turned it on for the default plan.
+    // Plan resolution priority:
+    //   1. Workspace's own planId (explicit assignment)
+    //   2. Owner user's planId (Stripe billing updates User.planId — the
+    //      workspace row can lag behind if the sync webhook missed one)
+    //   3. Global default (Plan.isDefault=true)
+    // Without step 2 an admin who upgrades a user to Ultra sees the
+    // copilot toggle apply to the user but stay dark on their workspace.
+    if (!ws.plan && ws.owner?.plan) {
+        (ws as any).plan = ws.owner.plan;
+        // Best-effort self-heal so the next request skips the fallback.
+        prisma.workspace.update({
+            where: { id: ws.id },
+            data: { planId: ws.owner.planId },
+        }).catch(() => {});
+    }
     if (!ws.plan) {
         const defaultPlan = await prisma.plan.findFirst({
             where: { isDefault: true },

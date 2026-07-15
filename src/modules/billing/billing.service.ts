@@ -111,6 +111,16 @@ export async function handleWebhookEvent(event: any): Promise<void> {
                     subscriptionStatus: 'active'
                 }
             });
+            // Propagate the new plan to every workspace the user owns.
+            // Feature gates (copilot, monthlyCredits, allowCustomApiKeys)
+            // are keyed off Workspace.planId — leaving that stale means
+            // the paid-for perks silently stay off until manual sync.
+            if (planId) {
+                await prisma.workspace.updateMany({
+                    where: { ownerId: userId },
+                    data: { planId, subscriptionStatus: 'active' },
+                });
+            }
             break;
         }
 
@@ -141,6 +151,19 @@ export async function handleWebhookEvent(event: any): Promise<void> {
                     stripeSubscriptionId: sub.id,
                     ...(plan ? { planId: plan.id } : {})
                 }
+            });
+            // Sync every workspace the user owns so feature gates
+            // (copilot, cai budget, custom-key allowance) pick up the
+            // new plan immediately — otherwise loadPlanAccess()-style
+            // checks stay on the stale row.
+            await prisma.workspace.updateMany({
+                where: { ownerId: user.id },
+                data: {
+                    subscriptionStatus: status,
+                    subscriptionEndsAt: endsAt,
+                    stripeSubscriptionId: sub.id,
+                    ...(plan ? { planId: plan.id } : {}),
+                },
             });
             break;
         }

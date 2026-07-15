@@ -56,6 +56,21 @@ export class AdminController {
                 data: updateData,
                 select: SAFE_USER_SELECT
             });
+            // Propagate the plan (and its subscription bits) to every
+            // workspace this user owns. Feature gates in the app
+            // (copilot, cai budget, custom-key allowance) are keyed
+            // off Workspace.planId, so leaving that stale means the
+            // admin-toggled perks silently don't apply.
+            const wsData: any = {};
+            if (data.planId !== undefined) wsData.planId = data.planId;
+            if (data.subscriptionStatus !== undefined) wsData.subscriptionStatus = data.subscriptionStatus;
+            if (data.subscriptionEndsAt !== undefined) wsData.subscriptionEndsAt = data.subscriptionEndsAt ? new Date(data.subscriptionEndsAt) : null;
+            if (Object.keys(wsData).length > 0) {
+                await prisma.workspace.updateMany({
+                    where: { ownerId: id },
+                    data: wsData,
+                });
+            }
             return res.json({ success: true, user });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });

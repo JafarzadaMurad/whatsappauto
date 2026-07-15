@@ -98,11 +98,16 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
                 // We don't wire them into the UI yet; the audio is what matters.
             };
 
-            // 3. SDP offer/answer with OpenAI
+            // 3. SDP offer/answer with OpenAI.
+            // GA endpoint (Aug 2025) is /v1/realtime/calls — the old
+            // /v1/realtime?model=... path was removed and now returns
+            // "400 Invalid request" on SDP POSTs. The model already
+            // lives inside the ephemeral client_secret we minted, so
+            // the query param is no longer needed.
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            const sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
+            const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
                 method: 'POST',
                 body: offer.sdp,
                 headers: {
@@ -110,7 +115,13 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
                     'Content-Type': 'application/sdp',
                 },
             });
-            if (!sdpRes.ok) throw new Error(`OpenAI SDP handshake failed: ${sdpRes.status}`);
+            if (!sdpRes.ok) {
+                // Surface the actual OpenAI error body — the raw HTTP
+                // status alone hides the reason (wrong endpoint, expired
+                // token, model not enabled on the org, …).
+                const errBody = await sdpRes.text().catch(() => '');
+                throw new Error(`OpenAI SDP handshake failed (${sdpRes.status}): ${errBody.slice(0, 300) || 'no error body'}`);
+            }
             const answer = { type: 'answer' as const, sdp: await sdpRes.text() };
             await pc.setRemoteDescription(answer);
 

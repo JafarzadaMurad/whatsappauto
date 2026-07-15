@@ -375,21 +375,26 @@ export class CopilotController {
             // they get rotated out. Admin can override in /admin/copilot.
             const model = modelRow?.value?.trim() || 'gpt-realtime';
 
-            // The Realtime session-mint API sits under `/v1/realtime/sessions`
-            // and requires the OpenAI-Beta header. `voice` is optional; leaving
-            // it out inherits the account default (alloy) — omit rather than
-            // hard-code so admins can control voice via a future setting.
-            const r = await axios.post('https://api.openai.com/v1/realtime/sessions', {
-                model,
-                instructions,
+            // GA endpoint (Aug 2025): mints an ephemeral client secret the
+            // browser can use to open a WebRTC connection directly to OpenAI.
+            // The legacy `POST /v1/realtime/sessions` (beta) was removed
+            // for the GA `gpt-realtime` model — using it now returns
+            // `404 Invalid URL`. The new shape wraps the session config
+            // under `session` and returns `value` at the top level (vs.
+            // `client_secret.value` on the old endpoint).
+            const r = await axios.post('https://api.openai.com/v1/realtime/client_secrets', {
+                session: {
+                    type: 'realtime',
+                    model,
+                    instructions,
+                },
             }, {
                 headers: {
                     Authorization: `Bearer ${openaiKey}`,
                     'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'realtime=v1',
                 },
                 timeout: 15_000,
-                validateStatus: () => true, // let us inspect non-2xx bodies for logging
+                validateStatus: () => true,
             });
 
             if (r.status >= 400) {
@@ -402,27 +407,32 @@ export class CopilotController {
                     oaiMessage: oaiErr.message,
                     body: r.data,
                     model,
-                }, '[copilot] OpenAI Realtime session mint rejected');
+                }, '[copilot] OpenAI Realtime client_secret mint rejected');
                 return res.status(500).json({
                     success: false,
-                    message: `OpenAI ${r.status}: ${oaiErr.message || 'session mint failed'}`,
+                    message: `OpenAI ${r.status}: ${oaiErr.message || 'client_secret mint failed'}`,
                     oaiError: oaiErr,
                 });
             }
 
-            const clientSecret = r.data?.client_secret?.value;
+            // GA response: { value, expires_at, session }
+            // Legacy response was: { client_secret: { value, expires_at } }
+            // Accept either shape defensively so a future rollback of the
+            // endpoint doesn't break the flow.
+            const clientSecret = r.data?.value || r.data?.client_secret?.value;
+            const expiresAt = r.data?.expires_at || r.data?.client_secret?.expires_at;
             if (!clientSecret) {
-                logger.error({ body: r.data }, '[copilot] OpenAI Realtime response missing client_secret.value');
+                logger.error({ body: r.data }, '[copilot] OpenAI Realtime response missing client secret value');
                 return res.status(500).json({
                     success: false,
-                    message: 'OpenAI response did not include a client_secret. The Realtime API shape may have changed — check backend logs.',
+                    message: 'OpenAI response did not include an ephemeral secret. The Realtime API shape may have changed — check backend logs.',
                 });
             }
 
             return res.json({
                 success: true,
                 clientSecret,
-                expiresAt: r.data.client_secret?.expires_at,
+                expiresAt,
                 model,
             });
         } catch (error: any) {

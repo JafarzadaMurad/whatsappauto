@@ -31,7 +31,7 @@ const ENTITY_PATH: Record<string, string> = {
     instagram:    "/dashboard/instagram",
 };
 
-type CopilotConfig = { enabled: boolean; voiceEnabled: boolean; customPrompt: string };
+type CopilotConfig = { enabled: boolean; voiceEnabled: boolean; customPrompt: string; reason?: string | null };
 
 export default function Copilot() {
     const pathname = usePathname();
@@ -57,11 +57,19 @@ export default function Copilot() {
                     api.get('/copilot/config').catch(() => null),
                     api.get('/credits/balance').catch(() => null),
                 ]);
-                if (cfgRes?.data?.success) setConfig({
-                    enabled: cfgRes.data.enabled,
-                    voiceEnabled: cfgRes.data.voiceEnabled,
-                    customPrompt: cfgRes.data.customPrompt,
-                });
+                if (cfgRes?.data?.success) {
+                    setConfig({
+                        enabled: cfgRes.data.enabled,
+                        voiceEnabled: cfgRes.data.voiceEnabled,
+                        customPrompt: cfgRes.data.customPrompt,
+                        reason: cfgRes.data.reason,
+                    });
+                    if (!cfgRes.data.enabled) {
+                        // Devs / support diagnosing "why isn't the bubble showing?"
+                        // eslint-disable-next-line no-console
+                        console.info('[copilot] hidden — reason:', cfgRes.data.reason);
+                    }
+                }
                 if (balRes?.data?.success) setBalance({
                     remaining: balRes.data.balance.remaining,
                     totalBudget: balRes.data.balance.totalBudget,

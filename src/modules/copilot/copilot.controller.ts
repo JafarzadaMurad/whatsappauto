@@ -37,11 +37,23 @@ async function loadPlanAccess(workspaceId: string) {
     const ws = await prisma.workspace.findUnique({
         where: { id: workspaceId },
         select: {
-            id: true, name: true,
+            id: true, name: true, planId: true,
             copilotCustomPrompt: true,
             plan: { select: { copilotEnabled: true, copilotVoiceEnabled: true, copilotVoiceMultiplier: true } },
         },
     });
+    if (!ws) return null;
+    // Fallback: workspaces without an explicit planId inherit the
+    // default (free) plan's copilot flags. Without this a workspace
+    // that never went through checkout stays copilot-less even when
+    // the admin turned it on for the default plan.
+    if (!ws.plan) {
+        const defaultPlan = await prisma.plan.findFirst({
+            where: { isDefault: true },
+            select: { copilotEnabled: true, copilotVoiceEnabled: true, copilotVoiceMultiplier: true },
+        });
+        (ws as any).plan = defaultPlan || null;
+    }
     return ws;
 }
 
@@ -83,11 +95,21 @@ export class CopilotController {
             if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
             const ws = await loadPlanAccess(workspaceId);
             const enabled = !!ws?.plan?.copilotEnabled;
+            // Diagnostic: help the UI (and any support call) explain
+            // WHY the bubble is hidden. Three possibilities we surface:
+            //   'no-workspace'   – auth resolved a null workspaceId
+            //   'no-plan'        – workspace has no plan and no default
+            //   'plan-disabled'  – plan.copilotEnabled=false
+            let reason: string | null = null;
+            if (!ws) reason = 'no-workspace';
+            else if (!ws.plan) reason = 'no-plan';
+            else if (!ws.plan.copilotEnabled) reason = 'plan-disabled';
             return res.json({
                 success: true,
                 enabled,
                 voiceEnabled: !!ws?.plan?.copilotVoiceEnabled,
                 customPrompt: ws?.copilotCustomPrompt || '',
+                reason,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
@@ -393,11 +415,32 @@ export class CopilotController {
 export class AdminCopilotController {
     async getSettings(_req: Request, res: Response) {
         try {
-            const rows = await prisma.systemConfig.findMany({
-                where: { key: { in: ['COPILOT_SYSTEM_PROMPT', 'COPILOT_PROVIDER', 'COPILOT_MODEL', 'COPILOT_VOICE_MODEL'] } },
-            });
+            const [rows, pricing] = await Promise.all([
+                prisma.systemConfig.findMany({
+                    where: { key: { in: ['COPILOT_SYSTEM_PROMPT', 'COPILOT_PROVIDER', 'COPILOT_MODEL', 'COPILOT_VOICE_MODEL'] } },
+                }),
+                prisma.aiPricing.findMany({
+                    where: { isActive: true },
+                    select: { provider: true, model: true },
+                    orderBy: [{ provider: 'asc' }, { model: 'asc' }],
+                }),
+            ]);
             const cfg: Record<string, string> = {};
             for (const r of rows) cfg[r.key] = r.value;
+
+            // Split the pricing catalogue into three model lists so the
+            // admin UI can render sensible dropdowns:
+            //   textModels    — Anthropic + OpenAI chat models (not realtime)
+            //   voiceModels   — OpenAI `-realtime` variants (voice mode only)
+            //   (Google/Gemini available too but the copilot backend
+            //    only wires Claude/OpenAI right now, so we filter.)
+            const textModels = pricing
+                .filter(p => (p.provider === 'anthropic' || p.provider === 'openai') && !/realtime/i.test(p.model))
+                .map(p => ({ provider: p.provider === 'anthropic' ? 'CLAUDE' : 'OPENAI', model: p.model }));
+            const voiceModels = pricing
+                .filter(p => p.provider === 'openai' && /realtime/i.test(p.model))
+                .map(p => p.model);
+
             return res.json({
                 success: true,
                 systemPrompt: cfg.COPILOT_SYSTEM_PROMPT || '',
@@ -405,6 +448,8 @@ export class AdminCopilotController {
                 provider: cfg.COPILOT_PROVIDER || DEFAULT_COPILOT_PROVIDER,
                 model: cfg.COPILOT_MODEL || DEFAULT_COPILOT_MODEL,
                 voiceModel: cfg.COPILOT_VOICE_MODEL || 'gpt-4o-realtime-preview-2024-12-17',
+                textModels,
+                voiceModels,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });

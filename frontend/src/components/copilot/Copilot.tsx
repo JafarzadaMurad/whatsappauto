@@ -45,8 +45,18 @@ export default function Copilot() {
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Voice mode WebRTC — split into its own hook to keep this file focused.
+    // Errors land as an assistant-role message in the transcript so the user
+    // sees the backend's actual reason (e.g. "OpenAI 401: invalid_api_key")
+    // instead of a generic browser alert they'll dismiss and forget.
     const { start: startVoice, stop: stopVoice } = useCopilotVoice({
         onEnd: () => {},
+        onError: (message) => {
+            pushMessage({
+                role: 'assistant',
+                content: `⚠️ Voice session failed: ${message}`,
+                at: new Date().toISOString(),
+            });
+        },
     });
 
     // ─── Load config once mounted (survives across route changes) ──

@@ -322,9 +322,26 @@ export class CopilotController {
                 usage: result.usage,
             });
         } catch (error: any) {
-            logger.error({ err: error.message }, '[copilot] chat failed');
+            // Anthropic/OpenAI SDK errors expose status + a nested `error`
+            // object with the real reason (`invalid_api_key`, `not_found`,
+            // `overloaded_error`, etc.). Surface those to the frontend so
+            // the operator sees WHY the copilot failed, not just "500".
+            const status = error.status || error.response?.status;
+            const nested = error.error || error.response?.data?.error;
+            const nestedMsg = typeof nested === 'string' ? nested : nested?.message;
+            logger.error({
+                err: error.message,
+                status,
+                type: nested?.type,
+                code: nested?.code,
+                nestedMsg,
+                stack: error.stack?.split('\n').slice(0, 5).join('\n'),
+            }, '[copilot] chat failed');
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
-            return res.status(500).json({ success: false, message: error.message });
+            const humanMessage = nestedMsg
+                ? `Provider ${status || ''} ${nested?.type || nested?.code || ''}: ${nestedMsg}`.trim()
+                : error.message;
+            return res.status(500).json({ success: false, message: humanMessage });
         }
     }
 
@@ -341,7 +358,7 @@ export class CopilotController {
             if (!ws.plan.copilotVoiceEnabled) return res.status(403).json({ success: false, message: 'Voice mode is not enabled on your plan.' });
 
             const openaiKey = await resolvePlatformKey('OPENAI');
-            if (!openaiKey) return res.status(500).json({ success: false, message: 'Platform OpenAI key not configured.' });
+            if (!openaiKey) return res.status(500).json({ success: false, message: 'Platform OpenAI key not configured. An admin must set PLATFORM_OPENAI_KEY in System Config.' });
 
             const adminPrompt = await loadAdminBasePrompt();
             const runtimeCtx = buildRuntimeContext({ workspaceName: ws.name });
@@ -353,11 +370,17 @@ export class CopilotController {
             ].filter(Boolean).join('');
 
             const modelRow = await prisma.systemConfig.findUnique({ where: { key: 'COPILOT_VOICE_MODEL' } });
-            const model = modelRow?.value?.trim() || 'gpt-4o-realtime-preview-2024-12-17';
+            // Default to the current GA Realtime model. `gpt-4o-realtime-preview-*`
+            // dated snapshots are still accepted but shouldn't be the default —
+            // they get rotated out. Admin can override in /admin/copilot.
+            const model = modelRow?.value?.trim() || 'gpt-realtime';
 
+            // The Realtime session-mint API sits under `/v1/realtime/sessions`
+            // and requires the OpenAI-Beta header. `voice` is optional; leaving
+            // it out inherits the account default (alloy) — omit rather than
+            // hard-code so admins can control voice via a future setting.
             const r = await axios.post('https://api.openai.com/v1/realtime/sessions', {
                 model,
-                voice: 'alloy',
                 instructions,
             }, {
                 headers: {
@@ -366,17 +389,58 @@ export class CopilotController {
                     'OpenAI-Beta': 'realtime=v1',
                 },
                 timeout: 15_000,
+                validateStatus: () => true, // let us inspect non-2xx bodies for logging
             });
+
+            if (r.status >= 400) {
+                const oaiErr = r.data?.error || {};
+                logger.error({
+                    status: r.status,
+                    oaiCode: oaiErr.code,
+                    oaiType: oaiErr.type,
+                    oaiParam: oaiErr.param,
+                    oaiMessage: oaiErr.message,
+                    body: r.data,
+                    model,
+                }, '[copilot] OpenAI Realtime session mint rejected');
+                return res.status(500).json({
+                    success: false,
+                    message: `OpenAI ${r.status}: ${oaiErr.message || 'session mint failed'}`,
+                    oaiError: oaiErr,
+                });
+            }
+
+            const clientSecret = r.data?.client_secret?.value;
+            if (!clientSecret) {
+                logger.error({ body: r.data }, '[copilot] OpenAI Realtime response missing client_secret.value');
+                return res.status(500).json({
+                    success: false,
+                    message: 'OpenAI response did not include a client_secret. The Realtime API shape may have changed — check backend logs.',
+                });
+            }
 
             return res.json({
                 success: true,
-                clientSecret: r.data.client_secret?.value,
+                clientSecret,
                 expiresAt: r.data.client_secret?.expires_at,
                 model,
             });
         } catch (error: any) {
-            logger.error({ err: error.response?.data || error.message }, '[copilot] voice session failed');
-            return res.status(500).json({ success: false, message: error.response?.data?.error?.message || error.message });
+            const status = error.response?.status;
+            const oaiErr = error.response?.data?.error;
+            logger.error({
+                err: error.message,
+                status,
+                oaiCode: oaiErr?.code,
+                oaiMessage: oaiErr?.message,
+                body: error.response?.data,
+            }, '[copilot] voice session mint threw');
+            return res.status(500).json({
+                success: false,
+                message: oaiErr?.message
+                    ? `OpenAI ${status}: ${oaiErr.message}`
+                    : (error.code === 'ECONNABORTED' ? 'OpenAI request timed out (15s)' : error.message),
+            });
         }
     }
 

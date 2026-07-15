@@ -17,9 +17,10 @@ import { useCopilotStore } from "@/store/copilotStore";
 
 type Options = {
     onEnd?: () => void;
+    onError?: (message: string) => void;
 };
 
-export function useCopilotVoice({ onEnd }: Options) {
+export function useCopilotVoice({ onEnd, onError }: Options) {
     const pcRef = useRef<RTCPeerConnection | null>(null);
     const audioElRef = useRef<HTMLAudioElement | null>(null);
     const localStreamRef = useRef<MediaStream | null>(null);
@@ -122,11 +123,18 @@ export function useCopilotVoice({ onEnd }: Options) {
                 }
             };
         } catch (err: any) {
-            console.error('[copilot voice] start error', err);
-            alert(err.message || 'Failed to start voice session');
+            // Prefer the backend's structured message (`response.data.message`)
+            // over the generic axios "Request failed with status code 500" —
+            // the server side puts the actual reason there.
+            const message = err.response?.data?.message
+                || err.message
+                || 'Failed to start voice session';
+            console.error('[copilot voice] start error:', message, err.response?.data);
+            if (onError) onError(message);
+            else alert(message);
             await stop();
         }
-    }, [setVoiceActive, stop]);
+    }, [setVoiceActive, stop, onError]);
 
     return { start, stop };
 }

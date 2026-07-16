@@ -1,15 +1,19 @@
 "use client";
 
-// WebRTC client for OpenAI Realtime API. Flow:
-//   1. Ask our backend for an ephemeral session token (mints via
-//      /api/copilot/voice/session — server holds the master key).
-//   2. Open a WebRTC PeerConnection to api.openai.com/v1/realtime,
-//      exchange SDP, get bidirectional audio.
-//   3. On disconnect, sum up audio-second counters we accumulate and
-//      POST /api/copilot/voice/finish so cai gets deducted.
-//
-// The peer connection lives on the client — our backend never sees
-// audio, keeps latency low and bandwidth off our server.
+// WebRTC client for OpenAI Realtime API (GA). Flow:
+//   1. Ask backend for an ephemeral session token (server holds the master key)
+//   2. Open a WebRTC PeerConnection to api.openai.com/v1/realtime/calls
+//   3. When the data channel opens, push a session.update carrying:
+//        - input_audio_transcription (so we see what the user said)
+//        - tools[] (fetched from /copilot/tool-schemas) so the model can
+//          actually create agents / send messages / etc. by voice
+//   4. Route data-channel events:
+//        - conversation.item.input_audio_transcription.completed → user text
+//        - response.audio_transcript.done                        → agent text
+//        - response.function_call_arguments.done                 → forward to
+//          /copilot/tool-call, then send the result back over the DC and
+//          fire response.create so the model continues speaking
+//   5. On disconnect, sum up audio-seconds and post to /voice/finish for cai billing
 
 import { useRef, useCallback } from "react";
 import api from "@/lib/api";
@@ -20,23 +24,108 @@ type Options = {
     onError?: (message: string) => void;
 };
 
+type RealtimeEvent = { type: string; [k: string]: any };
+
 export function useCopilotVoice({ onEnd, onError }: Options) {
     const pcRef = useRef<RTCPeerConnection | null>(null);
     const audioElRef = useRef<HTMLAudioElement | null>(null);
     const localStreamRef = useRef<MediaStream | null>(null);
+    const dcRef = useRef<RTCDataChannel | null>(null);
     const startedAtRef = useRef<number | null>(null);
     const modelRef = useRef<string | null>(null);
+    const toolsRef = useRef<any[]>([]);
 
-    const { setVoiceActive } = useCopilotStore();
+    const { setVoiceActive, pushMessage } = useCopilotStore();
+
+    const sendEvent = useCallback((ev: RealtimeEvent) => {
+        const dc = dcRef.current;
+        if (dc && dc.readyState === 'open') {
+            try { dc.send(JSON.stringify(ev)); }
+            catch (e) { console.error('[copilot voice] send failed', e); }
+        }
+    }, []);
+
+    // ─── Data-channel event dispatch ─────────────────────────────────
+    const handleDcEvent = useCallback(async (raw: string) => {
+        let ev: RealtimeEvent;
+        try { ev = JSON.parse(raw); } catch { return; }
+
+        switch (ev.type) {
+            // User's speech transcribed after they stopped talking
+            case 'conversation.item.input_audio_transcription.completed': {
+                const text = String(ev.transcript || '').trim();
+                if (text) {
+                    pushMessage({ role: 'user', content: text, at: new Date().toISOString() });
+                }
+                break;
+            }
+            // Agent's speech transcript — 'done' fires once at the end
+            case 'response.audio_transcript.done': {
+                const text = String(ev.transcript || '').trim();
+                if (text) {
+                    pushMessage({ role: 'assistant', content: text, at: new Date().toISOString() });
+                }
+                break;
+            }
+            // Function call arguments fully assembled — run it
+            case 'response.function_call_arguments.done': {
+                const name = ev.name;
+                const callId = ev.call_id;
+                let args: any = {};
+                try { args = ev.arguments ? JSON.parse(ev.arguments) : {}; }
+                catch { args = {}; }
+                try {
+                    const res = await api.post('/copilot/tool-call', { name, args });
+                    const output = res.data?.success
+                        ? JSON.stringify(res.data.result || {})
+                        : JSON.stringify({ error: res.data?.message || 'tool call failed' });
+                    // Deliver the tool result back to the model.
+                    sendEvent({
+                        type: 'conversation.item.create',
+                        item: {
+                            type: 'function_call_output',
+                            call_id: callId,
+                            output,
+                        },
+                    });
+                    // Ask the model to continue speaking after digesting the result.
+                    sendEvent({ type: 'response.create' });
+                } catch (err: any) {
+                    const errMsg = err.response?.data?.message || err.message || 'tool call failed';
+                    console.error('[copilot voice] tool call error', name, errMsg);
+                    sendEvent({
+                        type: 'conversation.item.create',
+                        item: {
+                            type: 'function_call_output',
+                            call_id: callId,
+                            output: JSON.stringify({ error: errMsg }),
+                        },
+                    });
+                    sendEvent({ type: 'response.create' });
+                }
+                break;
+            }
+            // Errors from the Realtime side land here — surface loudly
+            case 'error': {
+                console.error('[copilot voice] server event error', ev);
+                if (onError) {
+                    onError(`OpenAI: ${ev.error?.message || ev.message || 'unknown error'}`);
+                }
+                break;
+            }
+        }
+    }, [pushMessage, sendEvent, onError]);
 
     const stop = useCallback(async () => {
         try {
             const durationSec = startedAtRef.current ? (Date.now() - startedAtRef.current) / 1000 : 0;
-            // Half in / half out is the pragmatic split when we don't
-            // have real per-direction counters from the SDK.
             const inputAudioSeconds = durationSec / 2;
             const outputAudioSeconds = durationSec / 2;
 
+            if (dcRef.current) {
+                try { dcRef.current.close(); } catch { /* ignore */ }
+                dcRef.current = null;
+            }
             if (pcRef.current) {
                 pcRef.current.close();
                 pcRef.current = null;
@@ -68,42 +157,51 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
 
     const start = useCallback(async () => {
         try {
-            // 1. Mint ephemeral token
-            const tokenRes = await api.post('/copilot/voice/session');
+            // 1. Fetch tool schemas + mint ephemeral token in parallel
+            const [tokenRes, toolsRes] = await Promise.all([
+                api.post('/copilot/voice/session'),
+                api.get('/copilot/tool-schemas').catch(() => ({ data: { success: false } })),
+            ]);
             if (!tokenRes.data.success) throw new Error(tokenRes.data.message || 'Failed to open voice session');
             const clientSecret = tokenRes.data.clientSecret;
             const model = tokenRes.data.model;
             modelRef.current = model;
+            toolsRef.current = toolsRes.data?.success ? (toolsRes.data.tools || []) : [];
 
             // 2. Set up PeerConnection
             const pc = new RTCPeerConnection();
             pcRef.current = pc;
 
-            // Downstream audio → hidden <audio> element
             const audioEl = document.createElement('audio');
             audioEl.autoplay = true;
             document.body.appendChild(audioEl);
             audioElRef.current = audioEl;
             pc.ontrack = (ev) => { audioEl.srcObject = ev.streams[0]; };
 
-            // Upstream mic
             const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             localStreamRef.current = localStream;
             localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
-            // Data channel — future tool calls / events
+            // 3. Data channel — carries every Realtime API event
             const dc = pc.createDataChannel('oai-events');
-            dc.onmessage = (_ev) => {
-                // Realtime API sends events here (transcripts, tool calls).
-                // We don't wire them into the UI yet; the audio is what matters.
+            dcRef.current = dc;
+            dc.onmessage = (ev) => { void handleDcEvent(String(ev.data)); };
+            dc.onopen = () => {
+                // The moment the DC is up, extend the session config:
+                //   - turn on Whisper transcription of the user's mic
+                //   - install the workspace's copilot tool schemas so the
+                //     model can create agents, send messages, etc. by voice
+                sendEvent({
+                    type: 'session.update',
+                    session: {
+                        input_audio_transcription: { model: 'whisper-1' },
+                        tools: toolsRef.current,
+                        tool_choice: toolsRef.current.length > 0 ? 'auto' : 'none',
+                    },
+                });
             };
 
-            // 3. SDP offer/answer with OpenAI.
-            // GA endpoint (Aug 2025) is /v1/realtime/calls — the old
-            // /v1/realtime?model=... path was removed and now returns
-            // "400 Invalid request" on SDP POSTs. The model already
-            // lives inside the ephemeral client_secret we minted, so
-            // the query param is no longer needed.
+            // 4. SDP offer/answer with OpenAI — GA endpoint
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
@@ -116,9 +214,6 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
                 },
             });
             if (!sdpRes.ok) {
-                // Surface the actual OpenAI error body — the raw HTTP
-                // status alone hides the reason (wrong endpoint, expired
-                // token, model not enabled on the org, …).
                 const errBody = await sdpRes.text().catch(() => '');
                 throw new Error(`OpenAI SDP handshake failed (${sdpRes.status}): ${errBody.slice(0, 300) || 'no error body'}`);
             }
@@ -134,9 +229,6 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
                 }
             };
         } catch (err: any) {
-            // Prefer the backend's structured message (`response.data.message`)
-            // over the generic axios "Request failed with status code 500" —
-            // the server side puts the actual reason there.
             const message = err.response?.data?.message
                 || err.message
                 || 'Failed to start voice session';
@@ -145,7 +237,7 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
             else alert(message);
             await stop();
         }
-    }, [setVoiceActive, stop, onError]);
+    }, [setVoiceActive, stop, onError, sendEvent, handleDcEvent]);
 
     return { start, stop };
 }

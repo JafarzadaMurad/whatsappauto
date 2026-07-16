@@ -14,6 +14,8 @@ userRouter.get('/sessions/:id', controller.getSession.bind(controller));
 userRouter.post('/chat', controller.chat.bind(controller));
 userRouter.post('/voice/session', controller.voiceSession.bind(controller));
 userRouter.post('/voice/finish', controller.voiceFinish.bind(controller));
+userRouter.get('/tool-schemas', controller.toolSchemas.bind(controller));
+userRouter.post('/tool-call', controller.toolCall.bind(controller));
 
 const adminRouter = Router();
 const adminController = new AdminCopilotController();

@@ -24,7 +24,7 @@ import { logger } from '../../utils/logger';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { recordUsagePostHoc, getCreditBalance } from '../../lib/credit-guard';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
-import { buildCopilotTools } from './copilot.tools';
+import { buildCopilotTools, buildCopilotVoiceTools } from './copilot.tools';
 import { DEFAULT_COPILOT_PROMPT, buildRuntimeContext } from './copilot.prompt';
 
 // Which model the copilot runs on. Admin-configurable via SystemConfig
@@ -451,6 +451,54 @@ export class CopilotController {
                     ? `OpenAI ${status}: ${oaiErr.message}`
                     : (error.code === 'ECONNABORTED' ? 'OpenAI request timed out (15s)' : error.message),
             });
+        }
+    }
+
+    // Returns the tool schemas the Realtime API needs in a
+    // session.update. Also used by the frontend to know what
+    // capabilities the voice session has.
+    async toolSchemas(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const userId = (req as any).user.id;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const { schemas } = buildCopilotVoiceTools({
+                userId, workspaceId,
+                auth: { userId, workspaceId, authKind: 'oauth' } as any,
+            });
+            return res.json({ success: true, tools: schemas });
+        } catch (error: any) {
+            logger.error({ err: error.message }, '[copilot] toolSchemas failed');
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Executor called from the browser when the Realtime model emits a
+    // `response.function_call_arguments.done` event. Runs the tool
+    // under the caller's own workspace/user context (never trusting
+    // client-supplied ctx), and returns whatever the MCP tool returned.
+    // Same broadcast side-effect as the text-mode path.
+    async toolCall(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const userId = (req as any).user.id;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const body = z.object({
+                name: z.string().min(1).max(120),
+                args: z.any().optional(),
+            }).parse(req.body);
+            const { executors } = buildCopilotVoiceTools({
+                userId, workspaceId,
+                auth: { userId, workspaceId, authKind: 'oauth' } as any,
+            });
+            const exec = executors.get(body.name);
+            if (!exec) return res.status(404).json({ success: false, message: `Unknown tool: ${body.name}` });
+            const result = await exec(body.args || {});
+            return res.json({ success: true, result });
+        } catch (error: any) {
+            logger.error({ err: error.message, tool: req.body?.name }, '[copilot] toolCall failed');
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
         }
     }
 

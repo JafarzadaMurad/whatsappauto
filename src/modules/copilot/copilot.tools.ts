@@ -96,6 +96,99 @@ function pickId(args: any, resultText: string): string | null {
 
 export type CopilotToolBag = Record<string, ReturnType<typeof aiTool>>;
 
+// A single registered tool, in the shape the OpenAI Realtime API expects
+// via `session.update.tools`. The Realtime API uses `parameters` for the
+// JSON Schema (not Anthropic's `input_schema` or MCP's `inputSchema`).
+export type RealtimeToolSchema = {
+    type: 'function';
+    name: string;
+    description: string;
+    parameters: any;
+};
+
+// Executor callback that closes over ctx + args + returns whatever the
+// underlying MCP tool returned (already parsed to JSON when possible).
+type ToolExecutor = (args: any) => Promise<any>;
+
+/**
+ * Same register-based construction as buildCopilotTools(), but produces
+ * two artifacts the voice path needs:
+ *   1. Tool schemas the browser can drop into `session.update.tools`
+ *      (Realtime API function-calling contract).
+ *   2. An executor map the /copilot/tool-call endpoint uses when the
+ *      Realtime model wants to invoke one of those tools — the browser
+ *      forwards {name, args}, we look up the executor and run it under
+ *      the caller's own workspace context.
+ * The socket broadcast wiring from buildCopilotTools is preserved.
+ */
+export function buildCopilotVoiceTools(ctx: ToolCtx): {
+    schemas: RealtimeToolSchema[];
+    executors: Map<string, ToolExecutor>;
+} {
+    const schemas: RealtimeToolSchema[] = [];
+    const executors = new Map<string, ToolExecutor>();
+
+    const register: RegisterToolFn = <Shape extends ZodRawShape>(
+        name: string,
+        description: string,
+        inputShape: Shape,
+        handler: (args: any, ctx: ToolCtx) => Promise<ToolResult>,
+    ) => {
+        const schema = z.object(inputShape);
+        // Zod v4 ships z.toJSONSchema. Wrap in try/catch so an unusual
+        // schema doesn't take the whole voice session down.
+        let jsonSchema: any = { type: 'object', properties: {} };
+        try {
+            jsonSchema = (z as any).toJSONSchema(schema);
+        } catch { /* fallback to empty schema */ }
+        // Strip fields the Realtime API rejects — $schema, definitions, etc.
+        // Realtime wants a plain JSON Schema object with type/properties/required.
+        if (jsonSchema && typeof jsonSchema === 'object') {
+            delete jsonSchema.$schema;
+            delete jsonSchema.$ref;
+            delete jsonSchema.definitions;
+        }
+        schemas.push({ type: 'function', name, description, parameters: jsonSchema });
+
+        executors.set(name, async (args: any) => {
+            const result = await handler(args || {}, ctx);
+            const text = (result.content || []).map(c => c.text).join('\n');
+            const isError = !!result.isError;
+            // Same broadcast the text path uses so the dashboard toasts
+            // the change and the panel can render an action card.
+            if (!isError && isMutation(name)) {
+                try {
+                    const m = MUTATION_MAP[name]!;
+                    io.to(`workspace:${ctx.workspaceId}`).emit('copilot.action', {
+                        tool: name, entity: m.entity, verb: m.verb,
+                        title: pickTitle(args, text),
+                        id: pickId(args, text),
+                        at: new Date().toISOString(),
+                    });
+                } catch { /* best-effort */ }
+            }
+            if (isError) return { error: text };
+            try { return JSON.parse(text); }
+            catch { return { text }; }
+        });
+    };
+
+    registerAutomationTools(register);
+    registerAgentTools(register);
+    registerWhatsappTools(register);
+    registerInstagramTools(register);
+    registerInboxTools(register);
+    registerClientTools(register);
+    registerCampaignTools(register);
+    registerTableTools(register);
+    registerWebhookTools(register);
+    registerApiKeyTools(register);
+    registerAiProviderTools(register);
+    registerUserFieldTools(register);
+
+    return { schemas, executors };
+}
+
 /**
  * Build the entire copilot tool bag for a given workspace/user.
  * Reuses the MCP tool files so we don't duplicate CRUD logic.

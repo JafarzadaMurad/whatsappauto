@@ -84,25 +84,32 @@
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 142 71% 45%;
+    /* TuralAI Growth palette:
+       - #232a33 → hsl(212 19% 17%) — main dark surface
+       - #519A66 → hsl(138 31% 46%) — muted forest green primary
+       Popover/select-dropdown surfaces sit ONE step lighter than the
+       page background so the native <option> menu chrome stays visible
+       against the toolbar row it opens from; border is a further step
+       lighter for outline visibility on the darker slate. */
+    --background: 212 19% 17%;
+    --foreground: 0 0% 96%;
+    --card: 212 19% 17%;
+    --card-foreground: 0 0% 96%;
+    --popover: 212 19% 22%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 138 31% 46%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --secondary: 212 19% 22%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 212 19% 22%;
+    --muted-foreground: 212 12% 65%;
+    --accent: 212 19% 24%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 62.8% 40%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 142 71% 45%;
+    --border: 212 19% 28%;
+    --input: 212 19% 22%;
+    --ring: 138 31% 46%;
     --radius: 0.75rem;
   }
 }
@@ -138,18 +145,31 @@
     background: transparent;
   }
   *::-webkit-scrollbar-thumb {
-    background-color: hsl(240 3.7% 22%);
+    background-color: hsl(212 19% 30%);
     border-radius: 3px;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(240 3.7% 32%);
+    background-color: hsl(212 19% 40%);
   }
   *::-webkit-scrollbar-corner {
     background: transparent;
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(240 3.7% 22%) transparent;
+    scrollbar-color: hsl(212 19% 30%) transparent;
+  }
+
+  /* Native <select> dropdowns — browsers largely ignore option styling
+     but Chromium honours a select-level color-scheme + background pair.
+     Force our dark palette so the OS-drawn menu matches the app instead
+     of flashing a white system default when opened over dark cards. */
+  select {
+    color-scheme: dark;
+  }
+  select > option,
+  select > optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
   }
 }
 

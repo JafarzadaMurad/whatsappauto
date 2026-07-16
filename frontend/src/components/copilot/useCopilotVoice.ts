@@ -191,13 +191,21 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
                 //   - turn on transcription of the user's mic
                 //   - install the workspace's copilot tool schemas so the
                 //     model can create agents, send messages, etc. by voice
-                // GA schema requires session.type: "realtime" — without it
-                // the server rejects with `Missing required parameter: session.type`.
+                // GA schema requires session.type: "realtime" — without
+                // it the server rejects with `Missing required parameter:
+                // session.type`. Transcription moved from the beta's
+                // top-level `input_audio_transcription` down under
+                // `audio.input.transcription` — using the old path returns
+                // `Unknown parameter: session.input_audio_transcription`.
                 sendEvent({
                     type: 'session.update',
                     session: {
                         type: 'realtime',
-                        input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
+                        audio: {
+                            input: {
+                                transcription: { model: 'gpt-4o-mini-transcribe' },
+                            },
+                        },
                         tools: toolsRef.current,
                         tool_choice: toolsRef.current.length > 0 ? 'auto' : 'none',
                     },

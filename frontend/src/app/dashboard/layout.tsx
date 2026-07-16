@@ -86,6 +86,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const navLinks = [
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, section: 'dashboard' },
+        { name: 'Copilot', href: '/dashboard/copilot', icon: Bot },
         { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3, section: 'analytics' },
         { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox, section: 'inbox' },
         {

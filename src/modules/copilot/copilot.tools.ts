@@ -185,6 +185,7 @@ export function buildCopilotVoiceTools(ctx: ToolCtx): {
     registerApiKeyTools(register);
     registerAiProviderTools(register);
     registerUserFieldTools(register);
+    registerCopilotUiTools(register);
 
     return { schemas, executors };
 }
@@ -255,6 +256,38 @@ export function buildCopilotTools(ctx: ToolCtx): CopilotToolBag {
     registerApiKeyTools(register);
     registerAiProviderTools(register);
     registerUserFieldTools(register);
+    registerCopilotUiTools(register);
 
     return bag;
+}
+
+// Copilot-specific tools that act on the browser instead of the DB —
+// e.g. navigating the user to a different dashboard page. The tool
+// runs on the backend (returns immediately) and emits a socket event
+// the frontend listens for and turns into a router.push. Server tools
+// can't touch the user's browser directly, so this is the only
+// mechanism that works for both text and voice modes uniformly.
+function registerCopilotUiTools(reg: RegisterToolFn) {
+    reg(
+        'navigate_to',
+        'Navigate the user to a page inside the alChatBot dashboard. Use this whenever the user asks you to open, show, or take them to something (e.g. "open my agents", "show me the inbox"). `path` must start with /dashboard/. Common paths: /dashboard, /dashboard/inbox, /dashboard/whatsapp, /dashboard/instagram, /dashboard/ai/agents, /dashboard/ai/providers, /dashboard/campaigns, /dashboard/contacts, /dashboard/crm/deals, /dashboard/automations, /dashboard/webhooks, /dashboard/api-keys, /dashboard/usage, /dashboard/copilot, /dashboard/settings/copilot, /dashboard/admin/plans (admin only).',
+        {
+            path: z.string().min(1).max(200),
+            reason: z.string().max(200).optional(),
+        },
+        async ({ path, reason }, ctx) => {
+            const cleaned = String(path || '').trim();
+            if (!cleaned.startsWith('/dashboard')) {
+                return { content: [{ type: 'text' as const, text: `Rejected: path must start with /dashboard/, got "${cleaned}"` }], isError: true };
+            }
+            try {
+                io.to(`workspace:${ctx.workspaceId}`).emit('copilot.navigate', {
+                    path: cleaned,
+                    reason: reason || null,
+                    at: new Date().toISOString(),
+                });
+            } catch { /* best-effort */ }
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, path: cleaned }) }] };
+        },
+    );
 }

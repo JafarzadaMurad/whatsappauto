@@ -103,6 +103,14 @@ const chatSchema = z.object({
     sessionId: z.string().uuid().optional(),
     message: z.string().min(1).max(8000),
     currentPath: z.string().max(200).optional(),
+    // Per-request overrides — the frontend model+language picker.
+    // The admin default (COPILOT_PROVIDER / COPILOT_MODEL) is used when omitted.
+    provider: z.enum(['CLAUDE', 'OPENAI']).optional(),
+    model: z.string().min(1).max(120).optional(),
+    // Free-text language name/code; goes into the runtime context so the
+    // model consistently replies in that language regardless of what the
+    // user typed in with.
+    language: z.string().max(60).optional(),
 });
 
 export class CopilotController {
@@ -112,21 +120,37 @@ export class CopilotController {
             if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
             const ws = await loadPlanAccess(workspaceId);
             const enabled = !!ws?.plan?.copilotEnabled;
-            // Diagnostic: help the UI (and any support call) explain
-            // WHY the bubble is hidden. Three possibilities we surface:
-            //   'no-workspace'   – auth resolved a null workspaceId
-            //   'no-plan'        – workspace has no plan and no default
-            //   'plan-disabled'  – plan.copilotEnabled=false
             let reason: string | null = null;
             if (!ws) reason = 'no-workspace';
             else if (!ws.plan) reason = 'no-plan';
             else if (!ws.plan.copilotEnabled) reason = 'plan-disabled';
+
+            // Model picker source: all active AiPricing chat rows
+            // (openai + anthropic, no *realtime* variants). Same filter
+            // the admin panel uses. Frontend renders as a dropdown; the
+            // saved admin default (COPILOT_MODEL/PROVIDER) is the
+            // starting selection.
+            const [defaults, pricing] = await Promise.all([
+                loadCopilotModel(),
+                prisma.aiPricing.findMany({
+                    where: { isActive: true },
+                    select: { provider: true, model: true },
+                    orderBy: [{ provider: 'asc' }, { model: 'asc' }],
+                }),
+            ]);
+            const availableModels = pricing
+                .filter(p => (p.provider === 'anthropic' || p.provider === 'openai') && !/realtime/i.test(p.model))
+                .map(p => ({ provider: p.provider === 'anthropic' ? 'CLAUDE' : 'OPENAI', model: p.model }));
+
             return res.json({
                 success: true,
                 enabled,
                 voiceEnabled: !!ws?.plan?.copilotVoiceEnabled,
                 customPrompt: ws?.copilotCustomPrompt || '',
                 reason,
+                defaultProvider: defaults.provider,
+                defaultModel: defaults.model,
+                availableModels,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
@@ -233,10 +257,12 @@ export class CopilotController {
             }
             const history: any[] = Array.isArray(existing.messages) ? existing.messages : [];
 
-            // 3. Build model — copilot model is admin-selected; the key
-            // is always the platform key (this feature is a platform
-            // product, never BYOK).
-            const { provider, model } = await loadCopilotModel();
+            // 3. Build model. Per-request `provider`/`model` from the
+            // frontend picker wins; admin defaults fill the gaps. Both
+            // must be in the AiPricing catalogue so we know how to bill.
+            const defaults = await loadCopilotModel();
+            const provider = body.provider || defaults.provider;
+            const model = body.model || defaults.model;
             const apiKey = await resolvePlatformKey(provider);
             if (!apiKey) {
                 return res.status(500).json({
@@ -258,10 +284,14 @@ export class CopilotController {
                 currentPath: body.currentPath,
                 creditRemaining: balance?.remaining,
             });
+            const languageDirective = body.language
+                ? `\n\n[Language override]\nReply in ${body.language} regardless of the language the user's message is in. This is a hard rule set by the user in the language picker.`
+                : '';
             const systemPrompt = [
                 adminPrompt,
                 ws.copilotCustomPrompt ? `\n\n[Workspace-specific rules]\n${ws.copilotCustomPrompt}` : '',
                 runtimeCtx,
+                languageDirective,
             ].filter(Boolean).join('');
 
             // 5. Assemble messages

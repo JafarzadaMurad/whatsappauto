@@ -6,8 +6,8 @@
 // navigate). All state lives in useCopilotStore (Zustand).
 
 import { useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
-import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, ArrowUpRight, Coins } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, ArrowUpRight, Coins, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { createSocket } from "@/lib/socket";
@@ -31,13 +31,35 @@ const ENTITY_PATH: Record<string, string> = {
     instagram:    "/dashboard/instagram",
 };
 
-type CopilotConfig = { enabled: boolean; voiceEnabled: boolean; customPrompt: string; reason?: string | null };
+type ModelOption = { provider: string; model: string };
+type CopilotConfig = {
+    enabled: boolean;
+    voiceEnabled: boolean;
+    customPrompt: string;
+    reason?: string | null;
+    defaultProvider?: string;
+    defaultModel?: string;
+    availableModels?: ModelOption[];
+};
+
+// Small curated list — full names go into the language directive in the
+// system prompt. Users can pick "Auto" to let the model mirror the input.
+const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
+    { code: "", label: "Auto (match user)" },
+    { code: "English", label: "English" },
+    { code: "Azerbaijani", label: "Azərbaycan" },
+    { code: "Russian", label: "Русский" },
+    { code: "Turkish", label: "Türkçe" },
+];
 
 export default function Copilot() {
     const pathname = usePathname();
+    const router = useRouter();
     const {
         isOpen, isSending, voiceActive, sessionId, messages, actions, draft,
-        open, close, toggle, setDraft, setSending, setSession, pushMessage, pushAction,
+        provider, model, language,
+        open, close, setDraft, setSending, setSession, pushMessage, pushAction,
+        setProvider, setModel, setLanguage,
     } = useCopilotStore();
 
     const [config, setConfig] = useState<CopilotConfig | null>(null);
@@ -73,9 +95,16 @@ export default function Copilot() {
                         voiceEnabled: cfgRes.data.voiceEnabled,
                         customPrompt: cfgRes.data.customPrompt,
                         reason: cfgRes.data.reason,
+                        defaultProvider: cfgRes.data.defaultProvider,
+                        defaultModel: cfgRes.data.defaultModel,
+                        availableModels: cfgRes.data.availableModels || [],
                     });
+                    // Initialise picker from admin defaults on first load.
+                    // If the user has already picked something (localStorage)
+                    // that value stays — don't clobber a deliberate choice.
+                    if (!provider && cfgRes.data.defaultProvider) setProvider(cfgRes.data.defaultProvider);
+                    if (!model && cfgRes.data.defaultModel) setModel(cfgRes.data.defaultModel);
                     if (!cfgRes.data.enabled) {
-                        // Devs / support diagnosing "why isn't the bubble showing?"
                         // eslint-disable-next-line no-console
                         console.info('[copilot] hidden — reason:', cfgRes.data.reason);
                     }
@@ -88,7 +117,7 @@ export default function Copilot() {
         })();
     }, []);
 
-    // ─── Socket: listen for copilot.action broadcasts ──────────────
+    // ─── Socket: listen for copilot.action + copilot.navigate ──────
     useEffect(() => {
         if (!config?.enabled) return;
         const socket = createSocket({});
@@ -98,8 +127,19 @@ export default function Copilot() {
                 title: ev.title || '', id: ev.id || null, at: ev.at,
             });
         });
+        // Navigation events come from the `navigate_to` copilot tool —
+        // fires on the workspace room whenever the agent asks the UI to
+        // switch pages. The panel stays open across navigations because
+        // it's mounted in the dashboard layout, so the user keeps the
+        // conversation in view while the destination loads.
+        socket.on('copilot.navigate', (ev: any) => {
+            const path = String(ev?.path || '');
+            if (path.startsWith('/dashboard')) {
+                router.push(path);
+            }
+        });
         return () => { socket.disconnect(); };
-    }, [config?.enabled, pushAction]);
+    }, [config?.enabled, pushAction, router]);
 
     // ─── Auto-scroll to latest message ─────────────────────────────
     useEffect(() => {
@@ -118,6 +158,9 @@ export default function Copilot() {
                 sessionId: sessionId || undefined,
                 message: text,
                 currentPath: pathname,
+                provider: provider || undefined,
+                model: model || undefined,
+                language: language || undefined,
             });
             if (res.data.success) {
                 if (!sessionId) setSession(res.data.sessionId);
@@ -177,22 +220,55 @@ export default function Copilot() {
             {isOpen && (
                 <div className="fixed bottom-6 right-6 z-40 w-[400px] max-w-[calc(100vw-2rem)] h-[600px] max-h-[calc(100vh-3rem)] bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                     {/* Header */}
-                    <div className="flex items-center justify-between p-4 border-b border-border bg-secondary/30">
-                        <div className="flex items-center gap-2">
-                            <div className="p-1.5 bg-primary/15 text-primary rounded-lg"><Bot className="w-4 h-4" /></div>
-                            <div>
-                                <div className="font-semibold text-sm">Copilot</div>
-                                {balance && (
-                                    <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                        <Coins className="w-2.5 h-2.5" />
-                                        {balance.remaining.toLocaleString()} cai left
-                                    </div>
-                                )}
+                    <div className="p-3 border-b border-border bg-secondary/30 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <div className="p-1.5 bg-primary/15 text-primary rounded-lg"><Bot className="w-4 h-4" /></div>
+                                <div className="min-w-0">
+                                    <div className="font-semibold text-sm">Copilot</div>
+                                    {balance && (
+                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                            <Coins className="w-2.5 h-2.5" />
+                                            {balance.remaining.toLocaleString()} cai left
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <button onClick={() => { close(); router.push('/dashboard/copilot'); }}
+                                    title="Open full page"
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                                    <Maximize2 className="w-4 h-4" />
+                                </button>
+                                <button onClick={close} title="Collapse"
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                                    <ChevronDown className="w-4 h-4" />
+                                </button>
                             </div>
                         </div>
-                        <button onClick={close} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
-                            <ChevronDown className="w-4 h-4" />
-                        </button>
+                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                            <select value={model || ''}
+                                onChange={e => {
+                                    const next = e.target.value;
+                                    setModel(next);
+                                    const found = config?.availableModels?.find(m => m.model === next);
+                                    if (found) setProvider(found.provider);
+                                }}
+                                className="bg-secondary/60 border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                {(config?.availableModels || []).map(m => (
+                                    <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
+                                        {m.model}
+                                    </option>
+                                ))}
+                            </select>
+                            <select value={language || ''}
+                                onChange={e => setLanguage(e.target.value || null)}
+                                className="bg-secondary/60 border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                {LANGUAGE_OPTIONS.map(l => (
+                                    <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
 
                     {/* Messages */}

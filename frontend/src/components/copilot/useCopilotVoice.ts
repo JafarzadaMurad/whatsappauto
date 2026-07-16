@@ -188,13 +188,16 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
             dc.onmessage = (ev) => { void handleDcEvent(String(ev.data)); };
             dc.onopen = () => {
                 // The moment the DC is up, extend the session config:
-                //   - turn on Whisper transcription of the user's mic
+                //   - turn on transcription of the user's mic
                 //   - install the workspace's copilot tool schemas so the
                 //     model can create agents, send messages, etc. by voice
+                // GA schema requires session.type: "realtime" — without it
+                // the server rejects with `Missing required parameter: session.type`.
                 sendEvent({
                     type: 'session.update',
                     session: {
-                        input_audio_transcription: { model: 'whisper-1' },
+                        type: 'realtime',
+                        input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
                         tools: toolsRef.current,
                         tool_choice: toolsRef.current.length > 0 ? 'auto' : 'none',
                     },

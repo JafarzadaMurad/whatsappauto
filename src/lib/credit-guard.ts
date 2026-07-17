@@ -223,7 +223,10 @@ export async function recordUsagePostHoc(
     aiResult: any
 ): Promise<void> {
     const { workspaceId, userId, agentId, providerInfo, model, cause } = opts;
-    if (!workspaceId) return;
+    if (!workspaceId) {
+        logger.warn({ providerInfo: providerInfo.provider, model, cause }, '[credit-guard] skipped — no workspaceId');
+        return;
+    }
     try {
         // Fetch plan settings to know if BYOK is allowed (governs
         // `usedOwnKey` — even if useOwnKey=true, we only honour it on
@@ -233,8 +236,25 @@ export async function recordUsagePostHoc(
 
         const usage = extractUsage(providerInfo.provider, aiResult);
         const pricedProvider = providerLower(providerInfo.provider);
-        const { realCostUsd, credits } = await priceUsage(pricedProvider, model, usage);
+        const { realCostUsd, credits, priceRow } = await priceUsage(pricedProvider, model, usage);
         const chargedCredits = usedOwnKey ? 0 : credits;
+
+        // Loud info-level log on every ledger write. Grep for
+        // "[credit-guard] recorded" in pm2 logs to see billing running.
+        // A row here with inputTokens=0 or credits=0 means the AI SDK
+        // returned an empty usage block — extractUsage returned zeroes
+        // — so the model/provider probably changed how usage is shaped.
+        logger.info({
+            workspaceId, userId, cause, provider: pricedProvider, model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cachedTokens: usage.cachedTokens || 0,
+            realCostUsd: Number(realCostUsd.toFixed(6)),
+            credits: chargedCredits,
+            usedOwnKey,
+            priceRowFound: !!priceRow,
+            balanceUpdated: chargedCredits > 0,
+        }, '[credit-guard] recorded');
 
         await prisma.$transaction([
             prisma.creditLedger.create({
@@ -261,7 +281,14 @@ export async function recordUsagePostHoc(
                 : []),
         ]);
     } catch (err: any) {
-        logger.error({ err: err.message, workspaceId, model }, '[credit-guard] post-hoc ledger write failed');
+        logger.error({
+            err: err.message,
+            stack: err.stack?.slice(0, 500),
+            workspaceId,
+            provider: providerInfo.provider,
+            model,
+            cause,
+        }, '[credit-guard] post-hoc ledger write failed');
     }
 }
 

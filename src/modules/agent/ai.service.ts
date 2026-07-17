@@ -1719,7 +1719,147 @@ export function buildToolsForSkills(
         prompts.push(resolveSkillPrompt('google_calendar', skillPrompts));
     }
 
+    // Agent media library — always-on when the agent has a bound
+    // instance + remoteJid, no skill flag needed. The tool resolves
+    // the media by name at execute time so a rename in the library
+    // takes effect on the very next reply without a restart.
+    if (agentId && remoteJid && instanceId) {
+        tools = { ...tools, ...buildAgentMediaTool(agentId, instanceId, remoteJid) };
+        // The catalogue itself is prepended by the caller from
+        // ai.service (it needs an async DB read) — the tool block
+        // is added here so tool dispatch works.
+    }
+
     return { tools: Object.keys(tools).length > 0 ? tools : undefined, skillPrompt: prompts.length > 0 ? '\n\n' + prompts.join('\n\n') : '' };
+}
+
+// Media tool — send an image, video, audio or document from the agent's
+// library. `name` matches AgentMedia.name; captions land as WhatsApp
+// text under the media. Non-throwing; returns { ok, sent? , error? } so
+// the LLM can react to a bad name (e.g. try a different one).
+function buildAgentMediaTool(agentId: string, instanceId: string, remoteJid: string) {
+    return {
+        send_media: makeTool(
+            'Send a file (image, video, audio, or document/pdf) from your media library to the customer on the current channel. Use this when your instructions tell you to share a specific asset (e.g. "if the customer agrees, send the VSL video"). `name` must EXACTLY match one of the library entries listed in the "Available media" system-prompt block. Add a `caption` when a short line of text would help the customer understand what they\'re receiving. Returns { ok: true, sent } on success or { ok: false, error } if the name doesn\'t exist.',
+            z.object({
+                name: z.string().min(1).max(120).describe('The library name of the media to send (kebab-case slug the system prompt lists).'),
+                caption: z.string().max(1000).optional().describe('Optional short caption/text sent alongside the media.'),
+            }),
+            async ({ name, caption }: { name: string; caption?: string }) => {
+                try {
+                    const row = await prisma.agentMedia.findFirst({
+                        where: { agentId, name },
+                    });
+                    if (!row) {
+                        // Give the model a hint about what names DO exist
+                        // so it can retry with a corrected slug.
+                        const options = await prisma.agentMedia.findMany({
+                            where: { agentId }, select: { name: true, kind: true }, take: 20,
+                        });
+                        return {
+                            ok: false,
+                            error: `No media named "${name}" in this agent's library`,
+                            availableNames: options.map(o => o.name),
+                        };
+                    }
+
+                    // WhatsApp channel — use the running Baileys socket.
+                    // Instagram support falls back to a text fallback for
+                    // now (the IG DM API needs the message wrapper this
+                    // path doesn't have) — logged for future work.
+                    const isInstagram = remoteJid.startsWith('ig:');
+                    if (isInstagram) {
+                        // Best-effort: post the URL as a message so the
+                        // customer still receives it. Full attachment
+                        // path can wire the IG Attachment API later.
+                        try {
+                            const { sendIgMessage } = await import('../instagram/instagram.ai.service');
+                            const igSenderId = remoteJid.slice('ig:'.length);
+                            // Instance for IG is the account.id — matching send_media contract, pull it from the DB.
+                            const acc = await prisma.instagramAccount.findFirst({
+                                where: { id: instanceId },
+                                select: { igUserId: true, accessToken: true },
+                            });
+                            if (!acc) return { ok: false, error: 'Instagram account not connected' };
+                            const text = caption ? `${caption}\n${row.mediaUrl}` : row.mediaUrl;
+                            await sendIgMessage(acc.igUserId, igSenderId, text, acc.accessToken);
+                            return { ok: true, sent: name, channel: 'instagram', kind: row.kind };
+                        } catch (e: any) {
+                            return { ok: false, error: `Instagram send failed: ${e?.message || 'unknown'}` };
+                        }
+                    }
+
+                    // WhatsApp path — Baileys supports {image|video|audio|document: {url}, caption}.
+                    const { sessions } = await import('../whatsapp/instance.manager');
+                    const sock: any = sessions.get(instanceId);
+                    if (!sock) return { ok: false, error: 'WhatsApp instance not connected' };
+
+                    let messagePayload: any = null;
+                    if (row.kind === 'image') {
+                        messagePayload = { image: { url: row.mediaUrl }, caption: caption || undefined, mimetype: row.mimeType };
+                    } else if (row.kind === 'video') {
+                        messagePayload = { video: { url: row.mediaUrl }, caption: caption || undefined, mimetype: row.mimeType };
+                    } else if (row.kind === 'audio') {
+                        messagePayload = { audio: { url: row.mediaUrl }, mimetype: row.mimeType, ptt: false };
+                    } else {
+                        // Documents (pdf, docx, xlsx, txt, …) go through the
+                        // document envelope; WhatsApp shows the filename.
+                        messagePayload = {
+                            document: { url: row.mediaUrl },
+                            mimetype: row.mimeType,
+                            fileName: row.filename,
+                            caption: caption || undefined,
+                        };
+                    }
+
+                    await sock.sendMessage(remoteJid, messagePayload);
+
+                    // Persist as an outbound Message so the inbox shows it
+                    // in the conversation thread + history for next turns.
+                    await prisma.message.create({
+                        data: {
+                            instanceId,
+                            remoteJid,
+                            isFromMe: true,
+                            messageType: row.kind,
+                            content: caption || row.filename,
+                            mediaUrl: row.mediaUrl,
+                            mediaMime: row.mimeType,
+                            mediaName: row.filename,
+                            timestamp: new Date(),
+                            status: 'SENT',
+                        },
+                    });
+
+                    return { ok: true, sent: name, channel: 'whatsapp', kind: row.kind };
+                } catch (err: any) {
+                    return { ok: false, error: err?.message || 'send failed' };
+                }
+            },
+        ),
+    };
+}
+
+/**
+ * Renders the agent's media library as a system-prompt block so the
+ * model knows what names it can pass to `send_media`. Returns '' when
+ * the agent has no media. Called from every place ai.service assembles
+ * the final system prompt.
+ */
+export async function buildAgentMediaCatalogue(agentId: string): Promise<string> {
+    if (!agentId) return '';
+    const rows = await prisma.agentMedia.findMany({
+        where: { agentId },
+        select: { name: true, kind: true, filename: true, description: true, sizeBytes: true, mimeType: true },
+        orderBy: { createdAt: 'asc' },
+    });
+    if (rows.length === 0) return '';
+    const lines = rows.map(r => {
+        const sizeKb = Math.round((r.sizeBytes || 0) / 1024);
+        const desc = r.description ? ` — ${r.description}` : '';
+        return `- ${r.name} (${r.kind}, ${r.mimeType}, ~${sizeKb} KB)${desc}`;
+    });
+    return `\n\n[Available media — send by name via the send_media tool]\n${lines.join('\n')}\nRules: pass the name EXACTLY as listed. Add a short caption ONLY when it helps the customer understand what they're getting; usually the media speaks for itself.`;
 }
 
 // Interactive WhatsApp poll. Customers tap to vote and the chosen
@@ -2171,7 +2311,8 @@ export class AiService {
 
             const rawPrompt = agent.systemPrompt || 'You are a helpful WhatsApp assistant.';
             const interpolated = interpolateAgentPrompt(rawPrompt, { channel: 'whatsapp', timezone: (agent as any).timezone });
-            const systemPrompt = interpolated + contactContext + skillPrompt + routerPrompt + directivesBlock;
+            const mediaCatalogue = await buildAgentMediaCatalogue(agent.id);
+            const systemPrompt = interpolated + contactContext + skillPrompt + routerPrompt + directivesBlock + mediaCatalogue;
 
             // When the operator hit "Run now", inject a synthetic user
             // turn so the model has something to react to even if the
@@ -2812,7 +2953,8 @@ export class AiService {
                 skills, agent.allowedTableIds, agent.userId, workspaceId, httpTools,
                 agent.id, remoteJid, skillPrompts, accountId, contactName,
             );
-            const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful Instagram assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
+            const igMediaCatalogue = await buildAgentMediaCatalogue(agent.id);
+            const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful Instagram assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) + contactContext + skillPrompt + igMediaCatalogue;
 
             const result = await generateText({
                 model: aiModel,

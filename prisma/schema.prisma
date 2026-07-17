@@ -594,6 +594,46 @@ model Agent {
   agentChatMessages  AgentChatMessage[]
   adRoutes           AdRoute[]
   creditLedger       CreditLedger[]
+  media              AgentMedia[]
+}
+
+// Files an agent can send to customers on demand — image, video, audio
+// or document/pdf. Uploaded through the agent editor (drag/paste/upload),
+// referenced from the system prompt by `name` (e.g. "if the customer
+// agrees, send the VSL video"). At runtime the agent gets a
+// `send_media(name)` tool that resolves the name to a stored file and
+// pushes it to the current WhatsApp/Instagram thread.
+//
+// Files live on disk in the same `uploads/` dir the uploads module
+// already uses; only the URL is stored. `kind` is derived from the
+// mime prefix so the LLM has a cheap type hint to reason with.
+model AgentMedia {
+  id          String   @id @default(uuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  workspaceId String?
+
+  // Human-friendly reference used both in the UI and in prompts. Must
+  // be unique per agent so the send_media tool resolves unambiguously.
+  name        String
+  // Original filename (kept for the "download original" UX + the
+  // filename attribute WhatsApp/IG media messages accept).
+  filename    String
+  mediaUrl    String   // absolute URL served by /api/uploads/files/...
+  mimeType    String
+  sizeBytes   Int
+  // 'image' | 'video' | 'audio' | 'document' — derived from mimeType
+  // at insert time so the LLM/prompt/UI don't have to re-derive.
+  kind        String
+  // Optional agent-authored caption/description. Included in the
+  // system-prompt catalogue so the model knows when to use each file.
+  description String?  @db.Text
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([agentId, name])
+  @@index([agentId, createdAt])
 }
 
 // Facebook ad account connected via OAuth. One workspace can connect

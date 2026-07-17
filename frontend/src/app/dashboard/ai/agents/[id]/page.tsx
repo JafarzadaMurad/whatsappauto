@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, Wrench, Wifi, WifiOff, Power, Plus, Trash2, ChevronDown, ChevronRight, Sparkles, Play, Send, User, Activity, CheckCircle2, XCircle, ChevronsRight, FlaskConical, RefreshCw, Copy, Pause, Bell, Maximize2, Minimize2, X as XIcon, Save, Check, Plug } from "lucide-react";
+import AgentMediaSection from "@/components/agent/AgentMediaSection";
 import Link from "next/link";
 import api from "@/lib/api";
 import { motion } from "framer-motion";
@@ -1738,6 +1739,12 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                     className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none text-sm" />
                             </div>
                         </div>
+
+                        {/* Media library — files the agent can send to
+                            customers on demand via send_media(name).
+                            Auto-injected into the system prompt as
+                            "Available media". Drag/drop, paste, or upload. */}
+                        <AgentMediaSection agentId={id as string} />
 
                         {/* Memory — promoted out of Skills, lives right under System Prompt */}
                         <div className={`rounded-xl border ${skills.includes('memory') ? 'bg-primary/5 border-primary/30' : 'bg-card border-border'}`}>

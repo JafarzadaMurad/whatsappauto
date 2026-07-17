@@ -702,10 +702,13 @@ export class InstagramAiService {
             ? 'You are responding to an Instagram Direct Message. Your reply MUST be under 900 characters. If tool output is large, summarize the key items briefly instead of pasting raw JSON.'
             : 'You are responding to an Instagram comment on a post. Your reply MUST be under 900 characters and concise.';
 
+        const { buildAgentMediaCatalogue } = await import('../agent/ai.service');
+        const igMainMediaCatalogue = await buildAgentMediaCatalogue(agent.id);
         const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) +
             `\n\n${platformNote}\nContact ID: ${contactId}` +
             skillPrompt +
-            directivesBlock;
+            directivesBlock +
+            igMainMediaCatalogue;
 
         const hasTools = Object.keys(tools).length > 0;
 

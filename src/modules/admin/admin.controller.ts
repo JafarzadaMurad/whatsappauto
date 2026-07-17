@@ -14,22 +14,121 @@ const updateUserSchema = z.object({
 
 const SAFE_USER_SELECT = {
     id: true, email: true, name: true, role: true,
+    emailVerified: true,
     planId: true, subscriptionStatus: true, subscriptionEndsAt: true,
     stripeCustomerId: true,
     hiddenSections: true, lockedSections: true,
     unlimitedInstances: true,
     createdAt: true, updatedAt: true,
-    plan: { select: { id: true, name: true, price: true, currency: true, interval: true } }
+    plan: { select: { id: true, name: true, price: true, currency: true, interval: true, monthlyCredits: true, copilotEnabled: true, copilotVoiceEnabled: true } }
+} as const;
+
+// Compact usable-in-list view of every workspace the user owns —
+// includes the live credit-pool numbers so the admin's user card can
+// show "X / Y credits used" without a second round-trip per row.
+const OWNED_WS_SELECT = {
+    id: true, name: true,
+    creditsUsedThisPeriod: true, creditTopUp: true, periodResetAt: true,
+    subscriptionStatus: true,
+    plan: { select: { id: true, name: true, monthlyCredits: true } },
 } as const;
 
 export class AdminController {
     async listUsers(_req: Request, res: Response) {
         try {
             const users = await prisma.user.findMany({
-                select: SAFE_USER_SELECT,
+                select: {
+                    ...SAFE_USER_SELECT,
+                    ownedWorkspaces: {
+                        select: OWNED_WS_SELECT,
+                        orderBy: { createdAt: 'asc' },
+                    },
+                    _count: {
+                        select: {
+                            ownedWorkspaces: true,
+                            instances: true,
+                            agents: true,
+                        },
+                    },
+                } as any,
                 orderBy: { createdAt: 'desc' }
             });
             return res.json({ success: true, users });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Detailed single-user view used by the admin drawer — same shape
+    // as listUsers rows but with the last 20 credit ledger entries
+    // included so support can see exactly what burned through the pool.
+    async getUser(req: Request, res: Response) {
+        try {
+            const id = req.params.id as string;
+            const user = await prisma.user.findUnique({
+                where: { id },
+                select: {
+                    ...SAFE_USER_SELECT,
+                    ownedWorkspaces: {
+                        select: OWNED_WS_SELECT,
+                        orderBy: { createdAt: 'asc' },
+                    },
+                } as any,
+            });
+            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+            // Recent LLM activity across every workspace the user owns.
+            const wsIds = ((user as any).ownedWorkspaces as any[]).map(w => w.id);
+            const recentLedger = wsIds.length > 0 ? await prisma.creditLedger.findMany({
+                where: { workspaceId: { in: wsIds } },
+                orderBy: { createdAt: 'desc' },
+                take: 20,
+                select: {
+                    id: true, workspaceId: true, cause: true, provider: true, model: true,
+                    inputTokens: true, outputTokens: true, creditsUsed: true,
+                    usedOwnKey: true, createdAt: true,
+                    agent: { select: { id: true, name: true } },
+                },
+            }) : [];
+
+            return res.json({ success: true, user, recentLedger });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Admin-flip email verification without a mail round-trip. Used
+    // when a customer can't receive the verify email (typo, spam bin
+    // that never clears) — flips User.emailVerified=true and wipes any
+    // pending token so nothing collides later.
+    async verifyEmail(req: Request, res: Response) {
+        try {
+            const id = req.params.id as string;
+            const user = await prisma.user.update({
+                where: { id },
+                data: {
+                    emailVerified: true,
+                    emailVerifyToken: null,
+                    emailVerifyExpires: null,
+                },
+                select: SAFE_USER_SELECT,
+            });
+            return res.json({ success: true, user });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Full account delete. Cascades through Prisma's onDelete: Cascade
+    // to every scoped row (workspaces, instances, agents, sessions…),
+    // so this is a hard, irreversible wipe. UI must confirm.
+    async deleteUser(req: Request, res: Response) {
+        try {
+            const id = req.params.id as string;
+            const caller = (req as any).user?.id;
+            if (caller === id) return res.status(400).json({ success: false, message: 'You cannot delete your own admin account here.' });
+            await prisma.user.delete({ where: { id } });
+            return res.json({ success: true });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

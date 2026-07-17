@@ -11,7 +11,10 @@ const aiModelsController = new AiModelsController();
 router.use(authMiddleware, requireAdmin);
 
 router.get('/users', controller.listUsers.bind(controller));
+router.get('/users/:id', controller.getUser.bind(controller));
 router.put('/users/:id', controller.updateUser.bind(controller));
+router.post('/users/:id/verify-email', controller.verifyEmail.bind(controller));
+router.delete('/users/:id', controller.deleteUser.bind(controller));
 router.get('/config', controller.getConfig.bind(controller));
 router.put('/config', controller.setConfig.bind(controller));
 

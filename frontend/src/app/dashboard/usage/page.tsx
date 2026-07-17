@@ -53,16 +53,33 @@ export default function UsagePage() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        (async () => {
+        // Fetch once on mount, then keep refreshing every 15s so the
+        // balance ticks down live as the user chats with the copilot
+        // in another tab — no socket listener needed for a page that
+        // people usually just leave open on a second monitor.
+        let cancelled = false;
+        const load = async (initial: boolean) => {
             try {
                 const [b, h] = await Promise.all([
                     api.get('/credits/balance'),
                     api.get('/credits/history?days=30'),
                 ]);
+                if (cancelled) return;
                 if (b.data.success) setBalance(b.data.balance);
                 if (h.data.success) setHistory(h.data.history);
-            } finally { setLoading(false); }
-        })();
+            } finally { if (initial) setLoading(false); }
+        };
+        load(true);
+        const timer = setInterval(() => { void load(false); }, 15_000);
+        // Also refresh whenever the tab regains focus — cheapest "live"
+        // signal that works everywhere without wiring a socket room.
+        const onFocus = () => { void load(false); };
+        window.addEventListener('focus', onFocus);
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+            window.removeEventListener('focus', onFocus);
+        };
     }, []);
 
     const daily = useMemo(() => {

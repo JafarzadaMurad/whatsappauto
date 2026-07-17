@@ -115,6 +115,19 @@ export default function Copilot() {
                 });
             } catch { /* silent — we still render the bubble */ }
         })();
+
+        // Poll balance every 20s so the header pill ticks even when
+        // the user is chatting with the copilot in a different tab
+        // (voice mode, or Usage page open beside). No auth-cost.
+        const balanceTimer = setInterval(() => {
+            api.get('/credits/balance').then(r => {
+                if (r.data.success) setBalance({
+                    remaining: r.data.balance.remaining,
+                    totalBudget: r.data.balance.totalBudget,
+                });
+            }).catch(() => {});
+        }, 20_000);
+        return () => clearInterval(balanceTimer);
     }, []);
 
     // ─── Socket: listen for copilot.action + copilot.navigate ──────
@@ -181,11 +194,25 @@ export default function Copilot() {
                 pushMessage({ role: 'assistant', content: res.data.message || 'Something went wrong.', at: new Date().toISOString() });
             }
         } catch (err: any) {
-            pushMessage({
-                role: 'assistant',
-                content: err.response?.data?.message || err.message || 'Request failed.',
-                at: new Date().toISOString(),
-            });
+            // Surface the credit-exhausted 402 with a friendlier prompt
+            // pointing at Billing, not the raw backend message.
+            const status = err.response?.status;
+            const data = err.response?.data;
+            if (status === 402 && data?.code === 'credits_exhausted') {
+                pushMessage({
+                    role: 'assistant',
+                    content: `⚠️ You've used all ${data.totalBudget?.toLocaleString?.() || 'your'} credits for this period. Upgrade your plan or wait for the reset on ${data.periodResetAt ? new Date(data.periodResetAt).toLocaleDateString() : 'next cycle'} to continue.`,
+                    at: new Date().toISOString(),
+                });
+                // Reflect the zero balance immediately.
+                setBalance({ remaining: 0, totalBudget: data.totalBudget || 0 });
+            } else {
+                pushMessage({
+                    role: 'assistant',
+                    content: data?.message || err.message || 'Request failed.',
+                    at: new Date().toISOString(),
+                });
+            }
         } finally { setSending(false); }
     };
 

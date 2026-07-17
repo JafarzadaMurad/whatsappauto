@@ -240,6 +240,25 @@ export class CopilotController {
                 });
             }
 
+            // 1b. Credit gate. Copilot always uses the platform key
+            // (no BYOK bypass), so a workspace out of credits must be
+            // hard-blocked before we spend more platform tokens on it.
+            // `top_up` plans explicitly opt into past-zero use.
+            const overageBehavior = (ws.plan as any)?.overageBehavior || 'hard_block';
+            if (overageBehavior === 'hard_block') {
+                const bal = await getCreditBalance(workspaceId);
+                if (bal && bal.totalBudget > 0 && bal.used >= bal.totalBudget) {
+                    return res.status(402).json({
+                        success: false,
+                        code: 'credits_exhausted',
+                        message: 'Your credit pool is empty. Upgrade your plan or wait for the next reset.',
+                        remaining: 0,
+                        totalBudget: bal.totalBudget,
+                        periodResetAt: bal.periodResetAt,
+                    });
+                }
+            }
+
             // 2. Load or create session
             let sessionId = body.sessionId;
             let existing: any = null;
@@ -386,6 +405,24 @@ export class CopilotController {
             const ws = await loadPlanAccess(workspaceId);
             if (!ws?.plan?.copilotEnabled) return res.status(403).json({ success: false, message: 'Copilot is not enabled on your plan.' });
             if (!ws.plan.copilotVoiceEnabled) return res.status(403).json({ success: false, message: 'Voice mode is not enabled on your plan.' });
+
+            // Same credit gate as the text path. Voice sessions bill
+            // per-second so an empty pool must reject BEFORE we mint an
+            // ephemeral OpenAI token that would then burn dollars.
+            const overageBehavior = (ws.plan as any)?.overageBehavior || 'hard_block';
+            if (overageBehavior === 'hard_block') {
+                const bal = await getCreditBalance(workspaceId);
+                if (bal && bal.totalBudget > 0 && bal.used >= bal.totalBudget) {
+                    return res.status(402).json({
+                        success: false,
+                        code: 'credits_exhausted',
+                        message: 'Your credit pool is empty — voice mode is blocked. Upgrade your plan or wait for the next reset.',
+                        remaining: 0,
+                        totalBudget: bal.totalBudget,
+                        periodResetAt: bal.periodResetAt,
+                    });
+                }
+            }
 
             const openaiKey = await resolvePlatformKey('OPENAI');
             if (!openaiKey) return res.status(500).json({ success: false, message: 'Platform OpenAI key not configured. An admin must set PLATFORM_OPENAI_KEY in System Config.' });

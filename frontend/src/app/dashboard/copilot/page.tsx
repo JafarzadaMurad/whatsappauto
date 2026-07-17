@@ -95,6 +95,17 @@ export default function CopilotFullPage() {
                 });
             } catch { /* silent */ }
         })();
+        // Poll the balance every 20s so the header tick reflects voice
+        // sessions running in the background (voice bills only on end).
+        const timer = setInterval(() => {
+            api.get('/credits/balance').then(r => {
+                if (r.data.success) setBalance({
+                    remaining: r.data.balance.remaining,
+                    totalBudget: r.data.balance.totalBudget,
+                });
+            }).catch(() => {});
+        }, 20_000);
+        return () => clearInterval(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -151,11 +162,22 @@ export default function CopilotFullPage() {
                 pushMessage({ role: 'assistant', content: res.data.message || 'Something went wrong.', at: new Date().toISOString() });
             }
         } catch (err: any) {
-            pushMessage({
-                role: 'assistant',
-                content: err.response?.data?.message || err.message || 'Request failed.',
-                at: new Date().toISOString(),
-            });
+            const status = err.response?.status;
+            const data = err.response?.data;
+            if (status === 402 && data?.code === 'credits_exhausted') {
+                pushMessage({
+                    role: 'assistant',
+                    content: `⚠️ You've used all ${data.totalBudget?.toLocaleString?.() || 'your'} credits for this period. Upgrade your plan or wait for the reset on ${data.periodResetAt ? new Date(data.periodResetAt).toLocaleDateString() : 'next cycle'} to continue.`,
+                    at: new Date().toISOString(),
+                });
+                setBalance({ remaining: 0, totalBudget: data.totalBudget || 0 });
+            } else {
+                pushMessage({
+                    role: 'assistant',
+                    content: data?.message || err.message || 'Request failed.',
+                    at: new Date().toISOString(),
+                });
+            }
         } finally { setSending(false); }
     };
 

@@ -80,7 +80,27 @@ export default function BillingPage() {
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); }, []);
+    useEffect(() => {
+        load();
+        // Same auto-refresh treatment as the Usage page — 15s poll plus
+        // an on-focus refresh so the "credits remaining" card stays live
+        // while the user chats with the copilot in another tab.
+        const timer = setInterval(() => {
+            api.get('/credits/balance').then(r => {
+                if (r.data.success) setBalance(r.data.balance);
+            }).catch(() => {});
+        }, 15_000);
+        const onFocus = () => {
+            api.get('/credits/balance').then(r => {
+                if (r.data.success) setBalance(r.data.balance);
+            }).catch(() => {});
+        };
+        window.addEventListener('focus', onFocus);
+        return () => {
+            clearInterval(timer);
+            window.removeEventListener('focus', onFocus);
+        };
+    }, []);
 
     if (loading) return (
         <div className="flex justify-center items-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>

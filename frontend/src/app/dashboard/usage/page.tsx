@@ -1,7 +1,7 @@
 "use client";
 
-// Workspace-level cai usage widget. Shows the pool state at the top,
-// then a line chart of daily cai burn over the last 30 days, then a
+// Workspace-level credit usage widget. Shows the pool state at the top,
+// then a line chart of daily credit burn over the last 30 days, then a
 // per-cause bar chart, then the raw ledger table.
 
 import { useEffect, useMemo, useState } from "react";
@@ -108,7 +108,7 @@ export default function UsagePage() {
                     <div className="p-2 bg-primary/10 text-primary rounded-xl"><Coins className="w-6 h-6" /></div>
                     Usage
                 </h1>
-                <p className="text-sm text-muted-foreground mt-1">Your workspace's cai balance and recent AI activity.</p>
+                <p className="text-sm text-muted-foreground mt-1">Your workspace's credit balance and recent AI activity.</p>
             </div>
 
             {/* Balance card */}
@@ -116,14 +116,16 @@ export default function UsagePage() {
                 <div className="flex items-baseline justify-between flex-wrap gap-4">
                     <div>
                         <div className="text-sm text-muted-foreground">Used this period</div>
-                        <div className="text-3xl font-bold mt-1">
-                            {balance.used.toLocaleString()} <span className="text-lg text-muted-foreground font-normal">/ {balance.totalBudget.toLocaleString()} cai</span>
+                        <div className="text-3xl font-bold mt-1 flex items-center gap-2">
+                            <Coins className="w-6 h-6 text-amber-400" />
+                            {balance.used.toLocaleString()} <span className="text-lg text-muted-foreground font-normal">/ {balance.totalBudget.toLocaleString()} credits</span>
                         </div>
                     </div>
                     <div className="text-right">
                         <div className="text-sm text-muted-foreground">Remaining</div>
-                        <div className={`text-2xl font-bold mt-1 ${nearLimit ? 'text-amber-400' : 'text-emerald-400'}`}>
-                            {balance.remaining.toLocaleString()} cai
+                        <div className={`text-2xl font-bold mt-1 inline-flex items-center gap-2 ${nearLimit ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            <Coins className="w-5 h-5 text-amber-400" />
+                            {balance.remaining.toLocaleString()} credits
                         </div>
                     </div>
                 </div>
@@ -145,7 +147,7 @@ export default function UsagePage() {
                         <Zap className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                         <div>
                             <span className="text-emerald-400 font-semibold">Bring-your-own key enabled. </span>
-                            <span className="text-muted-foreground">Add your own API key on the AI Providers page and calls made with it won't consume cai.</span>
+                            <span className="text-muted-foreground">Add your own API key on the AI Providers page and calls made with it won't consume credit.</span>
                             {totalUsdSaved > 0 && <span className="text-emerald-400"> — You've saved ~${totalUsdSaved.toFixed(2)} in the last 30 days.</span>}
                         </div>
                     </div>
@@ -156,7 +158,7 @@ export default function UsagePage() {
             <div className="bg-card border border-border rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Last 30 days</h2>
-                    <span className="text-xs text-muted-foreground">Total: {daily.reduce((s, [, v]) => s + v, 0).toLocaleString()} cai</span>
+                    <span className="text-xs text-muted-foreground">Total: {daily.reduce((s, [, v]) => s + v, 0).toLocaleString()} credits</span>
                 </div>
                 {daily.length === 0 ? (
                     <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">No usage yet.</div>
@@ -168,7 +170,7 @@ export default function UsagePage() {
                                     {val.toLocaleString()}
                                 </div>
                                 <div className="w-full bg-primary/70 rounded-t hover:bg-primary transition-colors"
-                                    style={{ height: `${Math.max(2, (val / dailyMax) * 100)}%` }} title={`${day}: ${val.toLocaleString()} cai`} />
+                                    style={{ height: `${Math.max(2, (val / dailyMax) * 100)}%` }} title={`${day}: ${val.toLocaleString()} credits`} />
                                 <div className="text-[9px] text-muted-foreground">{day.slice(5)}</div>
                             </div>
                         ))}
@@ -187,7 +189,7 @@ export default function UsagePage() {
                                 <div key={cause}>
                                     <div className="flex items-center justify-between text-xs mb-1">
                                         <span>{c.label}</span>
-                                        <span className="font-mono text-muted-foreground">{val.toLocaleString()} cai</span>
+                                        <span className="font-mono text-muted-foreground">{val.toLocaleString()} credits</span>
                                     </div>
                                     <div className="h-1.5 bg-secondary/60 rounded-full overflow-hidden">
                                         <div className={`h-full ${c.color}`} style={{ width: `${(val / causeMax) * 100}%` }} />
@@ -213,7 +215,7 @@ export default function UsagePage() {
                                 <th className="px-4 py-2 text-left">Model</th>
                                 <th className="px-4 py-2 text-right">In / Out</th>
                                 <th className="px-4 py-2 text-right">Real $</th>
-                                <th className="px-4 py-2 text-right">cai</th>
+                                <th className="px-4 py-2 text-right">Credits</th>
                                 <th className="px-4 py-2 text-left">Agent</th>
                             </tr>
                         </thead>

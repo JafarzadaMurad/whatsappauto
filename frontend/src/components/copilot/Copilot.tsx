@@ -228,8 +228,8 @@ export default function Copilot() {
                                     <div className="font-semibold text-sm">Copilot</div>
                                     {balance && (
                                         <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                            <Coins className="w-2.5 h-2.5" />
-                                            {balance.remaining.toLocaleString()} cai left
+                                            <Coins className="w-2.5 h-2.5 text-amber-400" />
+                                            {balance.remaining.toLocaleString()} credits left
                                         </div>
                                     )}
                                 </div>

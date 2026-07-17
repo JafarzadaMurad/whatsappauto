@@ -1,10 +1,10 @@
 "use client";
 
-// Admin AI Pricing — the table that decides how many cai an LLM call
+// Admin AI Pricing — the table that decides how many credits an LLM call
 // costs. Each row's inputCostPer1M / outputCostPer1M is the raw
 // provider USD price per 1M tokens (source of truth: the provider's
 // pricing page). `marginMultiplier` is applied on top to yield the
-// cai charged to workspaces. Editing a row invalidates the in-memory
+// credits charged to workspaces. Editing a row invalidates the in-memory
 // cache in the backend so the next LLM completion picks up the new
 // numbers within a second, no restart required.
 
@@ -29,8 +29,8 @@ const emptyRow = (): Row => ({
     marginMultiplier: 3.0, isActive: true,
 });
 
-// 1 cai = $0.0001. Small helper for the preview column.
-const previewCai = (r: Row, tokens: number) => {
+// 1 credit = $0.0001. Small helper for the preview column.
+const previewCredits = (r: Row, tokens: number) => {
     const usd = (tokens / 1_000_000) * r.outputCostPer1M;
     return Math.ceil(usd * r.marginMultiplier * 10_000);
 };
@@ -101,8 +101,8 @@ export default function AdminAiPricingPage() {
                         AI Pricing
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Real provider $/1M-token cost × margin multiplier = cai charged. Edits go live immediately, no restart needed.
-                        <span className="ml-2 text-primary/80">1 cai = $0.0001</span>
+                        Real provider $/1M-token cost × margin multiplier = credits charged. Edits go live immediately, no restart needed.
+                        <span className="ml-2 text-primary/80">1 credit = $0.0001</span>
                     </p>
                 </div>
                 <button onClick={() => { setEditing(emptyRow()); setError(null); }}
@@ -122,7 +122,7 @@ export default function AdminAiPricingPage() {
                                 <th className="px-4 py-3 text-right">Output $/1M</th>
                                 <th className="px-4 py-3 text-right">Cached $/1M</th>
                                 <th className="px-4 py-3 text-right">Margin ×</th>
-                                <th className="px-4 py-3 text-right">1K out ≈ cai</th>
+                                <th className="px-4 py-3 text-right">1K out ≈ credits</th>
                                 <th className="px-4 py-3 text-center">Active</th>
                                 <th className="px-4 py-3"></th>
                             </tr>
@@ -162,7 +162,7 @@ export default function AdminAiPricingPage() {
                                             onBlur={() => patch(r, { marginMultiplier: r.marginMultiplier })}
                                             className="w-20 bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono" />
                                     </td>
-                                    <td className="px-4 py-2 text-right text-xs text-primary font-mono">{previewCai(r, 1000)}</td>
+                                    <td className="px-4 py-2 text-right text-xs text-primary font-mono">{previewCredits(r, 1000)}</td>
                                     <td className="px-4 py-2 text-center">
                                         <input type="checkbox" checked={r.isActive}
                                             onChange={e => patch(r, { isActive: e.target.checked })}
@@ -188,11 +188,11 @@ export default function AdminAiPricingPage() {
             </div>
 
             <div className="bg-card border border-border rounded-2xl p-5 text-sm text-muted-foreground">
-                <h2 className="font-semibold text-foreground mb-2 flex items-center gap-2"><DollarSign className="w-4 h-4" /> How the cai formula works</h2>
+                <h2 className="font-semibold text-foreground mb-2 flex items-center gap-2"><DollarSign className="w-4 h-4" /> How the credit formula works</h2>
                 <div className="space-y-1 text-xs">
                     <p><code className="bg-secondary px-1.5 py-0.5 rounded">cost_usd = (input_tokens × input$/1M + cached_tokens × cached$/1M + output_tokens × output$/1M) / 1,000,000</code></p>
-                    <p><code className="bg-secondary px-1.5 py-0.5 rounded">cai_charged = ceil(cost_usd × margin × 10,000)</code></p>
-                    <p>1 cai = $0.0001. A 3× margin means we charge 3× the raw provider cost — ~66% margin.</p>
+                    <p><code className="bg-secondary px-1.5 py-0.5 rounded">credits_charged = ceil(cost_usd × margin × 10,000)</code></p>
+                    <p>1 credit = $0.0001. A 3× margin means we charge 3× the raw provider cost — ~66% margin.</p>
                 </div>
             </div>
 

@@ -203,8 +203,8 @@ export default function CopilotFullPage() {
                             <h1 className="font-semibold">Copilot</h1>
                             {balance && (
                                 <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                                    <Coins className="w-3 h-3" />
-                                    {balance.remaining.toLocaleString()} cai left
+                                    <Coins className="w-3 h-3 text-amber-400" />
+                                    {balance.remaining.toLocaleString()} credits left
                                 </div>
                             )}
                         </div>

@@ -130,7 +130,7 @@ export default function AiProvidersPage() {
                         AI Providers
                     </h1>
                     <p className="text-muted-foreground mt-1">
-                        Your workspace uses platform-shared API keys. Every AI call is billed against your cai balance —
+                        Your workspace uses platform-shared API keys. Every AI call is billed against your credit balance —
                         see <Link href="/dashboard/usage" className="text-primary hover:underline">Usage</Link>.
                     </p>
                 </div>
@@ -143,7 +143,7 @@ export default function AiProvidersPage() {
                         <h2 className="text-xl font-semibold">Bring your own API keys</h2>
                         <p className="text-sm text-muted-foreground mt-2 max-w-lg mx-auto">
                             Connect your own Anthropic, OpenAI, Google or Z.ai key and calls made through it won't
-                            consume any cai — they're billed directly to your provider account.
+                            consume any credits — they're billed directly to your provider account.
                         </p>
                     </div>
 
@@ -183,7 +183,7 @@ export default function AiProvidersPage() {
                     </h3>
                     <p>
                         Every AI conversation, campaign draft, oversight review and MCP tool call is metered in
-                        cai. You can watch the pool draining and see per-source breakdowns on the{' '}
+                        credits. You can watch the pool draining and see per-source breakdowns on the{' '}
                         <Link href="/dashboard/usage" className="text-primary hover:underline">Usage</Link> page.
                         Your quota resets on your billing anniversary.
                     </p>
@@ -201,7 +201,7 @@ export default function AiProvidersPage() {
                 </h1>
                 <p className="text-muted-foreground mt-1">
                     Connect AI models. Toggle <span className="text-foreground font-medium">Use my key</span> per
-                    provider — calls made through your own key bypass the cai meter and are billed directly to
+                    provider — calls made through your own key bypass the credit meter and are billed directly to
                     your provider account.
                 </p>
             </div>
@@ -212,7 +212,7 @@ export default function AiProvidersPage() {
                     <span className="font-semibold text-emerald-400">Bring-your-own-key is enabled on your plan. </span>
                     <span className="text-muted-foreground">
                         Enter a provider key below and switch on <span className="text-foreground">Use my key</span> —
-                        that provider's calls will stop consuming cai.
+                        that provider's calls will stop consuming credits.
                     </span>
                 </div>
             </div>
@@ -280,12 +280,12 @@ export default function AiProvidersPage() {
                                         setProviders(prev => prev.map(prov => prov.provider === p.provider ? { ...prov, useOwnKey: v } : prov));
                                     }}
                                     className="w-4 h-4 accent-primary rounded" />
-                                <span>Use my key (bypass cai meter)</span>
+                                <span>Use my key (bypass credit meter)</span>
                             </label>
                             {p.useOwnKey ? (
-                                <span className="text-xs text-emerald-400">BYOK — no cai charged</span>
+                                <span className="text-xs text-emerald-400">BYOK — no credits charged</span>
                             ) : (
-                                <span className="text-xs text-muted-foreground">Platform key — cai charged</span>
+                                <span className="text-xs text-muted-foreground">Platform key — credits charged</span>
                             )}
                         </div>
                     </div>

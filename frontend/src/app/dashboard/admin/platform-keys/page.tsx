@@ -2,7 +2,7 @@
 
 // Platform-owned API keys. Every workspace on a plan without
 // `allowCustomApiKeys` runs its LLM calls through THESE keys and
-// gets billed in cai. Keys stored in SystemConfig; the mailer
+// gets billed in credits. Keys stored in SystemConfig; the mailer
 // pattern (per-key `updatedAt` display) is reused verbatim.
 
 import { useEffect, useState } from "react";
@@ -72,7 +72,7 @@ export default function AdminPlatformKeysPage() {
                     Platform LLM Keys
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                    These are the master keys the cai credit system uses. When a workspace's plan doesn't allow bring-your-own keys, its LLM calls go through the appropriate key here and are billed against its cai pool.
+                    These are the master keys the credit system uses. When a workspace's plan doesn't allow bring-your-own keys, its LLM calls go through the appropriate key here and are billed against its credit pool.
                 </p>
             </div>
 

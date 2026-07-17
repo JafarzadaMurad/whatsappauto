@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CreditCard, Loader2, Plus, Trash2, Pencil, X, Star } from "lucide-react";
+import { CreditCard, Loader2, Plus, Trash2, Pencil, X, Star, Coins } from "lucide-react";
 import api from "@/lib/api";
 
 type Plan = {
@@ -171,7 +171,11 @@ export default function AdminPlansPage() {
                                 <li>Instagram accounts: {p.maxInstagramAccounts < 0 ? '∞' : p.maxInstagramAccounts}</li>
                                 <li>Automations: {p.maxAutomations < 0 ? '∞' : p.maxAutomations}</li>
                                 <li>Messages/month: {p.monthlyMessageLimit < 0 ? '∞' : p.monthlyMessageLimit}</li>
-                                <li className="text-primary/80 font-semibold">cai/month: {p.monthlyCredits?.toLocaleString?.() || 0}{p.allowCustomApiKeys && <span className="text-emerald-400 font-normal"> · own-key OK</span>}</li>
+                                <li className="flex items-center gap-1.5 font-semibold text-foreground">
+                                    <Coins className="w-3.5 h-3.5 text-amber-400" />
+                                    {(p.monthlyCredits || 0).toLocaleString()} credits / month
+                                    {p.allowCustomApiKeys && <span className="text-emerald-400 font-normal text-xs"> · own-key OK</span>}
+                                </li>
                                 {p.copilotEnabled && <li className="text-blue-400 font-semibold">In-app copilot{p.copilotVoiceEnabled && <span> · voice ({p.copilotVoiceMultiplier}×)</span>}</li>}
                             </ul>
                             <div className="flex items-center justify-between pt-2 border-t border-border">
@@ -239,8 +243,8 @@ export default function AdminPlansPage() {
                             </div>
                             {num('Monthly message limit', 'monthlyMessageLimit')}
                             <div className="pt-3 mt-3 border-t border-border space-y-3">
-                                <p className="text-xs font-semibold text-primary">cai credits</p>
-                                {num('Monthly cai', 'monthlyCredits', 'Monthly cai budget. Every AI call is drawn from this pool.')}
+                                <p className="text-xs font-semibold text-primary">Credits</p>
+                                {num('Monthly credits', 'monthlyCredits', 'Monthly credit budget. Every AI call is drawn from this pool.')}
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={editing.allowCustomApiKeys}
                                         onChange={e => setEditing({ ...editing, allowCustomApiKeys: e.target.checked })}
@@ -249,7 +253,7 @@ export default function AdminPlansPage() {
                                     <span className="text-[10px] text-muted-foreground">— Pro+ only</span>
                                 </label>
                                 <div>
-                                    <label className="text-xs font-medium text-muted-foreground">When cai runs out</label>
+                                    <label className="text-xs font-medium text-muted-foreground">When credits run out</label>
                                     <select value={editing.overageBehavior}
                                         onChange={e => setEditing({ ...editing, overageBehavior: e.target.value as any })}
                                         className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
@@ -274,7 +278,7 @@ export default function AdminPlansPage() {
                                 </label>
                                 {editing.copilotVoiceEnabled && (
                                     <div>
-                                        <label className="text-xs font-medium text-muted-foreground">Voice cai multiplier</label>
+                                        <label className="text-xs font-medium text-muted-foreground">Voice credit multiplier</label>
                                         <input type="number" step="0.1" min={1}
                                             value={editing.copilotVoiceMultiplier}
                                             onChange={e => setEditing({ ...editing, copilotVoiceMultiplier: Number(e.target.value) })}

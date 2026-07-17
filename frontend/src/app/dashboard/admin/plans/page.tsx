@@ -42,6 +42,85 @@ const emptyPlan = (): Plan => ({
     isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
 });
 
+// Simple margin-aware cost preview shown under the monthlyCredits input
+// in the editor. The pricing constants are the same the backend uses:
+//   1 credit = $0.0001
+//   default AiPricing margin multiplier = 3.0
+// so raw provider cost ≈ credits / (margin * 10_000). We compare that
+// to the plan's charged price so the admin sees at a glance whether the
+// price + credit combo is profitable, break-even, or a loss.
+function CreditCostHint({
+    credits,
+    planPrice,
+    currency,
+    interval,
+}: {
+    credits: number;
+    planPrice: number;
+    currency: string;
+    interval: string;
+}) {
+    if (!credits || credits <= 0) return null;
+
+    const retail = credits * 0.0001;        // what the user "paid for" in retail value
+    const cost3x = credits * 0.0001 / 3;    // real provider cost at default 3x margin
+    const cost2x = credits * 0.0001 / 2;
+    const marginPct = planPrice > 0 ? Math.round(((planPrice - cost3x) / planPrice) * 100) : null;
+
+    const fmtUsd = (n: number) => n < 0.01 ? `<$0.01` : `$${n.toFixed(2)}`;
+    const profitable = planPrice > 0 && planPrice >= cost3x;
+
+    return (
+        <div className={`rounded-xl border p-3 text-xs space-y-2 ${
+            planPrice > 0 && !profitable
+                ? 'bg-red-500/5 border-red-500/30'
+                : 'bg-amber-500/5 border-amber-500/20'
+        }`}>
+            <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-foreground flex items-center gap-1.5">
+                    <Coins className="w-3.5 h-3.5 text-amber-400" />
+                    {credits.toLocaleString()} credits = <span className="text-amber-400">{fmtUsd(retail)}</span> retail value
+                </span>
+                {planPrice > 0 && marginPct !== null && (
+                    <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                        profitable ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
+                    }`}>
+                        {profitable ? `~${marginPct}% margin` : 'loss-making'}
+                    </span>
+                )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
+                <div>
+                    <div className="text-[10px] uppercase tracking-wide">Estimated provider cost / {interval}</div>
+                    <div className="font-mono text-foreground">
+                        {fmtUsd(cost3x)} <span className="text-[10px] text-muted-foreground">@ 3× margin (default)</span>
+                    </div>
+                    <div className="font-mono text-muted-foreground text-[10px]">
+                        {fmtUsd(cost2x)} @ 2× margin
+                    </div>
+                </div>
+                <div>
+                    <div className="text-[10px] uppercase tracking-wide">Plan price</div>
+                    <div className="font-mono text-foreground">
+                        {planPrice > 0 ? `${planPrice.toFixed(2)} ${currency}` : 'free'}
+                    </div>
+                    {planPrice > 0 && (
+                        <div className="text-[10px] text-muted-foreground">
+                            {profitable
+                                ? `Covers real cost + ${fmtUsd(planPrice - cost3x)} margin`
+                                : `Under real cost by ${fmtUsd(cost3x - planPrice)}`}
+                        </div>
+                    )}
+                </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground pt-1 border-t border-border">
+                Assumes every credit is spent. Real burn depends on model mix — Opus 4 costs 5× a Haiku call at the same
+                token count. Tune per-model margin under <span className="text-primary">Admin → AI Pricing</span>.
+            </p>
+        </div>
+    );
+}
+
 export default function AdminPlansPage() {
     const [plans, setPlans] = useState<Plan[]>([]);
     const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
@@ -266,6 +345,7 @@ export default function AdminPlansPage() {
                             <div className="pt-3 mt-3 border-t border-border space-y-3">
                                 <p className="text-xs font-semibold text-primary">Credits</p>
                                 {num('Monthly credits', 'monthlyCredits', 'Monthly credit budget. Every AI call is drawn from this pool.')}
+                                <CreditCostHint credits={editing.monthlyCredits} planPrice={editing.price} currency={editing.currency} interval={editing.interval} />
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={editing.allowCustomApiKeys}
                                         onChange={e => setEditing({ ...editing, allowCustomApiKeys: e.target.checked })}

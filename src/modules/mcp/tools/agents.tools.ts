@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { prisma } from '../../../lib/prisma';
 import { ok, fail, type RegisterToolFn } from '../mcp.server';
+import { isModelAllowed, loadAllowedModels } from '../../../lib/model-access';
 
 const agentCommonFields = {
     name: z.string().min(1),
@@ -51,6 +52,14 @@ export function registerAgentTools(reg: RegisterToolFn) {
         async (args, ctx) => {
             const provider = await prisma.aiProvider.findFirst({ where: { id: args.providerId, workspaceId: ctx.workspaceId } });
             if (!provider) return fail(`Provider ${args.providerId} not found or not yours`);
+            // Same plan-level model gate as the REST agent controller
+            // — a workspace opening an MCP session (Claude Desktop) can
+            // otherwise spin up any model regardless of what the plan
+            // allows.
+            const allowed = await loadAllowedModels(ctx.workspaceId);
+            if (!isModelAllowed(allowed, provider.provider, args.model)) {
+                return fail(`Your plan doesn't include ${provider.provider}/${args.model}. Ask an admin to add it, or pick an allowed model.`);
+            }
             const row = await prisma.agent.create({
                 data: {
                     userId: ctx.userId,
@@ -82,9 +91,15 @@ export function registerAgentTools(reg: RegisterToolFn) {
             const { id, ...patch } = args;
             const existing = await prisma.agent.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
             if (!existing) return fail(`Agent ${id} not found`);
-            if (patch.providerId) {
-                const provider = await prisma.aiProvider.findFirst({ where: { id: patch.providerId, workspaceId: ctx.workspaceId } });
-                if (!provider) return fail(`Provider ${patch.providerId} not found or not yours`);
+            // Resolve the provider we'd be running with post-patch so
+            // we can check its label against the plan allow-list.
+            const effectiveProviderId = patch.providerId ?? existing.providerId;
+            const effectiveModel = patch.model ?? existing.model;
+            const providerRow = await prisma.aiProvider.findFirst({ where: { id: effectiveProviderId, workspaceId: ctx.workspaceId } });
+            if (!providerRow) return fail(`Provider ${effectiveProviderId} not found or not yours`);
+            const allowed = await loadAllowedModels(ctx.workspaceId);
+            if (!isModelAllowed(allowed, providerRow.provider, effectiveModel)) {
+                return fail(`Your plan doesn't include ${providerRow.provider}/${effectiveModel}. Ask an admin to add it, or pick an allowed model.`);
             }
             const row = await prisma.agent.update({
                 where: { id },

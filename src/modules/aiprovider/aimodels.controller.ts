@@ -10,16 +10,45 @@ import { loadAllowedModels } from '../../lib/model-access';
 // Admins manage the list; workspace members just read it when picking
 // a model for their agent.
 
+// Verified 2026-07 against each provider's model catalogue. Updated
+// alongside src/lib/ai-pricing.seed.ts — if a model ships here, its
+// pricing row lives there too so credit billing doesn't fall back to
+// the estimator. New model? Add to BOTH files.
 const DEFAULT_MODELS: Record<string, string[]> = {
-    OPENAI: ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-    CLAUDE: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5-20250514'],
-    GEMINI: ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-    // Z.ai's GLM family — reasoning + vision. IDs match the model
-    // slugs on the Z.ai chat completions endpoint. Vision variants
-    // (glm-4v-plus / glm-4v-flash) accept the same {type:'image'}
-    // content parts as OpenAI, so visionEnabled agents work
-    // transparently.
-    GLM: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air', 'glm-4v-plus', 'glm-4v-flash'],
+    // OpenAI — new 5.6 / 5.5 / 5.4 lineup + Realtime + backwards-compat aliases.
+    OPENAI: [
+        'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+        'gpt-5.5', 'gpt-5.5-pro',
+        'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-pro',
+        'gpt-5.3-codex', 'chat-latest',
+        'gpt-realtime-2.1', 'gpt-realtime-2.1-mini',
+        // Legacy IDs still accepted by the API — kept so existing agent
+        // configs referencing older ids keep billing correctly.
+        'gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini',
+    ],
+    // Claude — all four Opus 4.x snapshots share the same rate, Sonnet 5
+    // + 4.6 + 4.5 dated snapshot, Haiku 4.5 dated snapshot.
+    CLAUDE: [
+        'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+        'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5-20250929',
+        'claude-haiku-4-5-20251001',
+    ],
+    // Gemini — 3.x newest, 2.5 stable tier. Older 1.5/2.0 removed;
+    // they still respond but Google no longer prices them separately
+    // (both fall back to the 2.5-flash rate today).
+    GEMINI: [
+        'gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite',
+        'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+    ],
+    // Z.ai's GLM family — 5.x reasoning, 4.x chat, and v-suffix vision
+    // variants that accept {type:'image'} content parts so visionEnabled
+    // agents work transparently. `-flash` variants are free (limited-time).
+    GLM: [
+        'glm-5.2', 'glm-5.1', 'glm-5', 'glm-5-turbo',
+        'glm-4.7', 'glm-4.7-flashx', 'glm-4.7-flash',
+        'glm-4.6', 'glm-4.5', 'glm-4.5-x', 'glm-4.5-air', 'glm-4.5-airx', 'glm-4.5-flash',
+        'glm-5v-turbo', 'glm-4.6v', 'glm-4.6v-flashx', 'glm-4.6v-flash', 'glm-4.5v',
+    ],
 };
 
 async function readModels(): Promise<Record<string, string[]>> {

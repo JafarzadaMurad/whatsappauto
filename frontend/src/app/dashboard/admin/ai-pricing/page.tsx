@@ -9,7 +9,7 @@
 // numbers within a second, no restart required.
 
 import { useEffect, useState } from "react";
-import { Coins, Loader2, Plus, Trash2, Save, X, DollarSign } from "lucide-react";
+import { Coins, Loader2, Plus, Trash2, Save, X, DollarSign, RefreshCw } from "lucide-react";
 import api from "@/lib/api";
 
 type Row = {
@@ -105,10 +105,27 @@ export default function AdminAiPricingPage() {
                         <span className="ml-2 text-primary/80">1 credit = $0.0001</span>
                     </p>
                 </div>
-                <button onClick={() => { setEditing(emptyRow()); setError(null); }}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-4 py-2.5 flex items-center gap-2 transition-all">
-                    <Plus className="w-5 h-5" /> Add Model
-                </button>
+                <div className="flex items-center gap-2">
+                    <button onClick={async () => {
+                        if (!confirm('Sync every catalog row to the current provider prices? Your margin multipliers and Active toggles are kept — only the raw input/output/cached $ per 1M columns are overwritten.')) return;
+                        try {
+                            const res = await api.post('/admin/ai-pricing/refresh-from-catalog');
+                            if (res.data.success) {
+                                alert(`Refreshed. Updated ${res.data.updated}, inserted ${res.data.inserted}, unchanged ${res.data.unchanged}.`);
+                                load();
+                            }
+                        } catch (err: any) {
+                            alert(err.response?.data?.message || err.message);
+                        }
+                    }}
+                        className="bg-secondary/70 hover:bg-secondary border border-border rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm font-medium transition-all">
+                        <RefreshCw className="w-4 h-4" /> Refresh from catalog
+                    </button>
+                    <button onClick={() => { setEditing(emptyRow()); setError(null); }}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-4 py-2.5 flex items-center gap-2 transition-all">
+                        <Plus className="w-5 h-5" /> Add Model
+                    </button>
+                </div>
             </div>
 
             <div className="bg-card border border-border rounded-2xl overflow-hidden">

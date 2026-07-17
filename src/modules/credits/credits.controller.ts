@@ -20,6 +20,7 @@ import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { getCreditBalance } from '../../lib/credit-guard';
 import { invalidatePriceCache } from '../../lib/ai-pricing';
+import { refreshAiPricing } from '../../lib/ai-pricing.seed';
 
 export class CreditsController {
     async getBalance(req: Request, res: Response) {
@@ -115,6 +116,20 @@ export class AiPricingController {
             const row = await prisma.aiPricing.delete({ where: { id } });
             invalidatePriceCache(row.provider, row.model);
             return res.json({ success: true });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // One-shot "resync every catalog row to current provider prices"
+    // — used after a provider bumps a rate or when the admin realises
+    // stale seed values are still in place. Overwrites input/output/
+    // cached costs; does not touch marginMultiplier or isActive so
+    // admin-tuned margins survive.
+    async refreshFromCatalog(_req: Request, res: Response) {
+        try {
+            const diff = await refreshAiPricing();
+            return res.json({ success: true, ...diff });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

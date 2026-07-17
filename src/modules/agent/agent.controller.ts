@@ -5,6 +5,7 @@ import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate, AiService }
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { isModelAllowed, loadAllowedModels } from '../../lib/model-access';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -109,6 +110,19 @@ export class AgentController {
             const provider = await prisma.aiProvider.findFirst({ where: { id: data.providerId, workspaceId } });
             if (!provider) return res.status(404).json({ success: false, message: 'Invalid AI Provider' });
 
+            // Plan-level model allow-list. Same rule as copilot: empty
+            // list = no restriction; otherwise the agent's model must be
+            // on it. Prevents Free-plan workspaces from spinning up an
+            // Opus-4 agent and burning credits at 15× the intended rate.
+            const allowed = await loadAllowedModels(workspaceId);
+            if (!isModelAllowed(allowed, provider.provider, data.model)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'model_not_allowed',
+                    message: `Your plan doesn't include ${provider.provider}/${data.model}. Ask an admin to add it to your plan, or pick an allowed model.`,
+                });
+            }
+
             const agent = await prisma.agent.create({
                 data: {
                     userId,
@@ -152,6 +166,18 @@ export class AgentController {
 
             const existing = await prisma.agent.findFirst({ where: { id, workspaceId } });
             if (!existing) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            // Same plan-level model gate as create.
+            const providerRow = await prisma.aiProvider.findFirst({ where: { id: data.providerId, workspaceId } });
+            if (!providerRow) return res.status(404).json({ success: false, message: 'Invalid AI Provider' });
+            const allowed = await loadAllowedModels(workspaceId);
+            if (!isModelAllowed(allowed, providerRow.provider, data.model)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'model_not_allowed',
+                    message: `Your plan doesn't include ${providerRow.provider}/${data.model}. Ask an admin to add it to your plan, or pick an allowed model.`,
+                });
+            }
 
             const agent = await prisma.agent.update({
                 where: { id },

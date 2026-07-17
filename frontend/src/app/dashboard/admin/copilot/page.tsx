@@ -6,8 +6,9 @@
 // table so admins can only pick models the platform is already
 // wired to bill correctly.
 
-import { useEffect, useMemo, useState } from "react";
-import { Bot, Loader2, Save, RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Bot, Loader2, Save, RotateCcw, Cpu } from "lucide-react";
 import api from "@/lib/api";
 
 type TextModelRow = { provider: "CLAUDE" | "OPENAI"; model: string };
@@ -44,18 +45,16 @@ export default function AdminCopilotPage() {
     };
     useEffect(() => { load(); }, []);
 
-    // Models filtered to the currently-selected provider so the model
-    // dropdown never lists an OpenAI id when the admin picked Claude.
-    const modelsForProvider = useMemo(() => {
-        if (!cfg) return [];
-        return cfg.textModels.filter(m => m.provider === cfg.provider);
-    }, [cfg?.provider, cfg?.textModels]);
-
     const save = async () => {
         if (!cfg) return;
         setSaving(true);
         setSaved(false);
         try {
+            // Text provider/model stay in the payload as a fallback
+            // when a workspace hasn't picked yet; admin doesn't edit
+            // them here anymore, but the backend still uses the stored
+            // COPILOT_PROVIDER / COPILOT_MODEL when body.provider is
+            // undefined on a chat call.
             await api.put('/admin/copilot', {
                 systemPrompt: cfg.systemPrompt,
                 provider: cfg.provider,
@@ -72,9 +71,7 @@ export default function AdminCopilotPage() {
         <div className="flex justify-center items-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
     );
 
-    const hasTextModels = modelsForProvider.length > 0;
     const hasVoiceModels = cfg.voiceModels.length > 0;
-    const currentModelListed = modelsForProvider.some(m => m.model === cfg.model);
     const currentVoiceListed = cfg.voiceModels.includes(cfg.voiceModel);
 
     return (
@@ -90,45 +87,26 @@ export default function AdminCopilotPage() {
                 </p>
             </div>
 
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
-                <h2 className="font-semibold">Model</h2>
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="text-xs font-medium text-muted-foreground">Text provider</label>
-                        <select value={cfg.provider}
-                            onChange={e => {
-                                const nextProvider = e.target.value as "CLAUDE" | "OPENAI";
-                                // Auto-pick the first model of that provider so the two dropdowns stay in sync.
-                                const firstOfKind = cfg.textModels.find(m => m.provider === nextProvider);
-                                setCfg({ ...cfg, provider: nextProvider, model: firstOfKind?.model || cfg.model });
-                            }}
-                            className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm">
-                            <option value="CLAUDE" className="bg-card">Anthropic (Claude)</option>
-                            <option value="OPENAI" className="bg-card">OpenAI (GPT)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label className="text-xs font-medium text-muted-foreground">Text model</label>
-                        {hasTextModels ? (
-                            <select value={cfg.model}
-                                onChange={e => setCfg({ ...cfg, model: e.target.value })}
-                                className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm font-mono">
-                                {!currentModelListed && (
-                                    <option value={cfg.model} className="bg-card">{cfg.model} (not in pricing table)</option>
-                                )}
-                                {modelsForProvider.map(m => (
-                                    <option key={m.model} value={m.model} className="bg-card">{m.model}</option>
-                                ))}
-                            </select>
-                        ) : (
-                            <div className="mt-1 text-xs text-amber-400">
-                                No {cfg.provider} models in the pricing table. Add one under Admin → AI Pricing first.
-                            </div>
-                        )}
+            <div className="bg-secondary/10 border border-border rounded-2xl p-5 space-y-3 text-sm">
+                <div className="flex items-start gap-3">
+                    <div className="p-2 bg-primary/10 text-primary rounded-lg"><Cpu className="w-4 h-4" /></div>
+                    <div className="flex-1">
+                        <h3 className="font-semibold text-sm">Text model selection moved</h3>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Users now pick the copilot's text model per session from a dropdown on the chat panel.
+                            Which models each user can pick is controlled by their plan — set
+                            {" "}<Link href="/dashboard/admin/plans" className="text-primary hover:underline">Admin → Plans → Allowed AI models</Link>{" "}
+                            to tick which ones each plan unlocks. Models come from the
+                            {" "}<Link href="/dashboard/admin/ai-models" className="text-primary hover:underline">AI Models Catalogue</Link>.
+                        </p>
                     </div>
                 </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <h2 className="font-semibold">Voice model</h2>
                 <div>
-                    <label className="text-xs font-medium text-muted-foreground">Voice model (OpenAI Realtime)</label>
+                    <label className="text-xs font-medium text-muted-foreground">OpenAI Realtime model (voice mode only)</label>
                     {hasVoiceModels ? (
                         <select value={cfg.voiceModel}
                             onChange={e => setCfg({ ...cfg, voiceModel: e.target.value })}
@@ -147,7 +125,7 @@ export default function AdminCopilotPage() {
                         </div>
                     )}
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                        Voice mode uses OpenAI's Realtime API regardless of the text provider above.
+                        Voice mode uses the Realtime API; users cannot pick this per-session. Text mode is per-user.
                     </p>
                 </div>
             </div>

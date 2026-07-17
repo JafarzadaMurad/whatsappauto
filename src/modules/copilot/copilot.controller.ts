@@ -24,6 +24,7 @@ import { logger } from '../../utils/logger';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { recordUsagePostHoc, getCreditBalance } from '../../lib/credit-guard';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
+import { isModelAllowed, loadCatalog, normaliseProvider } from '../../lib/model-access';
 import { buildCopilotTools, buildCopilotVoiceTools } from './copilot.tools';
 import { DEFAULT_COPILOT_PROMPT, buildRuntimeContext } from './copilot.prompt';
 
@@ -125,22 +126,25 @@ export class CopilotController {
             else if (!ws.plan) reason = 'no-plan';
             else if (!ws.plan.copilotEnabled) reason = 'plan-disabled';
 
-            // Model picker source: all active AiPricing chat rows
-            // (openai + anthropic, no *realtime* variants). Same filter
-            // the admin panel uses. Frontend renders as a dropdown; the
-            // saved admin default (COPILOT_MODEL/PROVIDER) is the
-            // starting selection.
-            const [defaults, pricing] = await Promise.all([
+            // Model picker source: the AI Models Catalogue (admin-owned
+            // canonical list) intersected with the plan's allowedModels
+            // restriction. Empty restriction = whole catalogue allowed.
+            // Realtime models are filtered out — those belong to voice
+            // mode which has its own admin-set model.
+            const [defaults, catalog] = await Promise.all([
                 loadCopilotModel(),
-                prisma.aiPricing.findMany({
-                    where: { isActive: true },
-                    select: { provider: true, model: true },
-                    orderBy: [{ provider: 'asc' }, { model: 'asc' }],
-                }),
+                loadCatalog(),
             ]);
-            const availableModels = pricing
-                .filter(p => (p.provider === 'anthropic' || p.provider === 'openai') && !/realtime/i.test(p.model))
-                .map(p => ({ provider: p.provider === 'anthropic' ? 'CLAUDE' : 'OPENAI', model: p.model }));
+            const allowed = ws?.plan?.allowedModels || [];
+            const flat: { provider: string; model: string }[] = [];
+            for (const p of ['OPENAI', 'CLAUDE'] as const) {
+                for (const m of catalog[p]) {
+                    if (/realtime/i.test(m)) continue;
+                    if (allowed.length > 0 && !allowed.includes(`${p}:${m}`)) continue;
+                    flat.push({ provider: p, model: m });
+                }
+            }
+            const availableModels = flat;
 
             return res.json({
                 success: true,
@@ -278,10 +282,19 @@ export class CopilotController {
 
             // 3. Build model. Per-request `provider`/`model` from the
             // frontend picker wins; admin defaults fill the gaps. Both
-            // must be in the AiPricing catalogue so we know how to bill.
+            // must be in the AiPricing catalogue so we know how to bill,
+            // AND on the plan's allowedModels list if the plan sets one.
             const defaults = await loadCopilotModel();
             const provider = body.provider || defaults.provider;
             const model = body.model || defaults.model;
+            const planAllowed = ws?.plan?.allowedModels || [];
+            if (!isModelAllowed(planAllowed, provider, model)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'model_not_allowed',
+                    message: `Your plan doesn't include ${normaliseProvider(provider)}/${model}. Pick a different model or upgrade the plan.`,
+                });
+            }
             const apiKey = await resolvePlatformKey(provider);
             if (!apiKey) {
                 return res.status(500).json({

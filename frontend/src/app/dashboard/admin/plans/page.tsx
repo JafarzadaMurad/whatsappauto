@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CreditCard, Loader2, Plus, Trash2, Pencil, X, Star, Coins } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CreditCard, Loader2, Plus, Trash2, Pencil, X, Star, Coins, Cpu, CheckCircle2 } from "lucide-react";
 import api from "@/lib/api";
 
 type Plan = {
@@ -22,6 +22,7 @@ type Plan = {
     copilotEnabled: boolean;
     copilotVoiceEnabled: boolean;
     copilotVoiceMultiplier: number;
+    allowedModels: string[];
     isActive: boolean;
     isDefault?: boolean;
     trialDays?: number | null;
@@ -29,17 +30,21 @@ type Plan = {
     _count?: { users: number };
 };
 
+type CatalogEntry = { provider: string; model: string; key: string };
+
 const emptyPlan = (): Plan => ({
     name: "", description: "", price: 0, currency: "USD", interval: "month",
     maxAgents: 1, maxWhatsappAccounts: 1, maxInstagramAccounts: 1, maxAutomations: 1,
     monthlyMessageLimit: 1000,
     monthlyCredits: 10000, allowCustomApiKeys: false, overageBehavior: "hard_block",
     copilotEnabled: false, copilotVoiceEnabled: false, copilotVoiceMultiplier: 5.0,
+    allowedModels: [],
     isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
 });
 
 export default function AdminPlansPage() {
     const [plans, setPlans] = useState<Plan[]>([]);
+    const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<Plan | null>(null);
     const [saving, setSaving] = useState(false);
@@ -47,12 +52,28 @@ export default function AdminPlansPage() {
 
     const load = async () => {
         try {
-            const res = await api.get('/plans');
-            if (res.data.success) setPlans(res.data.plans);
+            const [plansRes, catRes] = await Promise.all([
+                api.get('/plans'),
+                api.get('/plans/model-catalog').catch(() => null),
+            ]);
+            if (plansRes.data.success) {
+                // Backfill allowedModels so an admin editing a pre-migration
+                // row doesn't hit `undefined.includes` in the model picker.
+                setPlans(plansRes.data.plans.map((p: any) => ({ ...p, allowedModels: p.allowedModels || [] })));
+            }
+            if (catRes?.data?.success) setCatalog(catRes.data.flat || []);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
     useEffect(() => { load(); }, []);
+
+    const catalogByProvider = useMemo(() => {
+        const groups: Record<string, CatalogEntry[]> = {};
+        for (const c of catalog) {
+            (groups[c.provider] = groups[c.provider] || []).push(c);
+        }
+        return groups;
+    }, [catalog]);
 
     const save = async () => {
         if (!editing) return;
@@ -284,6 +305,82 @@ export default function AdminPlansPage() {
                                             onChange={e => setEditing({ ...editing, copilotVoiceMultiplier: Number(e.target.value) })}
                                             className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono" />
                                         <p className="text-[10px] text-muted-foreground mt-0.5">Multiplied on top of the Realtime model rate — 5× default protects margin.</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* AI models allow-list — the whole point of this
+                                editor: tick which models from the AI Models
+                                Catalogue this plan can use. Empty = pass-through
+                                (every model in the catalogue). Everywhere users
+                                pick a model (agent editor, copilot picker) the
+                                list is filtered to what's ticked here. */}
+                            <div className="pt-3 mt-3 border-t border-border space-y-3">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                    <div>
+                                        <p className="text-xs font-semibold text-primary flex items-center gap-2">
+                                            <Cpu className="w-3.5 h-3.5" /> Allowed AI models
+                                        </p>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                                            Empty = allow everything in the AI Models Catalogue. Otherwise, only ticked models can be picked on this plan.
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button type="button"
+                                            onClick={() => setEditing({ ...editing, allowedModels: catalog.map(c => c.key) })}
+                                            className="text-[10px] px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground">
+                                            Select all
+                                        </button>
+                                        <button type="button"
+                                            onClick={() => setEditing({ ...editing, allowedModels: [] })}
+                                            className="text-[10px] px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground">
+                                            Clear (allow all)
+                                        </button>
+                                    </div>
+                                </div>
+                                {catalog.length === 0 ? (
+                                    <div className="text-[11px] text-amber-400">
+                                        AI Models Catalogue is empty. Add models under Admin → AI Models first.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {Object.entries(catalogByProvider).map(([provider, entries]) => (
+                                            <div key={provider}>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{provider}</span>
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        {entries.filter(e => editing.allowedModels.includes(e.key)).length}/{entries.length}
+                                                    </span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {entries.map(e => {
+                                                        const on = editing.allowedModels.includes(e.key);
+                                                        return (
+                                                            <button key={e.key} type="button"
+                                                                onClick={() => setEditing({
+                                                                    ...editing,
+                                                                    allowedModels: on
+                                                                        ? editing.allowedModels.filter(k => k !== e.key)
+                                                                        : [...editing.allowedModels, e.key],
+                                                                })}
+                                                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-mono border transition-colors ${
+                                                                    on
+                                                                        ? 'border-primary bg-primary/10 text-primary'
+                                                                        : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+                                                                }`}>
+                                                                {on && <CheckCircle2 className="w-3 h-3" />}
+                                                                {e.model}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {editing.allowedModels.length === 0 && (
+                                    <div className="text-[11px] text-muted-foreground italic">
+                                        No models ticked — this plan currently allows every model in the catalogue.
                                     </div>
                                 )}
                             </div>

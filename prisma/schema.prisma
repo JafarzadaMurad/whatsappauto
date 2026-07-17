@@ -210,6 +210,17 @@ model Plan {
   copilotVoiceEnabled    Boolean @default(false)
   copilotVoiceMultiplier Float   @default(5.0)
 
+  // ─── AI model catalogue restriction ──────────────────────────────
+  // Which provider+model pairs this plan is allowed to use across every
+  // AI surface (agent editor, copilot picker, campaign drafts, etc.).
+  // Stored as `"PROVIDER:model-id"` strings — matches the shape the
+  // AI Models Catalogue (SystemConfig.ai_models) exposes and the
+  // Vercel-SDK provider labels our runtime uses (`OPENAI`, `CLAUDE`,
+  // `GEMINI`, `GLM`). Empty array is the SENTINEL for "all catalogue
+  // models allowed" so existing plans keep working without a migration
+  // seeding step.
+  allowedModels          String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

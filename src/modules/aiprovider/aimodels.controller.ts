@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { getWorkspaceId } from '../../lib/workspace-context';
+import { loadAllowedModels } from '../../lib/model-access';
 
 // Catalogue of model ids the agent UIs offer per provider. Lives in
 // SystemConfig under the "ai_models" key as a JSON-stringified
@@ -40,11 +42,26 @@ async function readModels(): Promise<Record<string, string[]>> {
 
 export class AiModelsController {
     // Public-ish (auth-gated by the router): any logged-in user can
-    // read the list so the agent settings dropdown can populate.
-    async list(_req: Request, res: Response) {
+    // read the list so the agent settings dropdown can populate. The
+    // returned list is intersected with the workspace's plan-scoped
+    // allowedModels — the admin ticks a subset per plan, everyone else
+    // sees only what they can actually use. Empty allow-list on a plan
+    // = pass-through (current default for grandfathered plans).
+    async list(req: Request, res: Response) {
         try {
             const models = await readModels();
-            return res.json({ success: true, models });
+            const workspaceId = getWorkspaceId(req);
+            if (workspaceId) {
+                const allowed = await loadAllowedModels(workspaceId);
+                if (allowed.length > 0) {
+                    const filtered: Record<string, string[]> = { OPENAI: [], CLAUDE: [], GEMINI: [], GLM: [] };
+                    for (const p of Object.keys(models) as Array<keyof typeof models>) {
+                        filtered[p] = models[p].filter(m => allowed.includes(`${p}:${m}`));
+                    }
+                    return res.json({ success: true, models: filtered, planRestricted: true });
+                }
+            }
+            return res.json({ success: true, models, planRestricted: false });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

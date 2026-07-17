@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { loadCatalog } from '../../lib/model-access';
 
 const planSchema = z.object({
     name: z.string().min(1),
@@ -22,6 +23,10 @@ const planSchema = z.object({
     copilotEnabled: z.boolean().default(false),
     copilotVoiceEnabled: z.boolean().default(false),
     copilotVoiceMultiplier: z.number().positive().default(5.0),
+    // AI model access — array of "PROVIDER:model" strings the plan
+    // is allowed to use across every AI surface (agents, copilot,
+    // campaigns, oversight). Empty = no restriction.
+    allowedModels: z.array(z.string().max(200)).max(200).default([]),
     isActive: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     trialDays: z.number().int().min(0).nullable().optional(),
@@ -69,6 +74,22 @@ export class PlanController {
                 orderBy: { price: 'asc' }
             });
             return res.json({ success: true, plans });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Full AI Models Catalogue as flat keys so the plan editor can
+    // render a grouped checkbox list without duplicating provider
+    // labels client-side.
+    async modelCatalog(_req: Request, res: Response) {
+        try {
+            const cat = await loadCatalog();
+            const flat: { provider: string; model: string; key: string }[] = [];
+            for (const p of Object.keys(cat) as Array<keyof typeof cat>) {
+                for (const m of cat[p]) flat.push({ provider: p, model: m, key: `${p}:${m}` });
+            }
+            return res.json({ success: true, catalog: cat, flat });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

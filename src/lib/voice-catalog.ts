@@ -1,0 +1,228 @@
+// Voice pipeline catalogue — every transcriber, LLM, and TTS voice we
+// currently plug into for phone calls. Each entry carries the info the
+// editor UI displays (name, latency, cost, quality tier) AND the info
+// the runtime bridge needs (provider slug, model id, per-unit pricing).
+//
+// Mirrors the shape Vapi's editor uses: three independently-picked
+// components + preset bundles (Balanced / High Intelligence / Ultra
+// Fast / Cost Saver) that snap all three at once.
+
+export type Tier = 'Good' | 'Great' | 'Excellent' | 'Best';
+
+export type TranscriberEntry = {
+    provider: string;
+    model: string;
+    label: string;
+    // USD per minute of audio transcribed. Streaming providers.
+    costPerMin: number;
+    // Approx end-of-utterance latency in ms.
+    latencyMs: number;
+    accuracy: Tier;
+    // Languages the model is strong at; 'auto' means it detects itself.
+    languages?: string[];
+};
+
+export type LlmEntry = {
+    provider: string;       // 'openai' | 'anthropic' | 'google' | 'groq' | 'openai-realtime'
+    model: string;
+    label: string;
+    inCostPer1M: number;
+    outCostPer1M: number;
+    // First-token latency in ms.
+    latencyMs: number;
+    intelligence: Tier;
+    // True for OpenAI Realtime and similar — the model does STT + LLM
+    // + TTS in one WebSocket. Bridge skips the discrete transcriber
+    // and TTS entries when the LLM is speech-to-speech.
+    combinesSttTts?: boolean;
+};
+
+export type TtsEntry = {
+    provider: string;
+    voiceId: string;
+    label: string;
+    // USD per 1M output characters — the industry billing unit for TTS.
+    costPer1MChars: number;
+    latencyMs: number;
+    humanness: Tier;
+    languages?: string[];
+};
+
+// ─── Transcribers (STT) ─────────────────────────────────────────────
+export const TRANSCRIBERS: TranscriberEntry[] = [
+    { provider: 'deepgram', model: 'nova-3',    label: 'Deepgram Nova 3',    costPerMin: 0.0052, latencyMs: 180, accuracy: 'Best',      languages: ['en', 'ru', 'tr', 'de', 'fr', 'es'] },
+    { provider: 'deepgram', model: 'nova-2',    label: 'Deepgram Nova 2',    costPerMin: 0.0043, latencyMs: 200, accuracy: 'Excellent', languages: ['en', 'ru', 'tr', 'de', 'fr', 'es'] },
+    { provider: 'openai',   model: 'gpt-4o-transcribe',      label: 'GPT-4o Transcribe',        costPerMin: 0.012, latencyMs: 400, accuracy: 'Excellent' },
+    { provider: 'openai',   model: 'gpt-4o-mini-transcribe', label: 'GPT-4o Mini Transcribe',  costPerMin: 0.008, latencyMs: 350, accuracy: 'Great' },
+    { provider: 'openai',   model: 'whisper-1',              label: 'OpenAI Whisper',           costPerMin: 0.006, latencyMs: 900, accuracy: 'Great' },
+    { provider: 'assemblyai', model: 'universal-streaming',  label: 'AssemblyAI Universal',    costPerMin: 0.0037, latencyMs: 300, accuracy: 'Excellent' },
+    { provider: 'gladia',   model: 'solaria-1',              label: 'Gladia Solaria',           costPerMin: 0.0060, latencyMs: 350, accuracy: 'Great' },
+    { provider: 'speechmatics', model: 'ursa',               label: 'Speechmatics Ursa',        costPerMin: 0.0050, latencyMs: 250, accuracy: 'Excellent' },
+    { provider: 'soniox',   model: 'stt-rt-v5',              label: 'Soniox v5',                costPerMin: 0.0067, latencyMs: 220, accuracy: 'Excellent' },
+];
+
+// ─── LLMs ──────────────────────────────────────────────────────────
+export const LLMS: LlmEntry[] = [
+    // Speech-to-speech models (skip transcriber + TTS layers)
+    { provider: 'openai-realtime', model: 'gpt-realtime-2.1',       label: 'GPT Realtime 2.1',       inCostPer1M: 32, outCostPer1M: 64, latencyMs: 500, intelligence: 'Great',     combinesSttTts: true },
+    { provider: 'openai-realtime', model: 'gpt-realtime-2.1-mini',  label: 'GPT Realtime 2.1 Mini',  inCostPer1M: 10, outCostPer1M: 20, latencyMs: 500, intelligence: 'Good',      combinesSttTts: true },
+    // OpenAI text LLMs (used behind Deepgram STT + Cartesia/OpenAI TTS)
+    { provider: 'openai', model: 'gpt-5.6-sol',   label: 'GPT-5.6 Sol',   inCostPer1M: 5,    outCostPer1M: 30,  latencyMs: 700, intelligence: 'Best' },
+    { provider: 'openai', model: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', inCostPer1M: 2.5,  outCostPer1M: 15,  latencyMs: 500, intelligence: 'Excellent' },
+    { provider: 'openai', model: 'gpt-5.6-luna',  label: 'GPT-5.6 Luna',  inCostPer1M: 1,    outCostPer1M: 6,   latencyMs: 350, intelligence: 'Great' },
+    { provider: 'openai', model: 'gpt-5.4-mini',  label: 'GPT-5.4 Mini',  inCostPer1M: 0.75, outCostPer1M: 4.5, latencyMs: 300, intelligence: 'Good' },
+    { provider: 'openai', model: 'gpt-5.4-nano',  label: 'GPT-5.4 Nano',  inCostPer1M: 0.2,  outCostPer1M: 1.25, latencyMs: 250, intelligence: 'Good' },
+    // Anthropic
+    { provider: 'anthropic', model: 'claude-opus-4-8',           label: 'Claude Opus 4.8',   inCostPer1M: 5, outCostPer1M: 25, latencyMs: 800, intelligence: 'Best' },
+    { provider: 'anthropic', model: 'claude-sonnet-5',           label: 'Claude Sonnet 5',   inCostPer1M: 2, outCostPer1M: 10, latencyMs: 500, intelligence: 'Excellent' },
+    { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5',  inCostPer1M: 1, outCostPer1M: 5,  latencyMs: 350, intelligence: 'Great' },
+    // Google
+    { provider: 'google', model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', inCostPer1M: 0.30, outCostPer1M: 2.50, latencyMs: 400, intelligence: 'Great' },
+    { provider: 'google', model: 'gemini-2.5-pro',   label: 'Gemini 2.5 Pro',   inCostPer1M: 1.25, outCostPer1M: 10,   latencyMs: 600, intelligence: 'Excellent' },
+    // Groq (blazing latency, older weights)
+    { provider: 'groq', model: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Groq)', inCostPer1M: 0.59, outCostPer1M: 0.79, latencyMs: 120, intelligence: 'Great' },
+];
+
+// ─── TTS voices ────────────────────────────────────────────────────
+export const VOICES: TtsEntry[] = [
+    // OpenAI (cheap, GA-quality)
+    { provider: 'openai', voiceId: 'alloy',   label: 'Alloy (OpenAI)',   costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'ash',     label: 'Ash (OpenAI)',     costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'ballad',  label: 'Ballad (OpenAI)',  costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'coral',   label: 'Coral (OpenAI)',   costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'echo',    label: 'Echo (OpenAI)',    costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'sage',    label: 'Sage (OpenAI)',    costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    { provider: 'openai', voiceId: 'shimmer', label: 'Shimmer (OpenAI)', costPer1MChars: 15, latencyMs: 400, humanness: 'Great' },
+    // ElevenLabs (top-tier human, expensive)
+    { provider: 'elevenlabs', voiceId: 'rachel',     label: 'Rachel (ElevenLabs)',     costPer1MChars: 90, latencyMs: 300, humanness: 'Best' },
+    { provider: 'elevenlabs', voiceId: 'adam',       label: 'Adam (ElevenLabs)',       costPer1MChars: 90, latencyMs: 300, humanness: 'Best' },
+    { provider: 'elevenlabs', voiceId: 'antoni',     label: 'Antoni (ElevenLabs)',     costPer1MChars: 90, latencyMs: 300, humanness: 'Best' },
+    { provider: 'elevenlabs', voiceId: 'bella',      label: 'Bella (ElevenLabs)',      costPer1MChars: 90, latencyMs: 300, humanness: 'Best' },
+    // Cartesia Sonic (industry-leading latency)
+    { provider: 'cartesia', voiceId: 'sonic-english',  label: 'Sonic English (Cartesia)',  costPer1MChars: 65, latencyMs: 90,  humanness: 'Excellent' },
+    { provider: 'cartesia', voiceId: 'sonic-multilingual', label: 'Sonic Multilingual (Cartesia)', costPer1MChars: 65, latencyMs: 90, humanness: 'Excellent', languages: ['en', 'ru', 'tr', 'de', 'fr', 'es'] },
+    // Deepgram Aura (cheap + fast)
+    { provider: 'deepgram', voiceId: 'aura-asteria-en', label: 'Aura Asteria (Deepgram)', costPer1MChars: 15, latencyMs: 200, humanness: 'Good' },
+    { provider: 'deepgram', voiceId: 'aura-luna-en',    label: 'Aura Luna (Deepgram)',    costPer1MChars: 15, latencyMs: 200, humanness: 'Good' },
+    { provider: 'deepgram', voiceId: 'aura-stella-en',  label: 'Aura Stella (Deepgram)',  costPer1MChars: 15, latencyMs: 200, humanness: 'Good' },
+    // PlayHT (large voice catalog)
+    { provider: 'playht', voiceId: 'jennifer', label: 'Jennifer (PlayHT)', costPer1MChars: 80, latencyMs: 350, humanness: 'Excellent' },
+    // Azure Neural (multilingual sweep incl AZ / RU / TR / EN)
+    { provider: 'azure', voiceId: 'az-AZ-BabekNeural',   label: 'Babək (Azure AZ)',   costPer1MChars: 16, latencyMs: 400, humanness: 'Great', languages: ['az'] },
+    { provider: 'azure', voiceId: 'az-AZ-BanuNeural',    label: 'Banu (Azure AZ)',    costPer1MChars: 16, latencyMs: 400, humanness: 'Great', languages: ['az'] },
+    { provider: 'azure', voiceId: 'ru-RU-SvetlanaNeural', label: 'Svetlana (Azure RU)', costPer1MChars: 16, latencyMs: 400, humanness: 'Great', languages: ['ru'] },
+    { provider: 'azure', voiceId: 'tr-TR-EmelNeural',    label: 'Emel (Azure TR)',    costPer1MChars: 16, latencyMs: 400, humanness: 'Great', languages: ['tr'] },
+];
+
+// ─── Presets ────────────────────────────────────────────────────────
+// The 4 combos Vapi ships. `format: "provider:model|voiceId"`.
+export type Preset = {
+    key: 'balanced' | 'high-intelligence' | 'ultra-fast' | 'cost-saver';
+    label: string;
+    hint: string;
+    transcriber: string; // "provider:model"
+    llm: string;
+    tts: string;         // "provider:voiceId"
+};
+
+export const PRESETS: Preset[] = [
+    {
+        key: 'balanced', label: 'Balanced', hint: 'Sensible defaults for most use cases.',
+        transcriber: 'deepgram:nova-3',
+        llm: 'openai:gpt-5.6-luna',
+        tts: 'openai:alloy',
+    },
+    {
+        key: 'high-intelligence', label: 'High Intelligence', hint: 'Best model + most human voice. Slower and pricier.',
+        transcriber: 'openai:gpt-4o-transcribe',
+        llm: 'openai:gpt-5.6-terra',
+        tts: 'elevenlabs:rachel',
+    },
+    {
+        key: 'ultra-fast', label: 'Ultra Fast', hint: 'Sub-500ms voice-to-voice via OpenAI Realtime (skips discrete STT/TTS).',
+        transcriber: 'openai:gpt-4o-transcribe',
+        llm: 'openai-realtime:gpt-realtime-2.1',
+        tts: 'openai:alloy',
+    },
+    {
+        key: 'cost-saver', label: 'Cost Saver', hint: 'Cheapest combo that still sounds natural.',
+        transcriber: 'deepgram:nova-2',
+        llm: 'openai:gpt-5.4-mini',
+        tts: 'deepgram:aura-asteria-en',
+    },
+];
+
+// ─── Lookup + cost helpers ─────────────────────────────────────────
+
+export function findTranscriber(provider: string, model: string) {
+    return TRANSCRIBERS.find(t => t.provider === provider && t.model === model) || null;
+}
+export function findLlm(provider: string, model: string) {
+    return LLMS.find(l => l.provider === provider && l.model === model) || null;
+}
+export function findVoice(provider: string, voiceId: string) {
+    return VOICES.find(v => v.provider === provider && v.voiceId === voiceId) || null;
+}
+
+// PSTN carrier baseline — Twilio US number. International inbound calls
+// vary; the runtime bridge tracks the real per-call cost and stores it
+// on PhoneCall.telephonyCostUsd, but the editor preview uses this.
+export const TELEPHONY_COST_PER_MIN = 0.009;
+
+/**
+ * Estimate what one minute of conversation costs on this pipeline.
+ * Heuristic based on a typical exchange: ~150 words in + ~120 words out
+ * per minute → ~200 tokens in / ~160 tokens out for the LLM, ~800 chars
+ * spoken by TTS. Speech-to-speech models bypass discrete transcriber
+ * and TTS costs.
+ */
+export function estimateCostPerMinute(input: {
+    transcriber: string;   // "provider:model"
+    llm: string;
+    tts: string;           // "provider:voiceId"
+}): {
+    transcriberUsd: number;
+    llmUsd: number;
+    ttsUsd: number;
+    telephonyUsd: number;
+    totalUsd: number;
+    latencyMs: number;
+} {
+    const [tProv, tModel] = input.transcriber.split(':');
+    const [lProv, lModel] = input.llm.split(':');
+    const [vProv, vVoice] = input.tts.split(':');
+
+    const trans = findTranscriber(tProv, tModel);
+    const llm = findLlm(lProv, lModel);
+    const voice = findVoice(vProv, vVoice);
+
+    const combined = !!llm?.combinesSttTts;
+
+    // Realtime bundle prices audio tokens (~100 per audio-second).
+    // A minute of user audio in + agent audio out at typical density:
+    // input ~1500 tokens (mostly system + user), output ~1500 tokens.
+    // Use a conservative 2 500 in / 2 500 out per minute of active chat.
+    const llmUsd = llm
+        ? combined
+            ? (2500 / 1_000_000) * llm.inCostPer1M + (2500 / 1_000_000) * llm.outCostPer1M
+            : (200 / 1_000_000) * llm.inCostPer1M + (160 / 1_000_000) * llm.outCostPer1M
+        : 0;
+
+    const transcriberUsd = trans && !combined ? trans.costPerMin : 0;
+    const ttsUsd = voice && !combined ? (800 / 1_000_000) * voice.costPer1MChars : 0;
+    const telephonyUsd = TELEPHONY_COST_PER_MIN;
+
+    const totalUsd = transcriberUsd + llmUsd + ttsUsd + telephonyUsd;
+    // Rough end-to-end latency = worst-case sum. Combined models skip
+    // the STT + TTS hops so they win here even at 500 ms LLM latency.
+    const latencyMs = combined
+        ? (llm?.latencyMs || 500) + telephonyLatency()
+        : (trans?.latencyMs || 300) + (llm?.latencyMs || 400) + (voice?.latencyMs || 300) + telephonyLatency();
+
+    return { transcriberUsd, llmUsd, ttsUsd, telephonyUsd, totalUsd, latencyMs };
+}
+
+function telephonyLatency() {
+    // Twilio media-streams round-trip typically ~80-120 ms.
+    return 100;
+}

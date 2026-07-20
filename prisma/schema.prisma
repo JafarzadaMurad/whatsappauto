@@ -88,6 +88,9 @@ model Workspace {
   metaAdAccounts     MetaAdAccount[]
   creditLedger       CreditLedger[]
   copilotSessions    CopilotSession[]
+  voiceAssistants    VoiceAssistant[]
+  phoneNumbers       PhoneNumber[]
+  phoneCalls         PhoneCall[]
 
   @@index([ownerId])
 }
@@ -300,6 +303,7 @@ model User {
   // cai — every LLM call this user triggered (for member-usage analytics)
   creditLedger    CreditLedger[]
   copilotSessions CopilotSession[]
+  voiceAssistants VoiceAssistant[]
 }
 
 model Instance {
@@ -1669,3 +1673,141 @@ model Deal {
   @@index([clientId])
 }
 
+
+// ─── Voice AI (phone calls) ─────────────────────────────────────────
+// A voice assistant is like an Agent but specialised for real phone
+// calls: separate transcriber (STT), LLM, and text-to-speech (TTS)
+// components, each priced and latency-tuned independently — the same
+// three-pane model Vapi popularised. A workspace can have multiple
+// assistants and assign each to one or more purchased phone numbers.
+model VoiceAssistant {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name         String
+  isPublished  Boolean  @default(false)
+
+  // ── Transcriber (STT) ──
+  // provider/model pair matches the entries in `src/lib/voice-catalog.ts`
+  // so pricing + latency + accuracy metadata is one lookup away.
+  transcriberProvider String @default("deepgram")
+  transcriberModel    String @default("nova-3")
+  transcriberLanguage String?  // ISO 639-1 (en/az/ru/tr); null = auto-detect
+
+  // ── LLM ──
+  // 'openai-realtime' as provider signals we use the single-request
+  // speech-to-speech Realtime API — transcriber + TTS get ignored on
+  // the bridge, saving a hop and about 300 ms of latency.
+  llmProvider    String @default("openai")
+  llmModel       String @default("gpt-5.6-luna")
+  llmTemperature Float? @default(0.7)
+  llmMaxTokens   Int?   @default(250)  // Keep spoken replies short
+
+  // ── Voice (TTS) ──
+  ttsProvider String @default("openai")
+  ttsVoiceId  String @default("alloy")
+  ttsSpeed    Float? @default(1.0)
+
+  // ── Behaviour ──
+  systemPrompt      String   @db.Text
+  firstMessage      String?  @db.Text
+  firstMessageMode  String   @default("assistant-speaks-first") // assistant-speaks-first | wait-for-user | wait-then-assistant-first
+  endCallMessage    String?  @db.Text
+  voicemailMessage  String?  @db.Text
+  endCallPhrases    String[] @default([])  // e.g. ["goodbye", "sağol"]
+
+  // Timing tuning
+  silenceTimeoutSec   Int   @default(30)
+  maxDurationSec      Int   @default(600)
+  responseDelayMs     Int   @default(400)
+  numWordsToInterrupt Int   @default(2)
+
+  // Ambience
+  backgroundSound     String @default("off") // off | office | cafe
+  backgroundDenoise   Boolean @default(false)
+
+  // Tools — either reuse an existing Agent's skill+tool set (agent link)
+  // or pick a subset of MCP tools by name (custom).
+  linkedAgentId       String?
+  mcpToolNames        String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phoneNumbers PhoneNumber[]
+  calls        PhoneCall[]
+
+  @@index([workspaceId, updatedAt(sort: Desc)])
+}
+
+// A telephone number bound to the workspace and (optionally) one voice
+// assistant that answers inbound calls. Provider is either a real PSTN
+// carrier (Twilio/Telnyx) or a BYO SIP trunk.
+model PhoneNumber {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  number      String   @unique // E.164, "+994551234567"
+  provider    String   // 'twilio' | 'telnyx' | 'byo-sip'
+  providerSid String?  // Twilio SID / Telnyx number id
+
+  voiceAssistantId String?
+  voiceAssistant   VoiceAssistant? @relation(fields: [voiceAssistantId], references: [id], onDelete: SetNull)
+
+  greeting  String? @db.Text
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  calls PhoneCall[]
+
+  @@index([workspaceId])
+}
+
+// One row per phone call — inbound, outbound, or web (WebRTC test).
+// Costs broken out per pipeline component so admin dashboards can
+// show "you spent $X on STT, $Y on LLM, $Z on TTS" — same shape Vapi
+// exposes in its Analysis view.
+model PhoneCall {
+  id               String  @id @default(uuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  voiceAssistantId String?
+  voiceAssistant   VoiceAssistant? @relation(fields: [voiceAssistantId], references: [id], onDelete: SetNull)
+  phoneNumberId    String?
+  phoneNumber      PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  direction  String   // 'inbound' | 'outbound' | 'web'
+  fromNumber String?
+  toNumber   String?
+  status     String   @default("queued")
+  //   queued | ringing | in-progress | completed | failed |
+  //   no-answer | voicemail | busy | canceled
+  endedReason String?
+
+  durationSec Int?
+
+  // Component costs (USD). Populated on call end from the pipeline
+  // events. `totalCostUsd` is the sum; `creditsUsed` applies the
+  // workspace's plan margin.
+  transcriberCostUsd Float @default(0)
+  llmCostUsd         Float @default(0)
+  ttsCostUsd         Float @default(0)
+  telephonyCostUsd   Float @default(0)
+  totalCostUsd       Float @default(0)
+  creditsUsed        Int   @default(0)
+
+  transcript    Json?   // [{role:'user'|'assistant', text, at}]
+  recordingUrl  String?
+
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+
+  @@index([workspaceId, startedAt(sort: Desc)])
+  @@index([voiceAssistantId, startedAt(sort: Desc)])
+}

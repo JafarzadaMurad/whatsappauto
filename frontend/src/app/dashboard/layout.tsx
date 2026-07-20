@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog, Coins, KeyRound } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog, Coins, KeyRound, Phone } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -96,6 +96,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare, section: 'whatsapp' },
                 { name: 'Instagram', href: '/dashboard/instagram', icon: Camera, section: 'instagram' },
+                { name: 'Voice / Phone', href: '/dashboard/voice/assistants', icon: Phone },
                 // No section key — owner-defined role permissions don't
                 // yet include this; gating would hide it on shared
                 // workspaces. Owner-only writes are enforced backend-side.

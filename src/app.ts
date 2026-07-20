@@ -33,6 +33,7 @@ import workspaceRoutes from './modules/workspace/workspace.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
 import { userRouter as creditsUserRouter, adminPricingRouter, adminCreditsRouter } from './modules/credits/credits.routes';
 import { copilotUserRouter, adminCopilotRouter } from './modules/copilot/copilot.routes';
+import voiceRoutes from './modules/voice/voice.routes';
 import { BillingController } from './modules/billing/billing.controller';
 
 const app: Express = express();
@@ -111,6 +112,7 @@ app.use('/api/admin/ai-pricing', adminPricingRouter);
 app.use('/api/admin/credits', adminCreditsRouter);
 app.use('/api/copilot', copilotUserRouter);
 app.use('/api/admin/copilot', adminCopilotRouter);
+app.use('/api/voice', voiceRoutes);
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {

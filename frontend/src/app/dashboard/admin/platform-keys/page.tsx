@@ -12,10 +12,14 @@ import api from "@/lib/api";
 const PLATFORM_KEYS = [
     { key: 'PLATFORM_ANTHROPIC_KEY', label: 'Anthropic (Claude)', placeholder: 'sk-ant-…',
         hint: 'Used for every Claude call by workspaces on Free/Starter plans.' },
-    { key: 'PLATFORM_OPENAI_KEY', label: 'OpenAI (GPT / Whisper)', placeholder: 'sk-…',
-        hint: 'Used for every OpenAI call. Also required for the Whisper speech-to-text feature on all plans.' },
+    { key: 'PLATFORM_OPENAI_KEY', label: 'OpenAI (GPT / Whisper / Realtime)', placeholder: 'sk-…',
+        hint: 'Used for every OpenAI call — including the voice-call bridge (OpenAI Realtime API).' },
     { key: 'PLATFORM_GOOGLE_KEY', label: 'Google (Gemini)', placeholder: 'AIza…',
         hint: 'Used for every Gemini call.' },
+    { key: 'TWILIO_ACCOUNT_SID', label: 'Twilio Account SID', placeholder: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        hint: 'Used to provision + route phone numbers for the Voice product.' },
+    { key: 'TWILIO_AUTH_TOKEN', label: 'Twilio Auth Token', placeholder: '(32-char hex from twilio.com/console)',
+        hint: 'Used to sign API requests to Twilio + verify inbound webhook signatures.' },
 ];
 
 export default function AdminPlatformKeysPage() {

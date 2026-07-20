@@ -267,4 +267,26 @@ export class VoiceAssistantController {
             return res.status(500).json({ success: false, message: error.message });
         }
     }
+
+    // Recent call history for the call log page. Client-side paginates
+    // for MVP; a `?limit=` param + cursor can come later once volumes
+    // grow past a couple hundred rows.
+    async listCalls(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const rows = await prisma.phoneCall.findMany({
+                where: { workspaceId },
+                orderBy: { startedAt: 'desc' },
+                take: 200,
+                include: {
+                    voiceAssistant: { select: { id: true, name: true } },
+                    phoneNumber: { select: { id: true, number: true } },
+                },
+            });
+            return res.json({ success: true, calls: rows });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
 }

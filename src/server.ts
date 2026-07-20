@@ -16,8 +16,15 @@ import { startOperatorTimeoutSweeper } from './modules/operator/operator.service
 import { startOversightScheduler } from './modules/oversight/oversight.service';
 import { startReminderScheduler } from './modules/agent/reminder.scheduler';
 import { seedAiPricing } from './lib/ai-pricing.seed';
+import { attachVoiceBridge } from './modules/voice/voice-bridge';
 
 const server = http.createServer(app);
+
+// Voice bridge — Twilio Media Streams ⇄ OpenAI Realtime WebSocket
+// handler. Attached to the same HTTP server as Socket.IO but on a
+// dedicated `/voice/stream` path; both coexist because we use the
+// low-level `upgrade` event and dispatch by URL.
+attachVoiceBridge(server);
 
 // Initialize Webhook Worker
 startWebhookWorker();

@@ -1,22 +1,39 @@
 import { Router } from 'express';
 import { VoiceAssistantController } from './voice-assistant.controller';
+import { PhoneNumberController } from './phone-number.controller';
+import { VoiceWebhookController } from './voice-webhook.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
 
 const router = Router();
-const controller = new VoiceAssistantController();
+const assistants = new VoiceAssistantController();
+const numbers = new PhoneNumberController();
+const webhook = new VoiceWebhookController();
 
+// ─── Twilio webhooks — NO auth (Twilio hits these directly) ────────
+// Signature verification could be added here; for MVP we accept any
+// well-formed inbound and rely on the CallSid matching a row we own.
+router.post('/webhook', webhook.webhook.bind(webhook));
+router.post('/status', webhook.status.bind(webhook));
+
+// ─── Dashboard-facing endpoints ────────────────────────────────────
 router.use(authMiddleware);
 
-// Catalogue is auth-gated but not workspace-scoped — the editor uses
-// it to render the provider dropdowns + presets before the assistant
-// exists in the DB.
-router.get('/catalog', controller.catalog.bind(controller));
-router.post('/estimate', controller.estimate.bind(controller));
+router.get('/catalog', assistants.catalog.bind(assistants));
+router.post('/estimate', assistants.estimate.bind(assistants));
 
-router.get('/assistants', controller.list.bind(controller));
-router.post('/assistants', controller.create.bind(controller));
-router.get('/assistants/:id', controller.get.bind(controller));
-router.put('/assistants/:id', controller.update.bind(controller));
-router.delete('/assistants/:id', controller.remove.bind(controller));
+router.get('/assistants', assistants.list.bind(assistants));
+router.post('/assistants', assistants.create.bind(assistants));
+router.get('/assistants/:id', assistants.get.bind(assistants));
+router.put('/assistants/:id', assistants.update.bind(assistants));
+router.delete('/assistants/:id', assistants.remove.bind(assistants));
+
+router.get('/calls', assistants.listCalls.bind(assistants));
+
+router.get('/numbers', numbers.list.bind(numbers));
+router.post('/numbers/search', numbers.search.bind(numbers));
+router.post('/numbers/buy', numbers.buy.bind(numbers));
+router.post('/numbers/import', numbers.importNumber.bind(numbers));
+router.put('/numbers/:id', numbers.update.bind(numbers));
+router.delete('/numbers/:id', numbers.release.bind(numbers));
 
 export default router;

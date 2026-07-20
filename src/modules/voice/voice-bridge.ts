@@ -27,7 +27,7 @@ import { URL } from 'url';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
-import { estimateCostPerMinute, findLlm } from '../../lib/voice-catalog';
+import { findLlm } from '../../lib/voice-catalog';
 
 // Rough audio-token conversion: OpenAI bills Realtime by tokens; ~1
 // audio second ≈ 100 audio tokens per direction on g711_ulaw. Used to

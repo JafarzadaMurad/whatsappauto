@@ -93,7 +93,7 @@ export default function VoiceAssistantEditorPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [savedFlash, setSavedFlash] = useState(false);
-    const [openDrawer, setOpenPicker] = useState<null | 'transcriber' | 'llm' | 'tts'>(null);
+    const [openDrawer, setOpenDrawer] = useState<null | 'transcriber' | 'llm' | 'tts'>(null);
 
     const load = useCallback(async () => {
         try {
@@ -294,7 +294,7 @@ export default function VoiceAssistantEditorPage() {
                         color="emerald"
                         title={currentTranscriber?.label || `${assistant.transcriberProvider}/${assistant.transcriberModel}`}
                         subtitle={`${currentTranscriber?.provider || assistant.transcriberProvider}${assistant.transcriberLanguage ? ` · ${assistant.transcriberLanguage.toUpperCase()}` : ''}`}
-                        onClick={() => setOpenPicker('transcriber')}
+                        onClick={() => setOpenDrawer('transcriber')}
                         metrics={[
                             { label: 'Latency', value: `${currentTranscriber?.latencyMs ?? '?'}ms` },
                             { label: 'Cost', value: `$${(currentTranscriber?.costPerMin ?? 0).toFixed(4)}/min` },
@@ -308,7 +308,7 @@ export default function VoiceAssistantEditorPage() {
                         color="primary"
                         title={currentLlm?.label || `${assistant.llmProvider}/${assistant.llmModel}`}
                         subtitle={currentLlm?.provider || assistant.llmProvider}
-                        onClick={() => setOpenPicker('llm')}
+                        onClick={() => setOpenDrawer('llm')}
                         metrics={[
                             { label: 'Latency', value: `${currentLlm?.latencyMs ?? '?'}ms` },
                             { label: 'Cost', value: `$${((currentLlm?.inCostPer1M ?? 0) / 1000).toFixed(4)}/1K in` },
@@ -322,7 +322,7 @@ export default function VoiceAssistantEditorPage() {
                         color="pink"
                         title={currentVoice?.label || `${assistant.ttsProvider}/${assistant.ttsVoiceId}`}
                         subtitle={currentVoice?.provider || assistant.ttsProvider}
-                        onClick={() => setOpenPicker('tts')}
+                        onClick={() => setOpenDrawer('tts')}
                         metrics={[
                             { label: 'Latency', value: `${currentVoice?.latencyMs ?? '?'}ms` },
                             { label: 'Cost', value: `$${((currentVoice?.costPer1MChars ?? 0) / 1000).toFixed(4)}/1K ch` },

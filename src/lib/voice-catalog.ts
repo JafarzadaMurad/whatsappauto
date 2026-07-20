@@ -48,6 +48,17 @@ export type TtsEntry = {
     languages?: string[];
 };
 
+// Provider-level voice-model options (e.g. OpenAI ships tts-1 and tts-1-hd
+// under the same voice ids). Rendered as the "Voice Model" dropdown in
+// the voice settings drawer. Missing → the provider has only one model.
+export type VoiceModelEntry = {
+    provider: string;
+    id: string;                  // e.g. 'tts-1', 'eleven_turbo_v2_5'
+    label: string;
+    costPer1MChars?: number;     // overrides the voice entry's cost when set
+    isDefault?: boolean;
+};
+
 // ─── Transcribers (STT) ─────────────────────────────────────────────
 export const TRANSCRIBERS: TranscriberEntry[] = [
     { provider: 'deepgram', model: 'nova-3',    label: 'Deepgram Nova 3',    costPerMin: 0.0052, latencyMs: 180, accuracy: 'Best',      languages: ['en', 'ru', 'tr', 'de', 'fr', 'es'] },
@@ -82,6 +93,30 @@ export const LLMS: LlmEntry[] = [
     // Groq (blazing latency, older weights)
     { provider: 'groq', model: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Groq)', inCostPer1M: 0.59, outCostPer1M: 0.79, latencyMs: 120, intelligence: 'Great' },
 ];
+
+// ─── TTS voice models (provider-scoped) ────────────────────────────
+export const VOICE_MODELS: VoiceModelEntry[] = [
+    { provider: 'openai',     id: 'tts-1',                    label: 'TTS 1 (default)',          costPer1MChars: 15, isDefault: true },
+    { provider: 'openai',     id: 'tts-1-hd',                 label: 'TTS 1 HD',                 costPer1MChars: 30 },
+    { provider: 'elevenlabs', id: 'eleven_turbo_v2_5',        label: 'Turbo v2.5 (fastest)',     costPer1MChars: 50, isDefault: true },
+    { provider: 'elevenlabs', id: 'eleven_multilingual_v2',   label: 'Multilingual v2',          costPer1MChars: 90 },
+    { provider: 'elevenlabs', id: 'eleven_flash_v2_5',        label: 'Flash v2.5 (75ms latency)', costPer1MChars: 50 },
+    { provider: 'cartesia',   id: 'sonic-2',                  label: 'Sonic 2 (default)',        costPer1MChars: 65, isDefault: true },
+    { provider: 'cartesia',   id: 'sonic-turbo',              label: 'Sonic Turbo',              costPer1MChars: 35 },
+    { provider: 'deepgram',   id: 'aura-2',                   label: 'Aura 2',                   costPer1MChars: 15, isDefault: true },
+    { provider: 'playht',     id: 'play-3-mini',              label: 'Play 3 Mini',              costPer1MChars: 45, isDefault: true },
+    { provider: 'playht',     id: 'play-3.0',                 label: 'Play 3.0',                 costPer1MChars: 80 },
+    { provider: 'azure',      id: 'neural',                   label: 'Neural',                   costPer1MChars: 16, isDefault: true },
+];
+
+export function findVoiceModel(provider: string, id?: string | null) {
+    if (!id) return VOICE_MODELS.find(m => m.provider === provider && m.isDefault) || null;
+    return VOICE_MODELS.find(m => m.provider === provider && m.id === id) || null;
+}
+
+export function voiceModelsFor(provider: string) {
+    return VOICE_MODELS.filter(m => m.provider === provider);
+}
 
 // ─── TTS voices ────────────────────────────────────────────────────
 export const VOICES: TtsEntry[] = [
@@ -163,6 +198,31 @@ export function findLlm(provider: string, model: string) {
 export function findVoice(provider: string, voiceId: string) {
     return VOICES.find(v => v.provider === provider && v.voiceId === voiceId) || null;
 }
+
+// ─── Language catalogue ────────────────────────────────────────────
+// Editor renders this list in the transcriber drawer's Language
+// dropdown. `null`-value first entry = auto-detect (Vapi's default).
+export const LANGUAGES: { code: string; label: string; nativeName: string }[] = [
+    { code: 'en', label: 'English',    nativeName: 'English' },
+    { code: 'az', label: 'Azerbaijani', nativeName: 'Azərbaycan' },
+    { code: 'ru', label: 'Russian',    nativeName: 'Русский' },
+    { code: 'tr', label: 'Turkish',    nativeName: 'Türkçe' },
+    { code: 'de', label: 'German',     nativeName: 'Deutsch' },
+    { code: 'fr', label: 'French',     nativeName: 'Français' },
+    { code: 'es', label: 'Spanish',    nativeName: 'Español' },
+    { code: 'it', label: 'Italian',    nativeName: 'Italiano' },
+    { code: 'pt', label: 'Portuguese', nativeName: 'Português' },
+    { code: 'nl', label: 'Dutch',      nativeName: 'Nederlands' },
+    { code: 'pl', label: 'Polish',     nativeName: 'Polski' },
+    { code: 'ar', label: 'Arabic',     nativeName: 'العربية' },
+    { code: 'hi', label: 'Hindi',      nativeName: 'हिन्दी' },
+    { code: 'ja', label: 'Japanese',   nativeName: '日本語' },
+    { code: 'ko', label: 'Korean',     nativeName: '한국어' },
+    { code: 'zh', label: 'Chinese',    nativeName: '中文' },
+    { code: 'uk', label: 'Ukrainian',  nativeName: 'Українська' },
+    { code: 'fa', label: 'Persian',    nativeName: 'فارسی' },
+    { code: 'he', label: 'Hebrew',     nativeName: 'עברית' },
+];
 
 // PSTN carrier baseline — Twilio US number. International inbound calls
 // vary; the runtime bridge tracks the real per-call cost and stores it

@@ -8,9 +8,9 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import {
-    TRANSCRIBERS, LLMS, VOICES, PRESETS,
+    TRANSCRIBERS, LLMS, VOICES, VOICE_MODELS, LANGUAGES, PRESETS,
     estimateCostPerMinute,
-    findTranscriber, findLlm, findVoice,
+    findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
 
 // Shared editor payload — every field is optional on PATCH, required
@@ -22,6 +22,13 @@ const editorPayload = {
     transcriberProvider: z.string().min(1).max(60).optional(),
     transcriberModel: z.string().min(1).max(120).optional(),
     transcriberLanguage: z.string().max(20).nullable().optional(),
+    transcriberSmartEndpointing: z.enum(['off', 'vapi', 'livekit']).optional(),
+    transcriberFallbackAuto: z.boolean().optional(),
+    transcriberFallbacks: z.array(z.object({
+        provider: z.string().max(60),
+        model: z.string().max(120),
+        language: z.string().max(20).nullable().optional(),
+    })).max(10).optional(),
 
     llmProvider: z.string().min(1).max(60).optional(),
     llmModel: z.string().min(1).max(120).optional(),
@@ -30,7 +37,13 @@ const editorPayload = {
 
     ttsProvider: z.string().min(1).max(60).optional(),
     ttsVoiceId: z.string().min(1).max(120).optional(),
+    ttsVoiceModel: z.string().max(120).nullable().optional(),
     ttsSpeed: z.number().min(0.5).max(2).nullable().optional(),
+    ttsFallbacks: z.array(z.object({
+        provider: z.string().max(60),
+        voiceId: z.string().max(120),
+        voiceModel: z.string().max(120).nullable().optional(),
+    })).max(10).optional(),
 
     systemPrompt: z.string().max(20000).optional(),
     firstMessage: z.string().max(2000).nullable().optional(),
@@ -75,6 +88,8 @@ export class VoiceAssistantController {
                 transcribers: TRANSCRIBERS,
                 llms: LLMS,
                 voices: VOICES,
+                voiceModels: VOICE_MODELS,
+                languages: LANGUAGES,
                 presets: presetsWithCost,
             });
         } catch (error: any) {
@@ -166,13 +181,18 @@ export class VoiceAssistantController {
                     transcriberProvider: tProv,
                     transcriberModel: tModel,
                     transcriberLanguage: data.transcriberLanguage || null,
+                    transcriberSmartEndpointing: data.transcriberSmartEndpointing || 'off',
+                    transcriberFallbackAuto: !!data.transcriberFallbackAuto,
+                    transcriberFallbacks: (data.transcriberFallbacks || []) as any,
                     llmProvider: lProv,
                     llmModel: lModel,
-                    llmTemperature: data.llmTemperature ?? 0.7,
+                    llmTemperature: data.llmTemperature ?? 0.5,
                     llmMaxTokens: data.llmMaxTokens ?? 250,
                     ttsProvider: vProv,
                     ttsVoiceId: vId,
+                    ttsVoiceModel: data.ttsVoiceModel || null,
                     ttsSpeed: data.ttsSpeed ?? 1.0,
+                    ttsFallbacks: (data.ttsFallbacks || []) as any,
                     systemPrompt: data.systemPrompt || '',
                     firstMessage: data.firstMessage || null,
                     firstMessageMode: data.firstMessageMode || 'assistant-speaks-first',

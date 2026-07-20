@@ -1693,9 +1693,19 @@ model VoiceAssistant {
   // ── Transcriber (STT) ──
   // provider/model pair matches the entries in `src/lib/voice-catalog.ts`
   // so pricing + latency + accuracy metadata is one lookup away.
-  transcriberProvider String @default("deepgram")
-  transcriberModel    String @default("nova-3")
-  transcriberLanguage String?  // ISO 639-1 (en/az/ru/tr); null = auto-detect
+  transcriberProvider         String  @default("deepgram")
+  transcriberModel            String  @default("nova-3")
+  transcriberLanguage         String? // ISO 639-1 (en/az/ru/tr); null = auto-detect
+  // Smart endpointing detects the exact millisecond the caller stopped
+  // talking — same knob Vapi exposes. 'off' | 'vapi' (our default
+  // heuristic) | 'livekit' (LiveKit's Silero-based EOT model).
+  transcriberSmartEndpointing String  @default("off")
+  // Fallback provider chain if primary STT fails mid-call. First we try
+  // every manual entry in `transcriberFallbacks` in order; if all fail
+  // AND `transcriberFallbackAuto=true` we escalate to a system-picked
+  // backup (Deepgram Nova → Whisper cascade). Same policy as Vapi.
+  transcriberFallbackAuto     Boolean  @default(false)
+  transcriberFallbacks        Json     @default("[]") // [{provider, model, language?}]
 
   // ── LLM ──
   // 'openai-realtime' as provider signals we use the single-request
@@ -1703,13 +1713,20 @@ model VoiceAssistant {
   // the bridge, saving a hop and about 300 ms of latency.
   llmProvider    String @default("openai")
   llmModel       String @default("gpt-5.6-luna")
-  llmTemperature Float? @default(0.7)
+  llmTemperature Float? @default(0.5)
   llmMaxTokens   Int?   @default(250)  // Keep spoken replies short
 
   // ── Voice (TTS) ──
-  ttsProvider String @default("openai")
-  ttsVoiceId  String @default("alloy")
-  ttsSpeed    Float? @default(1.0)
+  ttsProvider String  @default("openai")
+  ttsVoiceId  String  @default("alloy")
+  // A single provider often ships multiple voice-generation models
+  // (OpenAI "tts-1" vs "tts-1-hd", ElevenLabs eleven_turbo_v2_5 vs
+  // eleven_multilingual_v2). This holds the sub-model id; null = the
+  // provider's default. Cost varies per voice model, not per voiceId.
+  ttsVoiceModel String?
+  ttsSpeed     Float?  @default(1.0)
+  // Fallback voice chain — same shape as transcriberFallbacks.
+  ttsFallbacks Json    @default("[]") // [{provider, voiceId, voiceModel?}]
 
   // ── Behaviour ──
   systemPrompt      String   @db.Text

@@ -14,7 +14,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
     ArrowLeft, Loader2, Save, Mic, Cpu, Volume2, ChevronDown,
-    Zap, Brain, DollarSign, Sparkles, Play, Radio, X,
+    Zap, Brain, DollarSign, Sparkles, Play, Radio, X, Pencil,
+    Plus, Trash2, Music, Ear, Waves, Rabbit, Turtle,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -30,15 +31,26 @@ type Estimate = {
 type Transcriber = { provider: string; model: string; label: string; costPerMin: number; latencyMs: number; accuracy: string; languages?: string[] };
 type Llm = { provider: string; model: string; label: string; inCostPer1M: number; outCostPer1M: number; latencyMs: number; intelligence: string; combinesSttTts?: boolean };
 type Voice = { provider: string; voiceId: string; label: string; costPer1MChars: number; latencyMs: number; humanness: string; languages?: string[] };
+type VoiceModel = { provider: string; id: string; label: string; costPer1MChars?: number; isDefault?: boolean };
+type Language = { code: string; label: string; nativeName: string };
 type Preset = { key: string; label: string; hint: string; transcriber: string; llm: string; tts: string; estimate: Estimate };
+
+type TranscriberFallback = { provider: string; model: string; language?: string | null };
+type VoiceFallback = { provider: string; voiceId: string; voiceModel?: string | null };
 
 type Assistant = {
     id: string;
     name: string;
     isPublished: boolean;
-    transcriberProvider: string; transcriberModel: string; transcriberLanguage: string | null;
+    transcriberProvider: string;
+    transcriberModel: string;
+    transcriberLanguage: string | null;
+    transcriberSmartEndpointing: 'off' | 'vapi' | 'livekit';
+    transcriberFallbackAuto: boolean;
+    transcriberFallbacks: TranscriberFallback[];
     llmProvider: string; llmModel: string; llmTemperature: number | null; llmMaxTokens: number | null;
-    ttsProvider: string; ttsVoiceId: string; ttsSpeed: number | null;
+    ttsProvider: string; ttsVoiceId: string; ttsVoiceModel: string | null; ttsSpeed: number | null;
+    ttsFallbacks: VoiceFallback[];
     systemPrompt: string;
     firstMessage: string | null;
     firstMessageMode: 'assistant-speaks-first' | 'wait-for-user' | 'wait-then-assistant-first';
@@ -55,7 +67,14 @@ type Assistant = {
     mcpToolNames: string[];
 };
 
-type Catalog = { transcribers: Transcriber[]; llms: Llm[]; voices: Voice[]; presets: Preset[] };
+type Catalog = {
+    transcribers: Transcriber[];
+    llms: Llm[];
+    voices: Voice[];
+    voiceModels: VoiceModel[];
+    languages: Language[];
+    presets: Preset[];
+};
 
 const tierColor = (tier?: string) => {
     if (tier === 'Best' || tier === 'Excellent') return 'text-emerald-400';
@@ -74,7 +93,7 @@ export default function VoiceAssistantEditorPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [savedFlash, setSavedFlash] = useState(false);
-    const [openPicker, setOpenPicker] = useState<null | 'transcriber' | 'llm' | 'tts'>(null);
+    const [openDrawer, setOpenPicker] = useState<null | 'transcriber' | 'llm' | 'tts'>(null);
 
     const load = useCallback(async () => {
         try {
@@ -90,6 +109,8 @@ export default function VoiceAssistantEditorPage() {
                 transcribers: cRes.data.transcribers,
                 llms: cRes.data.llms,
                 voices: cRes.data.voices,
+                voiceModels: cRes.data.voiceModels || [],
+                languages: cRes.data.languages || [],
                 presets: cRes.data.presets,
             });
         } finally { setLoading(false); }
@@ -350,7 +371,10 @@ export default function VoiceAssistantEditorPage() {
                 </div>
             </div>
 
-            {/* Behaviour */}
+            {/* Call behaviour — component-specific knobs (temperature,
+                max tokens, speed, background sound, endpointing) live
+                in their respective settings drawers now. This card
+                keeps only the call-level timing + terminal messages. */}
             <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
                 <h3 className="font-semibold">Call behaviour</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -366,29 +390,6 @@ export default function VoiceAssistantEditorPage() {
                     <NumberField label="Words to interrupt" value={assistant.numWordsToInterrupt}
                         onChange={v => setAssistant({ ...assistant, numWordsToInterrupt: v })} min={0} max={20}
                         hint="How many words the caller must say to cut off the assistant mid-sentence." />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label className="text-xs text-muted-foreground">Background sound</label>
-                        <select value={assistant.backgroundSound}
-                            onChange={e => setAssistant({ ...assistant, backgroundSound: e.target.value as any })}
-                            className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm">
-                            <option value="off" className="bg-card">Off</option>
-                            <option value="office" className="bg-card">Office</option>
-                            <option value="cafe" className="bg-card">Cafe</option>
-                        </select>
-                    </div>
-                    <label className="flex items-center gap-2 mt-6 cursor-pointer">
-                        <input type="checkbox" checked={assistant.backgroundDenoise}
-                            onChange={e => setAssistant({ ...assistant, backgroundDenoise: e.target.checked })}
-                            className="w-4 h-4 accent-primary" />
-                        <span className="text-sm">Background denoise (Krisp-style)</span>
-                    </label>
-                </div>
-                <div>
-                    <NumberField label="LLM max output tokens" value={assistant.llmMaxTokens || 250}
-                        onChange={v => setAssistant({ ...assistant, llmMaxTokens: v })} min={1} max={4000}
-                        hint="Keeps spoken replies short. 250 ≈ 20-second reply cap." />
                 </div>
                 <div>
                     <label className="text-xs text-muted-foreground">Voicemail message</label>
@@ -407,14 +408,16 @@ export default function VoiceAssistantEditorPage() {
                 </div>
             </div>
 
-            {/* Picker modal */}
-            {openPicker && (
-                <PickerModal
-                    kind={openPicker}
+            {/* Right-side settings drawer — opened from a component card
+                edit-icon click. Contains the granular per-component
+                fields (Vapi-style). */}
+            {openDrawer && (
+                <SettingsDrawer
+                    kind={openDrawer}
                     catalog={catalog}
                     assistant={assistant}
-                    onPick={(patch) => { setAssistant({ ...assistant, ...patch }); setOpenPicker(null); }}
-                    onClose={() => setOpenPicker(null)}
+                    onPatch={(patch) => setAssistant({ ...assistant, ...patch })}
+                    onClose={() => setOpenDrawer(null)}
                 />
             )}
         </div>
@@ -433,27 +436,34 @@ function ComponentCard({
 }) {
     const dotColor = color === 'emerald' ? 'bg-emerald-400' : color === 'pink' ? 'bg-pink-400' : 'bg-primary';
     return (
-        <button onClick={onClick}
-            className="text-left bg-secondary/20 border border-border rounded-xl p-3 hover:border-primary/40 hover:bg-secondary/30 transition-all group">
+        <div className="text-left bg-secondary/20 border border-border rounded-xl p-3 hover:border-primary/40 hover:bg-secondary/30 transition-all group relative">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                     <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
                     <Icon className="w-3 h-3" />
                     {label}
                 </div>
-                <ChevronDown className="w-3 h-3 text-muted-foreground group-hover:text-foreground" />
+                {/* Edit-pencil opens the settings drawer for this component,
+                    mirroring Vapi's ✎ icon on each pipeline card. */}
+                <button onClick={onClick}
+                    title="Edit settings"
+                    className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors">
+                    <Pencil className="w-3 h-3" />
+                </button>
             </div>
-            <div className="mt-2 font-semibold text-sm truncate">{title}</div>
-            <div className="text-[10px] text-muted-foreground truncate">{subtitle}</div>
-            <div className="mt-3 grid grid-cols-3 gap-1">
-                {metrics.map((m, i) => (
-                    <div key={i}>
-                        <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{m.label}</div>
-                        <div className={`text-[11px] font-mono ${m.color || 'text-foreground'}`}>{m.value}</div>
-                    </div>
-                ))}
-            </div>
-        </button>
+            <button onClick={onClick} className="w-full text-left mt-2">
+                <div className="font-semibold text-sm truncate">{title}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{subtitle}</div>
+                <div className="mt-3 grid grid-cols-3 gap-1">
+                    {metrics.map((m, i) => (
+                        <div key={i}>
+                            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{m.label}</div>
+                            <div className={`text-[11px] font-mono ${m.color || 'text-foreground'}`}>{m.value}</div>
+                        </div>
+                    ))}
+                </div>
+            </button>
+        </div>
     );
 }
 
@@ -472,96 +482,388 @@ function NumberField({ label, value, onChange, min, max, hint }: {
     );
 }
 
-function PickerModal({ kind, catalog, assistant, onPick, onClose }: {
+// ─── SettingsDrawer — right-side slide-in ──────────────────────────
+// Vapi opens a full settings panel on each component's ✎ icon (see
+// screenshots the user referenced). Same shape here: provider dropdown
+// on top, model dropdown, then component-specific knobs (language +
+// endpointing + fallbacks for transcriber, temperature + max tokens
+// for LLM, voice-model + speed + background sound + fallbacks for TTS).
+
+function SettingsDrawer({ kind, catalog, assistant, onPatch, onClose }: {
     kind: 'transcriber' | 'llm' | 'tts';
     catalog: Catalog;
     assistant: Assistant;
-    onPick: (patch: Partial<Assistant>) => void;
+    onPatch: (patch: Partial<Assistant>) => void;
     onClose: () => void;
 }) {
-    const title = kind === 'transcriber' ? 'Pick a transcriber' : kind === 'llm' ? 'Pick a model' : 'Pick a voice';
-    const [query, setQuery] = useState('');
-
-    const items: any[] =
-        kind === 'transcriber' ? catalog.transcribers :
-        kind === 'llm' ? catalog.llms :
-        catalog.voices;
-
-    const filtered = items.filter(it => {
-        if (!query.trim()) return true;
-        const q = query.toLowerCase();
-        return (it.label + it.provider + (it.model || it.voiceId || '')).toLowerCase().includes(q);
-    });
+    const title =
+        kind === 'transcriber' ? 'Transcriber Settings' :
+        kind === 'llm' ? 'Model Settings' :
+        'Voice Settings';
+    const description =
+        kind === 'transcriber' ? 'Configure the speech-to-text transcriber that converts caller speech into text for the LLM.' :
+        kind === 'llm' ? "Configure the LLM that powers your assistant's intelligence, reasoning, and conversation abilities." :
+        'Configure the text-to-speech voice your assistant uses to speak.';
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-                <div className="p-4 border-b border-border flex items-center justify-between">
-                    <h3 className="font-semibold">{title}</h3>
+        <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+            <div className="flex-1 bg-black/60 backdrop-blur-sm" />
+            <div className="w-full max-w-md h-full bg-card border-l border-border overflow-y-auto animate-in slide-in-from-right duration-200"
+                onClick={e => e.stopPropagation()}>
+                <div className="sticky top-0 bg-card border-b border-border p-4 flex items-center justify-between z-10">
+                    <h3 className="font-semibold flex items-center gap-2">
+                        {kind === 'transcriber' && <Mic className="w-4 h-4 text-emerald-400" />}
+                        {kind === 'llm' && <Cpu className="w-4 h-4 text-primary" />}
+                        {kind === 'tts' && <Volume2 className="w-4 h-4 text-pink-400" />}
+                        {title}
+                    </h3>
                     <button onClick={onClose} className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
                         <X className="w-4 h-4" />
                     </button>
                 </div>
-                <div className="p-4 pb-2">
-                    <input value={query} onChange={e => setQuery(e.target.value)}
-                        placeholder="Search…"
-                        className="w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 pt-2 space-y-1">
-                    {filtered.map((it, i) => {
-                        const active =
-                            kind === 'transcriber' ? (assistant.transcriberProvider === it.provider && assistant.transcriberModel === it.model) :
-                            kind === 'llm' ? (assistant.llmProvider === it.provider && assistant.llmModel === it.model) :
-                            (assistant.ttsProvider === it.provider && assistant.ttsVoiceId === it.voiceId);
-                        return (
-                            <button key={i}
-                                onClick={() => {
-                                    if (kind === 'transcriber') onPick({ transcriberProvider: it.provider, transcriberModel: it.model });
-                                    else if (kind === 'llm') onPick({ llmProvider: it.provider, llmModel: it.model });
-                                    else onPick({ ttsProvider: it.provider, ttsVoiceId: it.voiceId });
-                                }}
-                                className={`w-full text-left rounded-xl p-3 flex items-start gap-3 transition-colors ${
-                                    active ? 'bg-primary/10 border border-primary/40' : 'bg-secondary/20 hover:bg-secondary/40 border border-transparent'
-                                }`}>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-medium truncate">{it.label}</span>
-                                        <span className="text-[10px] font-mono text-muted-foreground">{it.provider}/{it.model || it.voiceId}</span>
-                                    </div>
-                                    <div className="mt-1 text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
-                                        {kind === 'transcriber' && (
-                                            <>
-                                                <span>~{it.latencyMs}ms</span>
-                                                <span>${it.costPerMin.toFixed(4)}/min</span>
-                                                <span className={tierColor(it.accuracy)}>{it.accuracy}</span>
-                                            </>
-                                        )}
-                                        {kind === 'llm' && (
-                                            <>
-                                                <span>~{it.latencyMs}ms</span>
-                                                <span>${it.inCostPer1M}/M in · ${it.outCostPer1M}/M out</span>
-                                                <span className={tierColor(it.intelligence)}>{it.intelligence}</span>
-                                                {it.combinesSttTts && <span className="text-primary">speech-to-speech</span>}
-                                            </>
-                                        )}
-                                        {kind === 'tts' && (
-                                            <>
-                                                <span>~{it.latencyMs}ms</span>
-                                                <span>${it.costPer1MChars}/M chars</span>
-                                                <span className={tierColor(it.humanness)}>{it.humanness}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                                {active && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/15 text-primary flex-shrink-0">Active</span>}
-                            </button>
-                        );
-                    })}
-                    {filtered.length === 0 && (
-                        <div className="text-center py-8 text-sm text-muted-foreground">No matches.</div>
-                    )}
+                <div className="p-4 space-y-5">
+                    <p className="text-xs text-muted-foreground">{description}</p>
+                    {kind === 'transcriber' && <TranscriberSettings catalog={catalog} assistant={assistant} onPatch={onPatch} />}
+                    {kind === 'llm' && <ModelSettings catalog={catalog} assistant={assistant} onPatch={onPatch} />}
+                    {kind === 'tts' && <VoiceSettings catalog={catalog} assistant={assistant} onPatch={onPatch} />}
                 </div>
             </div>
+        </div>
+    );
+}
+
+// ─── Transcriber panel ─────────────────────────────────────────────
+
+function TranscriberSettings({ catalog, assistant, onPatch }: {
+    catalog: Catalog; assistant: Assistant; onPatch: (p: Partial<Assistant>) => void;
+}) {
+    const providers = Array.from(new Set(catalog.transcribers.map(t => t.provider)));
+    const modelsForProvider = catalog.transcribers.filter(t => t.provider === assistant.transcriberProvider);
+    const current = catalog.transcribers.find(t => t.provider === assistant.transcriberProvider && t.model === assistant.transcriberModel);
+
+    return (
+        <div className="space-y-5">
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Provider</label>
+                <select value={assistant.transcriberProvider}
+                    onChange={e => {
+                        const p = e.target.value;
+                        const first = catalog.transcribers.find(t => t.provider === p);
+                        onPatch({ transcriberProvider: p, transcriberModel: first?.model || assistant.transcriberModel });
+                    }}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm">
+                    {providers.map(p => <option key={p} value={p} className="bg-card">{p}</option>)}
+                </select>
+            </div>
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Model</label>
+                <select value={assistant.transcriberModel}
+                    onChange={e => onPatch({ transcriberModel: e.target.value })}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
+                    {modelsForProvider.map(t => (
+                        <option key={t.model} value={t.model} className="bg-card">
+                            {t.label} · {t.latencyMs}ms · ${t.costPerMin.toFixed(4)}/min · {t.accuracy}
+                        </option>
+                    ))}
+                </select>
+                {current && (
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        {current.label} · ~{current.latencyMs}ms · ${current.costPerMin.toFixed(4)}/min
+                    </p>
+                )}
+            </div>
+            <div>
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                    Language
+                </label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Leave empty to auto-detect the spoken language.</p>
+                <select value={assistant.transcriberLanguage || ''}
+                    onChange={e => onPatch({ transcriberLanguage: e.target.value || null })}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm">
+                    <option value="" className="bg-card">Auto-detect</option>
+                    {catalog.languages.map(l => (
+                        <option key={l.code} value={l.code} className="bg-card">{l.label} · {l.nativeName}</option>
+                    ))}
+                </select>
+            </div>
+            <ToggleRow icon={Ear} label="Background Denoising" hint="Filter background noise while the user is talking."
+                value={assistant.backgroundDenoise}
+                onChange={v => onPatch({ backgroundDenoise: v })} />
+            <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                    <Waves className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Smart Endpointing</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mb-2">Enable for more accurate speech endpoint detection.</p>
+                <div className="grid grid-cols-3 gap-1 bg-secondary/40 rounded-xl p-1">
+                    {(['off', 'vapi', 'livekit'] as const).map(mode => (
+                        <button key={mode}
+                            onClick={() => onPatch({ transcriberSmartEndpointing: mode })}
+                            className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors capitalize ${
+                                assistant.transcriberSmartEndpointing === mode
+                                    ? 'bg-primary/15 text-primary'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}>
+                            {mode === 'off' ? 'Off' : mode === 'vapi' ? 'Built-in' : 'LiveKit'}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <FallbackList
+                title="Transcriber Fallback"
+                hint="Protect your calls from STT failures. Manual fallbacks are tried in order; the auto backup only kicks in if all of them fail."
+                autoLabel="Let the runtime pick a backup STT provider automatically"
+                autoOn={assistant.transcriberFallbackAuto}
+                onAutoChange={v => onPatch({ transcriberFallbackAuto: v })}
+                fallbacks={assistant.transcriberFallbacks.map(f => `${f.provider}/${f.model}`)}
+                onAdd={() => {
+                    const first = catalog.transcribers.find(t => t.provider !== assistant.transcriberProvider);
+                    if (!first) return;
+                    onPatch({ transcriberFallbacks: [...assistant.transcriberFallbacks, { provider: first.provider, model: first.model }] });
+                }}
+                onRemove={i => onPatch({ transcriberFallbacks: assistant.transcriberFallbacks.filter((_, idx) => idx !== i) })} />
+        </div>
+    );
+}
+
+// ─── Model panel ───────────────────────────────────────────────────
+
+function ModelSettings({ catalog, assistant, onPatch }: {
+    catalog: Catalog; assistant: Assistant; onPatch: (p: Partial<Assistant>) => void;
+}) {
+    const providers = Array.from(new Set(catalog.llms.map(l => l.provider)));
+    const modelsForProvider = catalog.llms.filter(l => l.provider === assistant.llmProvider);
+    const current = catalog.llms.find(l => l.provider === assistant.llmProvider && l.model === assistant.llmModel);
+
+    return (
+        <div className="space-y-5">
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Provider</label>
+                <select value={assistant.llmProvider}
+                    onChange={e => {
+                        const p = e.target.value;
+                        const first = catalog.llms.find(l => l.provider === p);
+                        onPatch({ llmProvider: p, llmModel: first?.model || assistant.llmModel });
+                    }}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm">
+                    {providers.map(p => <option key={p} value={p} className="bg-card">{p}</option>)}
+                </select>
+            </div>
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Model</label>
+                <select value={assistant.llmModel}
+                    onChange={e => onPatch({ llmModel: e.target.value })}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
+                    {modelsForProvider.map(l => (
+                        <option key={l.model} value={l.model} className="bg-card">
+                            {l.label} · {l.latencyMs}ms · ${l.inCostPer1M}/M in / ${l.outCostPer1M}/M out{l.combinesSttTts ? ' · speech-to-speech' : ''}
+                        </option>
+                    ))}
+                </select>
+                {current && (
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        {current.label} · Intelligence: <span className={tierColor(current.intelligence)}>{current.intelligence}</span>
+                    </p>
+                )}
+            </div>
+            <div>
+                <div className="flex items-center justify-between text-xs">
+                    <label className="font-medium text-muted-foreground">Temperature</label>
+                    <span className="font-mono">{(assistant.llmTemperature ?? 0.5).toFixed(2)}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Controls randomness. Lower values are more deterministic; higher values more creative.</p>
+                <input type="range" min={0} max={2} step={0.05}
+                    value={assistant.llmTemperature ?? 0.5}
+                    onChange={e => onPatch({ llmTemperature: Number(e.target.value) })}
+                    className="mt-2 w-full accent-primary" />
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                    <span>Precise</span><span>Creative</span>
+                </div>
+            </div>
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Max Tokens</label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Max tokens the assistant can generate per turn. Keep replies short so they finish in a natural pause.</p>
+                <input type="number" min={1} max={4000} value={assistant.llmMaxTokens || 250}
+                    onChange={e => onPatch({ llmMaxTokens: Number(e.target.value) })}
+                    className="mt-2 w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm" />
+            </div>
+        </div>
+    );
+}
+
+// ─── Voice panel ───────────────────────────────────────────────────
+
+function VoiceSettings({ catalog, assistant, onPatch }: {
+    catalog: Catalog; assistant: Assistant; onPatch: (p: Partial<Assistant>) => void;
+}) {
+    const providers = Array.from(new Set(catalog.voices.map(v => v.provider)));
+    const voicesForProvider = catalog.voices.filter(v => v.provider === assistant.ttsProvider);
+    const voiceModelsForProvider = catalog.voiceModels.filter(m => m.provider === assistant.ttsProvider);
+    const currentVoice = catalog.voices.find(v => v.provider === assistant.ttsProvider && v.voiceId === assistant.ttsVoiceId);
+
+    return (
+        <div className="space-y-5">
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Provider</label>
+                <select value={assistant.ttsProvider}
+                    onChange={e => {
+                        const p = e.target.value;
+                        const firstVoice = catalog.voices.find(v => v.provider === p);
+                        const firstModel = catalog.voiceModels.find(m => m.provider === p && m.isDefault);
+                        onPatch({
+                            ttsProvider: p,
+                            ttsVoiceId: firstVoice?.voiceId || assistant.ttsVoiceId,
+                            ttsVoiceModel: firstModel?.id || null,
+                        });
+                    }}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm">
+                    {providers.map(p => <option key={p} value={p} className="bg-card">{p}</option>)}
+                </select>
+            </div>
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Voice</label>
+                <select value={assistant.ttsVoiceId}
+                    onChange={e => onPatch({ ttsVoiceId: e.target.value })}
+                    className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
+                    {voicesForProvider.map(v => (
+                        <option key={v.voiceId} value={v.voiceId} className="bg-card">{v.label}</option>
+                    ))}
+                </select>
+                {currentVoice && (
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        Humanness: <span className={tierColor(currentVoice.humanness)}>{currentVoice.humanness}</span> · ~{currentVoice.latencyMs}ms
+                    </p>
+                )}
+            </div>
+            {voiceModelsForProvider.length > 0 && (
+                <div>
+                    <label className="text-xs font-medium text-muted-foreground">Voice Model</label>
+                    <select value={assistant.ttsVoiceModel || ''}
+                        onChange={e => onPatch({ ttsVoiceModel: e.target.value || null })}
+                        className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
+                        {voiceModelsForProvider.map(m => (
+                            <option key={m.id} value={m.id} className="bg-card">
+                                {m.label}{m.costPer1MChars ? ` · $${m.costPer1MChars}/M chars` : ''}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+            <div>
+                <div className="flex items-center gap-2 mb-1">
+                    <Rabbit className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Speed</span>
+                    <span className="ml-auto font-mono text-xs">{(assistant.ttsSpeed ?? 1).toFixed(2)}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mb-2">The speed of the voice output.</p>
+                <input type="range" min={0.5} max={2} step={0.05}
+                    value={assistant.ttsSpeed ?? 1}
+                    onChange={e => onPatch({ ttsSpeed: Number(e.target.value) })}
+                    className="w-full accent-primary" />
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                    <span className="flex items-center gap-1"><Turtle className="w-3 h-3" /> Slower</span>
+                    <span className="flex items-center gap-1">Faster <Rabbit className="w-3 h-3" /></span>
+                </div>
+            </div>
+            <div>
+                <div className="flex items-center gap-2 mb-1">
+                    <Music className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Background Sound</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mb-2">Ambient noise played under the call. Default for phone is 'office'; web calls default to 'off'.</p>
+                <div className="grid grid-cols-3 gap-1 bg-secondary/40 rounded-xl p-1">
+                    {(['off', 'office', 'cafe'] as const).map(sound => (
+                        <button key={sound}
+                            onClick={() => onPatch({ backgroundSound: sound })}
+                            className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors capitalize ${
+                                assistant.backgroundSound === sound
+                                    ? 'bg-primary/15 text-primary'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}>
+                            {sound}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <FallbackList
+                title="Fallback Voices"
+                hint="Used when the primary voice model fails. Tried in order."
+                autoOn={false}
+                onAutoChange={() => {}}
+                showAuto={false}
+                fallbacks={assistant.ttsFallbacks.map(f => `${f.provider}/${f.voiceId}`)}
+                onAdd={() => {
+                    const first = catalog.voices.find(v => v.provider !== assistant.ttsProvider);
+                    if (!first) return;
+                    onPatch({ ttsFallbacks: [...assistant.ttsFallbacks, { provider: first.provider, voiceId: first.voiceId }] });
+                }}
+                onRemove={i => onPatch({ ttsFallbacks: assistant.ttsFallbacks.filter((_, idx) => idx !== i) })} />
+        </div>
+    );
+}
+
+// ─── Shared little widgets ─────────────────────────────────────────
+
+function ToggleRow({ icon: Icon, label, hint, value, onChange }: {
+    icon: any; label: string; hint: string; value: boolean; onChange: (v: boolean) => void;
+}) {
+    return (
+        <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2 flex-1">
+                <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
+                <div>
+                    <div className="text-sm font-medium">{label}</div>
+                    <div className="text-[10px] text-muted-foreground">{hint}</div>
+                </div>
+            </div>
+            <button onClick={() => onChange(!value)}
+                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+                    value ? 'bg-primary' : 'bg-secondary'
+                }`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${value ? 'translate-x-4' : ''}`} />
+            </button>
+        </div>
+    );
+}
+
+function FallbackList({
+    title, hint, autoLabel, autoOn, onAutoChange, showAuto = true,
+    fallbacks, onAdd, onRemove,
+}: {
+    title: string;
+    hint: string;
+    autoLabel?: string;
+    autoOn: boolean;
+    onAutoChange: (v: boolean) => void;
+    showAuto?: boolean;
+    fallbacks: string[];
+    onAdd: () => void;
+    onRemove: (i: number) => void;
+}) {
+    return (
+        <div>
+            <div className="text-sm font-medium">{title}</div>
+            <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">{hint}</p>
+            {showAuto && (
+                <div className="mb-2">
+                    <ToggleRow icon={Zap} label="Auto Fallback" hint={autoLabel || ''}
+                        value={autoOn} onChange={onAutoChange} />
+                </div>
+            )}
+            <div className="space-y-1">
+                {fallbacks.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 bg-secondary/30 rounded-lg px-3 py-2 text-xs font-mono">
+                        <span className="truncate">{i + 1}. {f}</span>
+                        <button onClick={() => onRemove(i)} className="text-muted-foreground hover:text-red-400">
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+            <button onClick={onAdd}
+                className="mt-2 w-full bg-secondary/40 hover:bg-secondary/60 border border-dashed border-border rounded-lg px-3 py-2 text-xs font-medium flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors">
+                <Plus className="w-3.5 h-3.5" /> Add
+            </button>
         </div>
     );
 }

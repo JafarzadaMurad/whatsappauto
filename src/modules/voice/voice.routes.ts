@@ -30,11 +30,15 @@ router.post('/assistants/:id/test-session', assistants.testSession.bind(assistan
 
 router.get('/calls', assistants.listCalls.bind(assistants));
 
+router.get('/twilio/status', numbers.twilioStatus.bind(numbers));
+router.delete('/twilio', numbers.disconnectTwilio.bind(numbers));
+
 router.get('/numbers', numbers.list.bind(numbers));
 router.post('/numbers/search', numbers.search.bind(numbers));
 router.post('/numbers/buy', numbers.buy.bind(numbers));
 router.post('/numbers/import', numbers.importNumber.bind(numbers));
 router.put('/numbers/:id', numbers.update.bind(numbers));
 router.delete('/numbers/:id', numbers.release.bind(numbers));
+router.post('/numbers/:id/outbound', numbers.outbound.bind(numbers));
 
 export default router;

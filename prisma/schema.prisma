@@ -54,6 +54,15 @@ model Workspace {
   // agents"). Empty by default; owner-editable from Settings.
   copilotCustomPrompt   String?  @db.Text
 
+  // Per-workspace Twilio credentials — BYOK model. Each workspace
+  // provisions numbers under THEIR own Twilio account so number
+  // + per-minute Twilio charges land on the customer's Twilio bill
+  // (not ours). Persisted first time the operator hits Import / Buy
+  // on the Voice → Numbers page. Stored as-is (same pattern as
+  // AiProvider.apiKey); encryption at rest can come later.
+  twilioAccountSid      String?
+  twilioAuthToken       String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

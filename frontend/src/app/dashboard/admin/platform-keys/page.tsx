@@ -16,10 +16,8 @@ const PLATFORM_KEYS = [
         hint: 'Used for every OpenAI call — including the voice-call bridge (OpenAI Realtime API).' },
     { key: 'PLATFORM_GOOGLE_KEY', label: 'Google (Gemini)', placeholder: 'AIza…',
         hint: 'Used for every Gemini call.' },
-    { key: 'TWILIO_ACCOUNT_SID', label: 'Twilio Account SID', placeholder: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-        hint: 'Used to provision + route phone numbers for the Voice product.' },
-    { key: 'TWILIO_AUTH_TOKEN', label: 'Twilio Auth Token', placeholder: '(32-char hex from twilio.com/console)',
-        hint: 'Used to sign API requests to Twilio + verify inbound webhook signatures.' },
+    // Twilio credentials are per-workspace (BYOK) — managed on
+    // Voice → Phone Numbers, not here.
 ];
 
 export default function AdminPlatformKeysPage() {

@@ -159,6 +159,9 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     let inputAudioBytes = 0;   // caller → us
     let outputAudioBytes = 0;  // us → caller
     let closed = false;
+    // Turn-by-turn transcript accumulator. Each entry is one utterance.
+    // { role: 'assistant' | 'user', text, at }
+    const transcript: Array<{ role: 'assistant' | 'user'; text: string; at: number }> = [];
 
     const shutdown = async (endedReason: string) => {
         if (closed) return;
@@ -209,6 +212,7 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                         endedAt: new Date(),
                         endedReason,
                         status: row.status === 'ringing' || row.status === 'in-progress' ? 'completed' : row.status,
+                        transcript: transcript.length ? (transcript as any) : undefined,
                     },
                 });
                 dbCallId = row.id;
@@ -289,9 +293,13 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
             } else if (ev.type === 'error') {
                 logger.error({ err: ev.error }, '[voice-bridge] OpenAI error event');
             } else if (ev.type === 'response.audio_transcript.done') {
-                // Full assistant transcript for this response — persist
-                // to PhoneCall.transcript later once we have call-id
-                // resolution during the session (skipped for MVP).
+                // Full assistant utterance for this response.
+                const text = String(ev.transcript || '').trim();
+                if (text) transcript.push({ role: 'assistant', text, at: Date.now() });
+            } else if (ev.type === 'conversation.item.input_audio_transcription.completed') {
+                // Whisper-side transcription of what the caller just said.
+                const text = String(ev.transcript || '').trim();
+                if (text) transcript.push({ role: 'user', text, at: Date.now() });
             }
         } catch { /* non-JSON keepalives etc. */ }
     });

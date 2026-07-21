@@ -46,6 +46,7 @@ type VoiceCatalog = {
     transcribers: { key: string; provider: string; model: string; label: string; costPerMin: number }[];
     llms: { key: string; provider: string; model: string; label: string; combinesSttTts: boolean; inCostPer1M: number; outCostPer1M: number }[];
     voices: { key: string; provider: string; voiceId: string; label: string; costPer1MChars: number }[];
+    installedProviders: string[];
 };
 
 const SECTIONS = [
@@ -86,7 +87,7 @@ export function PlanEditor({ initial }: { initial: Plan }) {
     const [error, setError] = useState<string | null>(null);
 
     const [aiCatalog, setAiCatalog] = useState<ModelEntry[]>([]);
-    const [voiceCatalog, setVoiceCatalog] = useState<VoiceCatalog>({ transcribers: [], llms: [], voices: [] });
+    const [voiceCatalog, setVoiceCatalog] = useState<VoiceCatalog>({ transcribers: [], llms: [], voices: [], installedProviders: [] });
 
     useEffect(() => {
         (async () => {
@@ -100,6 +101,7 @@ export function PlanEditor({ initial }: { initial: Plan }) {
                     transcribers: v.data.transcribers || [],
                     llms: v.data.llms || [],
                     voices: v.data.voices || [],
+                    installedProviders: v.data.installedProviders || [],
                 });
             } catch (e) { console.error(e); }
         })();
@@ -458,14 +460,34 @@ function AiModelsSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) =>
 }
 
 function VoiceSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) => void; catalog: VoiceCatalog }) {
+    const installedSet = useMemo(() => new Set(catalog.installedProviders || []), [catalog.installedProviders]);
+    const isInstalled = (p: string) => {
+        // openai-realtime piggy-backs on openai's key; the backend
+        // reports both when the key is set, but be defensive.
+        if (p === 'openai-realtime') return installedSet.has('openai-realtime') || installedSet.has('openai');
+        return installedSet.has(p);
+    };
+
+    // Only show entries whose provider has a platform key installed.
+    // Grey pill at the top summarises what's hidden so the admin
+    // isn't confused about missing providers.
+    const filterInstalled = <T extends { provider: string }>(list: T[]) => list.filter(l => isInstalled(l.provider));
     const bucketize = <T extends { provider: string; key: string; label: string }>(list: T[]) => {
         const g: Record<string, T[]> = {};
         for (const c of list) (g[c.provider] = g[c.provider] || []).push(c);
         return g;
     };
-    const transcriberGroups = useMemo(() => bucketize(catalog.transcribers), [catalog.transcribers]);
-    const llmGroups = useMemo(() => bucketize(catalog.llms), [catalog.llms]);
-    const voiceGroups = useMemo(() => bucketize(catalog.voices), [catalog.voices]);
+    const transcriberGroups = useMemo(() => bucketize(filterInstalled(catalog.transcribers)), [catalog.transcribers, installedSet]);
+    const llmGroups = useMemo(() => bucketize(filterInstalled(catalog.llms)), [catalog.llms, installedSet]);
+    const voiceGroups = useMemo(() => bucketize(filterInstalled(catalog.voices)), [catalog.voices, installedSet]);
+
+    const hiddenProviders = useMemo(() => {
+        const all = new Set<string>();
+        for (const t of catalog.transcribers) all.add(t.provider);
+        for (const l of catalog.llms) all.add(l.provider);
+        for (const v of catalog.voices) all.add(v.provider);
+        return Array.from(all).filter(p => !isInstalled(p));
+    }, [catalog, installedSet]);
 
     const totalPicked = plan.allowedVoiceTranscribers.length + plan.allowedVoiceLlms.length + plan.allowedVoiceVoices.length;
 
@@ -479,7 +501,7 @@ function VoiceSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) => vo
         subtitle: string,
         field: 'allowedVoiceTranscribers' | 'allowedVoiceLlms' | 'allowedVoiceVoices',
         groups: Record<string, { key: string; label: string; provider: string }[]>,
-        total: number,
+        available: number,
     ) => (
         <div className="space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -488,7 +510,7 @@ function VoiceSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) => vo
                     <div className="text-[11px] text-muted-foreground">{subtitle}</div>
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
-                    <span className="text-muted-foreground">{plan[field].length}/{total}</span>
+                    <span className="text-muted-foreground">{plan[field].length}/{available}</span>
                     <button type="button" onClick={() => set({ ...plan, [field]: Object.values(groups).flat().map(e => e.key) })}
                         className="px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground">Select all</button>
                     <button type="button" onClick={() => set({ ...plan, [field]: [] })}
@@ -496,7 +518,7 @@ function VoiceSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) => vo
                 </div>
             </div>
             {Object.keys(groups).length === 0 ? (
-                <div className="text-[11px] text-muted-foreground italic px-1">Nothing in the catalogue.</div>
+                <div className="text-[11px] text-muted-foreground italic px-1">No installed provider ships items in this category yet.</div>
             ) : (
                 <div className="space-y-2">
                     {Object.entries(groups).map(([provider, entries]) => (
@@ -517,20 +539,27 @@ function VoiceSection({ plan, set, catalog }: { plan: Plan; set: (p: Plan) => vo
     return (
         <div className="space-y-6">
             <SectionHeader icon={Phone} title="Voice pipeline"
-                hint="Restrict which STT / Realtime-LLM / TTS choices the workspace's Voice Assistants can pick. Empty list = unrestricted." />
+                hint="Restrict which STT / Realtime-LLM / TTS choices the workspace's Voice Assistants can pick. Empty list = allow every installed entry." />
+            {hiddenProviders.length > 0 && (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 text-[11px] text-muted-foreground">
+                    <div className="font-medium text-amber-400/90 mb-0.5">Some voice providers are not installed yet</div>
+                    Hidden until their key is set under <span className="text-primary">Admin → Platform Keys</span>:
+                    <span className="ml-1 font-mono text-amber-400/80">{hiddenProviders.join(', ')}</span>.
+                </div>
+            )}
             {totalPicked === 0 && (
                 <p className="text-[11px] text-muted-foreground italic bg-secondary/30 border border-border rounded-lg p-2">
-                    All three lists are empty — the plan currently allows every voice-catalogue entry.
+                    All three lists are empty — the plan currently allows every installed voice-catalogue entry.
                 </p>
             )}
             {renderGroup('Transcribers (STT)', 'Speech-to-text engine. Ignored when the LLM combines STT + TTS.',
-                'allowedVoiceTranscribers', transcriberGroups, catalog.transcribers.length)}
+                'allowedVoiceTranscribers', transcriberGroups, filterInstalled(catalog.transcribers).length)}
             <div className="h-px bg-border" />
             {renderGroup('Voice LLMs', 'Speech-to-speech models (Realtime) or discrete LLMs that pair with a transcriber + TTS.',
-                'allowedVoiceLlms', llmGroups, catalog.llms.length)}
+                'allowedVoiceLlms', llmGroups, filterInstalled(catalog.llms).length)}
             <div className="h-px bg-border" />
             {renderGroup('TTS voices', 'Voice used to speak assistant replies. Ignored for speech-to-speech LLMs.',
-                'allowedVoiceVoices', voiceGroups, catalog.voices.length)}
+                'allowedVoiceVoices', voiceGroups, filterInstalled(catalog.voices).length)}
         </div>
     );
 }

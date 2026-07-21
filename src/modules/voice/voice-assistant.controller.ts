@@ -14,6 +14,7 @@ import {
     findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
 import { loadAllowedModels, loadAllowedVoice, normaliseProvider } from '../../lib/model-access';
+import { listConfiguredProviders } from '../../lib/ai-pricing';
 
 // Shared editor payload — every field is optional on PATCH, required
 // on create (create dupes editor defaults).
@@ -104,18 +105,33 @@ export class VoiceAssistantController {
             const allowed = workspaceId ? await loadAllowedModels(workspaceId) : [];
             const voice = workspaceId ? await loadAllowedVoice(workspaceId) : { transcribers: [], llms: [], voices: [] };
 
+            // Only show providers whose platform API key is actually
+            // configured — otherwise the bridge would crash on select.
+            // Union of every provider referenced in the catalogue.
+            const allProviders = Array.from(new Set([
+                ...TRANSCRIBERS.map(t => t.provider),
+                ...LLMS.map(l => l.provider),
+                ...VOICES.map(v => v.provider),
+                ...VOICE_MODELS.map(v => v.provider),
+            ]));
+            const installed = await listConfiguredProviders(allProviders);
+            const providerInstalled = (p: string) => installed.has(p);
+
             // Voice-specific list gates. Each list keeps the "empty
             // array = unrestricted" sentinel so plans admins haven't
             // opened yet keep showing the full catalogue.
             const gateTranscriber = (t: { provider: string; model: string }) => {
+                if (!providerInstalled(t.provider)) return false;
                 if (voice.transcribers.length === 0) return true;
                 return voice.transcribers.includes(`${t.provider}:${t.model}`);
             };
             const gateVoice = (v: { provider: string; voiceId: string }) => {
+                if (!providerInstalled(v.provider)) return false;
                 if (voice.voices.length === 0) return true;
                 return voice.voices.includes(`${v.provider}:${v.voiceId}`);
             };
             const gateLlm = (l: { provider: string; model: string }) => {
+                if (!providerInstalled(l.provider)) return false;
                 // Two gates stacked: legacy text-model list (uppercase
                 // provider) AND the new voice-LLM list (raw provider).
                 // Both must accept the model. Whichever is empty is
@@ -129,10 +145,12 @@ export class VoiceAssistantController {
                 }
                 return true;
             };
+            const gateVoiceModel = (m: { provider: string; id: string }) => providerInstalled(m.provider);
 
             const transcribers = TRANSCRIBERS.filter(gateTranscriber);
             const llms = LLMS.filter(gateLlm);
             const voices = VOICES.filter(gateVoice);
+            const voiceModels = VOICE_MODELS.filter(gateVoiceModel);
 
             const presetsWithCost = PRESETS
                 .map(p => ({
@@ -161,10 +179,11 @@ export class VoiceAssistantController {
                 transcribers,
                 llms,
                 voices,
-                voiceModels: VOICE_MODELS,
+                voiceModels,
                 languages: LANGUAGES,
                 presets: presetsWithCost,
                 planRestricted,
+                installedProviders: Array.from(installed),
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });

@@ -122,27 +122,46 @@ export function extractUsage(providerUpper: string, aiResult: any): Usage {
 
 // ─── Platform key resolver ─────────────────────────────────────────
 // Free / Starter workspaces don't hold their own provider keys; every
-// LLM call uses the shared platform key that the admin sets in
-// SystemConfig. The three keys are:
-//   PLATFORM_ANTHROPIC_KEY  — sk-ant-…
-//   PLATFORM_OPENAI_KEY     — sk-…
-//   PLATFORM_GOOGLE_KEY     — AIza…
-
-type ProviderUpper = 'CLAUDE' | 'ANTHROPIC' | 'OPENAI' | 'GEMINI' | 'GOOGLE';
+// LLM / voice-provider call uses the shared platform key that the
+// admin sets in SystemConfig. Keys currently supported:
+//   PLATFORM_ANTHROPIC_KEY      — sk-ant-…
+//   PLATFORM_OPENAI_KEY         — sk-…
+//   PLATFORM_GOOGLE_KEY         — AIza…
+//   PLATFORM_GROQ_KEY           — gsk_…   (text-LLM behind voice)
+//   PLATFORM_DEEPGRAM_KEY       — STT + Aura TTS
+//   PLATFORM_ELEVENLABS_KEY     — TTS
+//   PLATFORM_CARTESIA_KEY       — TTS (Sonic)
+//   PLATFORM_ASSEMBLYAI_KEY     — STT
+//   PLATFORM_GLADIA_KEY         — STT
+//   PLATFORM_SPEECHMATICS_KEY   — STT
+//   PLATFORM_SONIOX_KEY         — STT
+//   PLATFORM_PLAYHT_KEY         — TTS  (needs user id too, appended after `|`)
+//   PLATFORM_AZURE_SPEECH_KEY   — Azure Speech (region appended after `|`)
 
 const PLATFORM_KEY_MAP: Record<string, string> = {
     CLAUDE: 'PLATFORM_ANTHROPIC_KEY',
     ANTHROPIC: 'PLATFORM_ANTHROPIC_KEY',
     OPENAI: 'PLATFORM_OPENAI_KEY',
+    'OPENAI-REALTIME': 'PLATFORM_OPENAI_KEY',
     GEMINI: 'PLATFORM_GOOGLE_KEY',
     GOOGLE: 'PLATFORM_GOOGLE_KEY',
+    GROQ: 'PLATFORM_GROQ_KEY',
+    DEEPGRAM: 'PLATFORM_DEEPGRAM_KEY',
+    ELEVENLABS: 'PLATFORM_ELEVENLABS_KEY',
+    CARTESIA: 'PLATFORM_CARTESIA_KEY',
+    ASSEMBLYAI: 'PLATFORM_ASSEMBLYAI_KEY',
+    GLADIA: 'PLATFORM_GLADIA_KEY',
+    SPEECHMATICS: 'PLATFORM_SPEECHMATICS_KEY',
+    SONIOX: 'PLATFORM_SONIOX_KEY',
+    PLAYHT: 'PLATFORM_PLAYHT_KEY',
+    AZURE: 'PLATFORM_AZURE_SPEECH_KEY',
 };
 
 const platformKeyCache = new Map<string, { key: string; at: number }>();
 const PLATFORM_KEY_TTL_MS = 60_000;
 
 export async function resolvePlatformKey(providerUpper: string): Promise<string | null> {
-    const cfgKey = PLATFORM_KEY_MAP[providerUpper.toUpperCase() as ProviderUpper];
+    const cfgKey = PLATFORM_KEY_MAP[providerUpper.toUpperCase()];
     if (!cfgKey) return null;
     const cached = platformKeyCache.get(cfgKey);
     if (cached && Date.now() - cached.at < PLATFORM_KEY_TTL_MS) return cached.key || null;
@@ -154,6 +173,30 @@ export async function resolvePlatformKey(providerUpper: string): Promise<string 
 
 export function invalidatePlatformKeyCache() {
     platformKeyCache.clear();
+}
+
+// Which voice providers currently have a platform key set? Voice
+// catalog + plan editor use this to hide entries the runtime can't
+// actually call — no key means the bridge would crash if the user
+// picked that transcriber / TTS / LLM.
+//
+// `openai-realtime` intentionally piggy-backs on `openai`'s key.
+export async function listConfiguredProviders(providers: string[]): Promise<Set<string>> {
+    const configured = new Set<string>();
+    const seen = new Map<string, boolean>();
+    for (const p of providers) {
+        const cfgKey = PLATFORM_KEY_MAP[p.toUpperCase()];
+        if (!cfgKey) continue;
+        if (seen.has(cfgKey)) {
+            if (seen.get(cfgKey)) configured.add(p);
+            continue;
+        }
+        const key = await resolvePlatformKey(p);
+        const has = !!(key && key.trim());
+        seen.set(cfgKey, has);
+        if (has) configured.add(p);
+    }
+    return configured;
 }
 
 // Normalise our internal provider labels (CLAUDE / OPENAI / GEMINI)

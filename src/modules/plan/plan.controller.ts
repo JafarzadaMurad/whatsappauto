@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { loadCatalog } from '../../lib/model-access';
 import { TRANSCRIBERS, LLMS, VOICES } from '../../lib/voice-catalog';
+import { listConfiguredProviders } from '../../lib/ai-pricing';
 
 const planSchema = z.object({
     name: z.string().min(1),
@@ -106,6 +107,13 @@ export class PlanController {
     // plan's `allowedVoice*` allow-lists.
     async voiceCatalog(_req: Request, res: Response) {
         try {
+            const allProviders = Array.from(new Set([
+                ...TRANSCRIBERS.map(t => t.provider),
+                ...LLMS.map(l => l.provider),
+                ...VOICES.map(v => v.provider),
+            ]));
+            const installed = await listConfiguredProviders(allProviders);
+
             const transcribers = TRANSCRIBERS.map(t => ({
                 key: `${t.provider}:${t.model}`,
                 provider: t.provider,
@@ -129,7 +137,11 @@ export class PlanController {
                 label: v.label,
                 costPer1MChars: v.costPer1MChars,
             }));
-            return res.json({ success: true, transcribers, llms, voices });
+            return res.json({
+                success: true,
+                transcribers, llms, voices,
+                installedProviders: Array.from(installed),
+            });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

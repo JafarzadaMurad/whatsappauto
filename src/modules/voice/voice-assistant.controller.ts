@@ -7,11 +7,13 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { logger } from '../../utils/logger';
 import {
     TRANSCRIBERS, LLMS, VOICES, VOICE_MODELS, LANGUAGES, PRESETS,
     estimateCostPerMinute,
     findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
+import { loadAllowedModels, normaliseProvider } from '../../lib/model-access';
 
 // Shared editor payload — every field is optional on PATCH, required
 // on create (create dupes editor defaults).
@@ -57,6 +59,22 @@ const editorPayload = {
     responseDelayMs: z.number().int().min(0).max(3000).optional(),
     numWordsToInterrupt: z.number().int().min(0).max(20).optional(),
 
+    // Speaking / stop plan
+    waitSecondsBeforeStart: z.number().min(0).max(4).optional(),
+    onPunctuationSeconds: z.number().min(0).max(3).optional(),
+    onNoPunctuationSeconds: z.number().min(0).max(3).optional(),
+    onNumberSeconds: z.number().min(0).max(3).optional(),
+    stopVoiceSeconds: z.number().min(0).max(0.5).optional(),
+    stopBackoffSeconds: z.number().min(0).max(10).optional(),
+
+    voicemailDetectionEnabled: z.boolean().optional(),
+    voicemailDetectionProvider: z.enum(['twilio', 'google', 'openai']).optional(),
+
+    recordingEnabled: z.boolean().optional(),
+    transcriptLoggingEnabled: z.boolean().optional(),
+    loggingEnabled: z.boolean().optional(),
+    recordingFormat: z.enum(['wav', 'mp3']).optional(),
+
     backgroundSound: z.enum(['off', 'office', 'cafe']).optional(),
     backgroundDenoise: z.boolean().optional(),
 
@@ -74,23 +92,45 @@ const patchSchema = z.object(editorPayload).partial();
 
 export class VoiceAssistantController {
     // ─── Catalog (no auth-gated on workspace — anyone can render) ───
-    async catalog(_req: Request, res: Response) {
+    async catalog(req: Request, res: Response) {
         try {
-            // Include a live cost estimate per preset so the UI can
-            // render Vapi-style "~$0.22/min · ~500ms" chips without
-            // recomputing on the client.
-            const presetsWithCost = PRESETS.map(p => ({
-                ...p,
-                estimate: estimateCostPerMinute({ transcriber: p.transcriber, llm: p.llm, tts: p.tts }),
-            }));
+            const workspaceId = getWorkspaceId(req);
+            // Plan-scoped allow-list: same rule as text agents (empty
+            // array = anything allowed). Only the LLM list is gated —
+            // transcriber and TTS providers are not on the plan
+            // pricing catalogue, they're voice-only capabilities the
+            // admin already provisions via Platform Keys, and Vapi
+            // treats them the same way.
+            const allowed = workspaceId ? await loadAllowedModels(workspaceId) : [];
+            const gateLlm = (l: { provider: string; model: string }) => {
+                if (allowed.length === 0) return true;
+                const p = normaliseProvider(l.provider === 'openai-realtime' ? 'OPENAI' : l.provider);
+                return allowed.includes(`${p}:${l.model}`);
+            };
+            const llms = LLMS.filter(gateLlm);
+
+            const presetsWithCost = PRESETS
+                .map(p => ({
+                    ...p,
+                    estimate: estimateCostPerMinute({ transcriber: p.transcriber, llm: p.llm, tts: p.tts }),
+                }))
+                // Drop presets whose LLM the plan doesn't cover — no
+                // point letting the user pick a preset that would then
+                // fail the create/update model gate.
+                .filter(p => {
+                    const [prov, model] = p.llm.split(':');
+                    return gateLlm({ provider: prov, model });
+                });
+
             return res.json({
                 success: true,
                 transcribers: TRANSCRIBERS,
-                llms: LLMS,
+                llms,
                 voices: VOICES,
                 voiceModels: VOICE_MODELS,
                 languages: LANGUAGES,
                 presets: presetsWithCost,
+                planRestricted: allowed.length > 0,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
@@ -203,6 +243,19 @@ export class VoiceAssistantController {
                     maxDurationSec: data.maxDurationSec ?? 600,
                     responseDelayMs: data.responseDelayMs ?? 400,
                     numWordsToInterrupt: data.numWordsToInterrupt ?? 2,
+                    // Speaking / stop plans — Vapi defaults
+                    waitSecondsBeforeStart: data.waitSecondsBeforeStart ?? 0.4,
+                    onPunctuationSeconds: data.onPunctuationSeconds ?? 0.1,
+                    onNoPunctuationSeconds: data.onNoPunctuationSeconds ?? 1.5,
+                    onNumberSeconds: data.onNumberSeconds ?? 0.5,
+                    stopVoiceSeconds: data.stopVoiceSeconds ?? 0.2,
+                    stopBackoffSeconds: data.stopBackoffSeconds ?? 1.0,
+                    voicemailDetectionEnabled: !!data.voicemailDetectionEnabled,
+                    voicemailDetectionProvider: data.voicemailDetectionProvider || 'twilio',
+                    recordingEnabled: data.recordingEnabled ?? true,
+                    transcriptLoggingEnabled: data.transcriptLoggingEnabled ?? true,
+                    loggingEnabled: data.loggingEnabled ?? true,
+                    recordingFormat: data.recordingFormat || 'wav',
                     backgroundSound: data.backgroundSound || 'off',
                     backgroundDenoise: !!data.backgroundDenoise,
                     linkedAgentId: data.linkedAgentId || null,
@@ -268,6 +321,88 @@ export class VoiceAssistantController {
         }
     }
 
+    // Mint an OpenAI Realtime ephemeral client secret shaped by this
+    // assistant's system prompt + voice + model, so the browser can
+    // open a WebRTC session directly to OpenAI (same pattern as the
+    // in-app copilot voice mode). Used by the "Talk" button — lets
+    // the operator dry-run an assistant WITHOUT provisioning a phone
+    // number. NOT billed against PhoneCall — the runtime is a plain
+    // browser call, not a Twilio call; a small `web_test` cause line
+    // could be added to CreditLedger in a follow-up if we start
+    // charging test sessions.
+    async testSession(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const asst = await prisma.voiceAssistant.findFirst({ where: { id, workspaceId } });
+            if (!asst) return res.status(404).json({ success: false, message: 'Assistant not found' });
+
+            // Voice + model: enforce our OpenAI-friendly defaults —
+            // Realtime only accepts specific voice ids and one of the
+            // Realtime model families. We fall back to safe values so
+            // the "Talk" button still works even if the assistant's
+            // pipeline is set to Deepgram/ElevenLabs/etc.
+            const { resolvePlatformKey } = await import('../../lib/ai-pricing');
+            const openaiKey = await resolvePlatformKey('OPENAI');
+            if (!openaiKey) return res.status(500).json({ success: false, message: 'Platform OpenAI key not configured. Set PLATFORM_OPENAI_KEY under Admin → Platform Keys.' });
+
+            const allowedVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer'];
+            const voice = (asst.ttsProvider === 'openai' && allowedVoices.includes(asst.ttsVoiceId))
+                ? asst.ttsVoiceId
+                : 'alloy';
+            const model = /realtime/i.test(asst.llmModel) ? asst.llmModel : 'gpt-realtime-2.1';
+
+            const instructions = (asst.systemPrompt || 'You are a helpful assistant.') +
+                (asst.firstMessage ? `\n\nOpen the conversation with: "${asst.firstMessage.replace(/"/g, '\\"')}"` : '');
+
+            const axios = (await import('axios')).default;
+            const r = await axios.post('https://api.openai.com/v1/realtime/client_secrets', {
+                session: { type: 'realtime', model, instructions, voice },
+            }, {
+                headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+                timeout: 15_000,
+                validateStatus: () => true,
+            });
+
+            if (r.status >= 400) {
+                logger.error({ status: r.status, body: r.data, model }, '[voice-test] OpenAI mint rejected');
+                return res.status(500).json({ success: false, message: `OpenAI ${r.status}: ${r.data?.error?.message || 'mint failed'}` });
+            }
+
+            const clientSecret = r.data?.value || r.data?.client_secret?.value;
+            if (!clientSecret) {
+                logger.error({ body: r.data }, '[voice-test] response missing client_secret');
+                return res.status(500).json({ success: false, message: 'OpenAI response missing client_secret' });
+            }
+
+            return res.json({
+                success: true,
+                clientSecret,
+                expiresAt: r.data?.expires_at || r.data?.client_secret?.expires_at,
+                model,
+                voice,
+                // Pre-computed session config so the client doesn't
+                // reproduce the logic and drift out of sync.
+                sessionUpdate: {
+                    type: 'session.update',
+                    session: {
+                        type: 'realtime',
+                        audio: {
+                            input: { transcription: { model: 'gpt-4o-mini-transcribe' } },
+                        },
+                        // Tools left empty for MVP — the assistant's
+                        // tool config plugs in later once WebRTC test
+                        // supports MCP passthrough.
+                    },
+                },
+            });
+        } catch (error: any) {
+            logger.error({ err: error.message }, '[voice-test] session failed');
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     // Recent call history for the call log page. Client-side paginates
     // for MVP; a `?limit=` param + cursor can come later once volumes
     // grow past a couple hundred rows.
@@ -275,8 +410,11 @@ export class VoiceAssistantController {
         try {
             const workspaceId = getWorkspaceId(req);
             if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            // Optional per-assistant scope so the Logs tab on the
+            // editor page can reuse this endpoint verbatim.
+            const assistantId = typeof req.query.assistantId === 'string' ? req.query.assistantId : undefined;
             const rows = await prisma.phoneCall.findMany({
-                where: { workspaceId },
+                where: { workspaceId, ...(assistantId ? { voiceAssistantId: assistantId } : {}) },
                 orderBy: { startedAt: 'desc' },
                 take: 200,
                 include: {

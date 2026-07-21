@@ -16,6 +16,9 @@ import {
     ArrowLeft, Loader2, Save, Mic, Cpu, Volume2, ChevronDown,
     Zap, Brain, DollarSign, Sparkles, Play, Radio, X, Pencil,
     Plus, Trash2, Music, Ear, Waves, Rabbit, Turtle,
+    Phone, BookOpen, Wrench, LineChart, Settings2,
+    PhoneCall as PhoneCallIcon, MicOff, Voicemail, FileText,
+    CheckCircle2,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -61,6 +64,19 @@ type Assistant = {
     maxDurationSec: number;
     responseDelayMs: number;
     numWordsToInterrupt: number;
+    // Advanced tab knobs
+    waitSecondsBeforeStart: number;
+    onPunctuationSeconds: number;
+    onNoPunctuationSeconds: number;
+    onNumberSeconds: number;
+    stopVoiceSeconds: number;
+    stopBackoffSeconds: number;
+    voicemailDetectionEnabled: boolean;
+    voicemailDetectionProvider: 'twilio' | 'google' | 'openai';
+    recordingEnabled: boolean;
+    transcriptLoggingEnabled: boolean;
+    loggingEnabled: boolean;
+    recordingFormat: 'wav' | 'mp3';
     backgroundSound: 'off' | 'office' | 'cafe';
     backgroundDenoise: boolean;
     linkedAgentId: string | null;
@@ -94,6 +110,12 @@ export default function VoiceAssistantEditorPage() {
     const [saving, setSaving] = useState(false);
     const [savedFlash, setSavedFlash] = useState(false);
     const [openDrawer, setOpenDrawer] = useState<null | 'transcriber' | 'llm' | 'tts'>(null);
+    // Vapi-style tab bar under the assistant title. The old page was
+    // essentially just the "assistant" tab; new tabs get progressively
+    // richer as we ship them.
+    const [tab, setTab] = useState<'assistant' | 'logs' | 'tools' | 'analysis' | 'advanced'>('assistant');
+    // Live-test WebRTC widget state — opened by the header's Talk btn.
+    const [talkOpen, setTalkOpen] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -207,6 +229,11 @@ export default function VoiceAssistantEditorPage() {
                     <span className="text-[11px] font-mono text-muted-foreground">{id.slice(0, 8)}...{id.slice(-4)}</span>
                 </div>
                 <div className="flex items-center gap-2">
+                    <button onClick={() => setTalkOpen(true)}
+                        title="Live test this assistant in your browser (mic required)"
+                        className="bg-emerald-500 hover:bg-emerald-500/90 text-white font-medium rounded-xl px-4 py-2 flex items-center gap-2 text-sm">
+                        <PhoneCallIcon className="w-4 h-4" /> Talk
+                    </button>
                     <button onClick={() => setAssistant({ ...assistant, isPublished: !assistant.isPublished })}
                         className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
                             assistant.isPublished
@@ -222,6 +249,30 @@ export default function VoiceAssistantEditorPage() {
                     </button>
                 </div>
             </div>
+
+            {/* Tab bar — Vapi-shaped Assistant / Logs / Tools / Analysis / Advanced */}
+            <div className="border-b border-border flex items-center gap-1 -mt-1">
+                {[
+                    { key: 'assistant', label: 'Assistant', icon: Sparkles },
+                    { key: 'logs', label: 'Logs', icon: BookOpen },
+                    { key: 'tools', label: 'Tools', icon: Wrench },
+                    { key: 'analysis', label: 'Analysis', icon: LineChart },
+                    { key: 'advanced', label: 'Advanced', icon: Settings2 },
+                ].map(t => (
+                    <button key={t.key} onClick={() => setTab(t.key as any)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                            tab === t.key
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                        }`}>
+                        <t.icon className="w-3.5 h-3.5" />
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Assistant tab — original Model Presets + Component cards + First message + System Prompt + Behaviour */}
+            {tab === 'assistant' && <>
 
             {/* Model Presets */}
             <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
@@ -408,6 +459,14 @@ export default function VoiceAssistantEditorPage() {
                 </div>
             </div>
 
+            </>}
+            {/* End of Assistant tab */}
+
+            {tab === 'logs' && <LogsTab assistantId={id} />}
+            {tab === 'tools' && <ToolsTab />}
+            {tab === 'analysis' && <AnalysisTab />}
+            {tab === 'advanced' && <AdvancedTab assistant={assistant} onPatch={(patch) => setAssistant({ ...assistant, ...patch })} />}
+
             {/* Right-side settings drawer — opened from a component card
                 edit-icon click. Contains the granular per-component
                 fields (Vapi-style). */}
@@ -420,6 +479,12 @@ export default function VoiceAssistantEditorPage() {
                     onClose={() => setOpenDrawer(null)}
                 />
             )}
+
+            {/* Live Talk widget — browser WebRTC to OpenAI Realtime
+                using this assistant's system prompt + voice + model.
+                No Twilio, no phone number needed to sanity-check a
+                prompt / voice combination. */}
+            {talkOpen && <TalkWidget assistantId={id} assistantName={assistant.name} onClose={() => setTalkOpen(false)} />}
         </div>
     );
 }
@@ -864,6 +929,434 @@ function FallbackList({
                 className="mt-2 w-full bg-secondary/40 hover:bg-secondary/60 border border-dashed border-border rounded-lg px-3 py-2 text-xs font-medium flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors">
                 <Plus className="w-3.5 h-3.5" /> Add
             </button>
+        </div>
+    );
+}
+
+// ─── Logs tab (Vapi-shaped call log for this assistant) ────────────
+
+type CallRow = {
+    id: string;
+    fromNumber: string | null;
+    toNumber: string | null;
+    direction: string;
+    status: string;
+    endedReason: string | null;
+    durationSec: number | null;
+    totalCostUsd: number;
+    creditsUsed: number;
+    startedAt: string;
+    phoneNumber?: { number: string } | null;
+};
+
+function LogsTab({ assistantId }: { assistantId: string }) {
+    const [calls, setCalls] = useState<CallRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await api.get(`/voice/calls?assistantId=${encodeURIComponent(assistantId)}`);
+                if (res.data.success) setCalls(res.data.calls);
+            } finally { setLoading(false); }
+        })();
+    }, [assistantId]);
+
+    if (loading) return <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+    return (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            {calls.length === 0 ? (
+                <div className="text-center py-16">
+                    <BookOpen className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+                    <p className="mt-3 font-semibold">No call logs available</p>
+                    <p className="text-sm text-muted-foreground mt-1">Calls answered by this assistant will appear here.</p>
+                </div>
+            ) : (
+                <table className="w-full text-sm">
+                    <thead className="bg-secondary/50 text-xs uppercase text-muted-foreground">
+                        <tr>
+                            <th className="px-4 py-3 text-left">Assistant Phone</th>
+                            <th className="px-4 py-3 text-left">Customer Phone</th>
+                            <th className="px-4 py-3 text-left">Type</th>
+                            <th className="px-4 py-3 text-left">Ended Reason</th>
+                            <th className="px-4 py-3 text-left">Start Time</th>
+                            <th className="px-4 py-3 text-right">Duration</th>
+                            <th className="px-4 py-3 text-right">Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {calls.map(c => (
+                            <tr key={c.id} className="border-t border-border/50 hover:bg-secondary/20">
+                                <td className="px-4 py-3 font-mono text-xs">{c.phoneNumber?.number || c.toNumber || '?'}</td>
+                                <td className="px-4 py-3 font-mono text-xs">{c.fromNumber || '?'}</td>
+                                <td className="px-4 py-3 text-xs">{c.direction}</td>
+                                <td className="px-4 py-3 text-xs text-muted-foreground">{c.endedReason || '—'}</td>
+                                <td className="px-4 py-3 text-xs">{new Date(c.startedAt).toLocaleString()}</td>
+                                <td className="px-4 py-3 text-right font-mono text-xs">
+                                    {c.durationSec != null ? `${Math.floor(c.durationSec / 60)}:${String(c.durationSec % 60).padStart(2, '0')}` : '—'}
+                                </td>
+                                <td className="px-4 py-3 text-right font-mono text-xs">${(c.totalCostUsd || 0).toFixed(4)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+function ToolsTab() {
+    return (
+        <div className="bg-card border border-border rounded-2xl p-16 text-center space-y-3">
+            <Wrench className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+            <p className="font-semibold">Tools coming to voice assistants</p>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Voice-side tool calling (Twilio Transfer Call, DTMF keypad, custom webhooks) is wiring next. Text-side agents already have the full MCP tool set — reuse via the &quot;Link to Agent&quot; field.
+            </p>
+        </div>
+    );
+}
+
+function AnalysisTab() {
+    return (
+        <div className="bg-card border border-border rounded-2xl p-16 text-center space-y-3">
+            <LineChart className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+            <p className="font-semibold">Analysis (structured outputs + scorecard)</p>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Extract structured fields from every call and grade against a rubric. Wiring in the next commit.
+            </p>
+        </div>
+    );
+}
+
+// ─── Advanced tab — Speaking Plan / Stop Plan / Timeouts / Voicemail / Recording ─────
+function AdvancedTab({ assistant, onPatch }: { assistant: Assistant; onPatch: (p: Partial<Assistant>) => void }) {
+    return (
+        <div className="space-y-5">
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                    <h3 className="font-semibold">Start Speaking Plan</h3>
+                    <p className="text-xs text-muted-foreground mt-1">Plan for when the assistant should start talking.</p>
+                </div>
+                <SliderRow label="Wait seconds" hint="How long the assistant waits before speaking."
+                    value={assistant.waitSecondsBeforeStart} min={0} max={4} step={0.1}
+                    onChange={v => onPatch({ waitSecondsBeforeStart: v })} />
+                <div>
+                    <div className="text-sm font-medium mb-1">Smart Endpointing</div>
+                    <p className="text-[10px] text-muted-foreground mb-2">Off · Built-in (Vapi-style) · LiveKit (accurate for English)</p>
+                    <div className="grid grid-cols-3 gap-1 bg-secondary/40 rounded-xl p-1">
+                        {(['off', 'vapi', 'livekit'] as const).map(mode => (
+                            <button key={mode}
+                                onClick={() => onPatch({ transcriberSmartEndpointing: mode })}
+                                className={`px-2 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
+                                    assistant.transcriberSmartEndpointing === mode
+                                        ? 'bg-primary/15 text-primary'
+                                        : 'text-muted-foreground hover:text-foreground'
+                                }`}>
+                                {mode === 'off' ? 'Off' : mode === 'vapi' ? 'Built-in' : 'LiveKit'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <SliderRow label="On Punctuation Seconds"
+                    hint="Minimum seconds to wait after transcription ending with punctuation."
+                    value={assistant.onPunctuationSeconds} min={0} max={3} step={0.05}
+                    onChange={v => onPatch({ onPunctuationSeconds: v })} />
+                <SliderRow label="On No Punctuation Seconds"
+                    hint="Minimum seconds to wait after transcription ending without punctuation."
+                    value={assistant.onNoPunctuationSeconds} min={0} max={3} step={0.05}
+                    onChange={v => onPatch({ onNoPunctuationSeconds: v })} />
+                <SliderRow label="On Number Seconds"
+                    hint="Minimum seconds to wait after transcription ending with a number."
+                    value={assistant.onNumberSeconds} min={0} max={3} step={0.05}
+                    onChange={v => onPatch({ onNumberSeconds: v })} />
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                    <h3 className="font-semibold">Stop Speaking Plan</h3>
+                    <p className="text-xs text-muted-foreground mt-1">Plan for when the assistant should stop talking.</p>
+                </div>
+                <SliderRow label="Number of Words"
+                    hint="How many words the customer must say before the assistant stops mid-sentence."
+                    value={assistant.numWordsToInterrupt} min={0} max={10} step={1}
+                    onChange={v => onPatch({ numWordsToInterrupt: v })} />
+                <SliderRow label="Voice Seconds"
+                    hint="Seconds the customer must speak before the assistant stops."
+                    value={assistant.stopVoiceSeconds} min={0} max={0.5} step={0.01}
+                    onChange={v => onPatch({ stopVoiceSeconds: v })} />
+                <SliderRow label="Back Off Seconds"
+                    hint="Seconds to wait before the assistant starts talking again after being interrupted."
+                    value={assistant.stopBackoffSeconds} min={0} max={10} step={0.1}
+                    onChange={v => onPatch({ stopBackoffSeconds: v })} />
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div className="flex items-start gap-3">
+                    <Voicemail className="w-5 h-5 text-muted-foreground mt-0.5" />
+                    <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                            <h3 className="font-semibold">Voicemail Detection</h3>
+                            <button onClick={() => onPatch({ voicemailDetectionEnabled: !assistant.voicemailDetectionEnabled })}
+                                className={`relative w-9 h-5 rounded-full transition-colors ${assistant.voicemailDetectionEnabled ? 'bg-primary' : 'bg-secondary'}`}>
+                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${assistant.voicemailDetectionEnabled ? 'translate-x-4' : ''}`} />
+                            </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">Detect whether a human or an answering machine picked up.</p>
+                    </div>
+                </div>
+                {assistant.voicemailDetectionEnabled && (
+                    <div>
+                        <label className="text-xs text-muted-foreground">Provider</label>
+                        <select value={assistant.voicemailDetectionProvider}
+                            onChange={e => onPatch({ voicemailDetectionProvider: e.target.value as any })}
+                            className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm">
+                            <option value="twilio" className="bg-card">Twilio AMD (fastest, no extra cost)</option>
+                            <option value="google" className="bg-card">Google (better accuracy, extra cost)</option>
+                            <option value="openai" className="bg-card">OpenAI (simple prompt-based)</option>
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                    <h3 className="font-semibold">Call Timeout Settings</h3>
+                    <p className="text-xs text-muted-foreground mt-1">Configure when the assistant should end a call based on silence or duration.</p>
+                </div>
+                <SliderRow label="Silence Timeout" hint="Auto-hang-up after this many seconds of silence."
+                    value={assistant.silenceTimeoutSec} min={5} max={3600} step={5}
+                    onChange={v => onPatch({ silenceTimeoutSec: v })} suffix="sec" />
+                <SliderRow label="Maximum Duration" hint="Hard cap on any single call, in seconds."
+                    value={assistant.maxDurationSec} min={30} max={43200} step={30}
+                    onChange={v => onPatch({ maxDurationSec: v })} suffix="sec" />
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                    <h3 className="font-semibold">Recording &amp; Artifacts</h3>
+                    <p className="text-xs text-muted-foreground mt-1">Call recording, transcript, and artifact storing.</p>
+                </div>
+                <ToggleRow2 label="Audio Recording"
+                    hint="Record the conversation. Disable to keep this assistant's portion of squad conversations private."
+                    value={assistant.recordingEnabled}
+                    onChange={v => onPatch({ recordingEnabled: v })} />
+                <ToggleRow2 label="Logging"
+                    hint="Enable or disable logging during a call."
+                    value={assistant.loggingEnabled}
+                    onChange={v => onPatch({ loggingEnabled: v })} />
+                <ToggleRow2 label="Transcript"
+                    hint="Enable or disable transcription during a call."
+                    value={assistant.transcriptLoggingEnabled}
+                    onChange={v => onPatch({ transcriptLoggingEnabled: v })} />
+                <div>
+                    <label className="text-xs text-muted-foreground">Audio Recording Format</label>
+                    <select value={assistant.recordingFormat}
+                        onChange={e => onPatch({ recordingFormat: e.target.value as any })}
+                        className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm">
+                        <option value="wav" className="bg-card">WAV (uncompressed, ~10 MB/min)</option>
+                        <option value="mp3" className="bg-card">MP3 (compressed, ~1 MB/min)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function SliderRow({ label, hint, value, min, max, step, onChange, suffix }: {
+    label: string; hint: string; value: number; min: number; max: number; step: number;
+    onChange: (v: number) => void; suffix?: string;
+}) {
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-medium">{label}</span>
+                <span className="font-mono text-xs">{value}{suffix ? ` ${suffix}` : ''}</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground mb-2">{hint}</p>
+            <input type="range" min={min} max={max} step={step} value={value}
+                onChange={e => onChange(Number(e.target.value))}
+                className="w-full accent-primary" />
+            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>{min}{suffix ? ` ${suffix}` : ''}</span>
+                <span>{max}{suffix ? ` ${suffix}` : ''}</span>
+            </div>
+        </div>
+    );
+}
+
+function ToggleRow2({ label, hint, value, onChange }: { label: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
+    return (
+        <div className="flex items-start justify-between gap-3">
+            <div className="flex-1">
+                <div className="text-sm font-medium">{label}</div>
+                <div className="text-[10px] text-muted-foreground">{hint}</div>
+            </div>
+            <button onClick={() => onChange(!value)}
+                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-primary' : 'bg-secondary'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${value ? 'translate-x-4' : ''}`} />
+            </button>
+        </div>
+    );
+}
+
+// ─── Talk widget — browser WebRTC to OpenAI Realtime ───────────────
+function TalkWidget({ assistantId, assistantName, onClose }: {
+    assistantId: string; assistantName: string; onClose: () => void;
+}) {
+    const [state, setState] = useState<'connecting' | 'live' | 'ending' | 'error'>('connecting');
+    const [error, setError] = useState<string | null>(null);
+    const [transcript, setTranscript] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
+    const startedAtRef = useRef<number>(Date.now());
+    const pcRef = useRef<RTCPeerConnection | null>(null);
+    const localRef = useRef<MediaStream | null>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const dcRef = useRef<RTCDataChannel | null>(null);
+
+    const stop = useCallback(async () => {
+        setState('ending');
+        try { dcRef.current?.close(); } catch {}
+        try { pcRef.current?.close(); } catch {}
+        try { localRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+        try { if (audioRef.current) { audioRef.current.srcObject = null; audioRef.current.remove(); } } catch {}
+        setTimeout(onClose, 200);
+    }, [onClose]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const tokenRes = await api.post(`/voice/assistants/${assistantId}/test-session`);
+                if (cancelled) return;
+                if (!tokenRes.data.success) throw new Error(tokenRes.data.message || 'mint failed');
+
+                const clientSecret = tokenRes.data.clientSecret;
+                const sessionUpdate = tokenRes.data.sessionUpdate;
+
+                const pc = new RTCPeerConnection();
+                pcRef.current = pc;
+                const audioEl = document.createElement('audio');
+                audioEl.autoplay = true;
+                document.body.appendChild(audioEl);
+                audioRef.current = audioEl;
+                pc.ontrack = ev => { audioEl.srcObject = ev.streams[0]; };
+
+                const local = await navigator.mediaDevices.getUserMedia({ audio: true });
+                localRef.current = local;
+                local.getTracks().forEach(t => pc.addTrack(t, local));
+
+                const dc = pc.createDataChannel('oai-events');
+                dcRef.current = dc;
+                dc.onmessage = evt => {
+                    try {
+                        const ev = JSON.parse(String(evt.data));
+                        if (ev.type === 'conversation.item.input_audio_transcription.completed') {
+                            const t = String(ev.transcript || '').trim();
+                            if (t) setTranscript(prev => [...prev, { role: 'user', text: t }]);
+                        } else if (ev.type === 'response.audio_transcript.done') {
+                            const t = String(ev.transcript || '').trim();
+                            if (t) setTranscript(prev => [...prev, { role: 'assistant', text: t }]);
+                        } else if (ev.type === 'error') {
+                            setError(ev.error?.message || 'OpenAI error');
+                        }
+                    } catch {}
+                };
+                dc.onopen = () => {
+                    if (sessionUpdate) { try { dc.send(JSON.stringify(sessionUpdate)); } catch {} }
+                };
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+                    method: 'POST', body: offer.sdp,
+                    headers: { Authorization: `Bearer ${clientSecret}`, 'Content-Type': 'application/sdp' },
+                });
+                if (!sdpRes.ok) {
+                    const body = await sdpRes.text().catch(() => '');
+                    throw new Error(`OpenAI SDP handshake failed (${sdpRes.status}): ${body.slice(0, 200)}`);
+                }
+                const answer = { type: 'answer' as const, sdp: await sdpRes.text() };
+                await pc.setRemoteDescription(answer);
+                if (cancelled) return;
+                setState('live');
+                startedAtRef.current = Date.now();
+
+                pc.oniceconnectionstatechange = () => {
+                    if (['closed', 'failed', 'disconnected'].includes(pc.iceConnectionState)) void stop();
+                };
+            } catch (err: any) {
+                if (cancelled) return;
+                setError(err.message || 'Failed to start test call');
+                setState('error');
+            }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [assistantId]);
+
+    const [elapsed, setElapsed] = useState(0);
+    useEffect(() => {
+        if (state !== 'live') return;
+        const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000)), 500);
+        return () => clearInterval(timer);
+    }, [state]);
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={stop}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${state === 'live' ? 'bg-emerald-500/20 text-emerald-400 animate-pulse' : 'bg-secondary text-muted-foreground'}`}>
+                            <PhoneCallIcon className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div className="font-semibold text-sm">Talk to {assistantName}</div>
+                            <div className="text-[11px] text-muted-foreground">
+                                {state === 'connecting' && 'Connecting…'}
+                                {state === 'live' && `Live · ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`}
+                                {state === 'ending' && 'Ending…'}
+                                {state === 'error' && 'Error'}
+                            </div>
+                        </div>
+                    </div>
+                    <button onClick={stop} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+
+                {state === 'connecting' && (
+                    <div className="text-center py-4">
+                        <Loader2 className="w-6 h-6 animate-spin text-primary mx-auto" />
+                        <p className="text-xs text-muted-foreground mt-2">Opening WebRTC session to OpenAI Realtime…</p>
+                    </div>
+                )}
+
+                {state === 'error' && (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-3 py-2 text-xs">{error}</div>
+                )}
+
+                {state === 'live' && (
+                    <>
+                        <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 text-center">
+                            <Mic className="w-6 h-6 text-emerald-400 mx-auto animate-pulse" />
+                            <p className="text-xs text-emerald-400 mt-1 font-medium">Listening — speak now</p>
+                        </div>
+                        <div className="bg-secondary/20 rounded-xl p-3 max-h-64 overflow-y-auto space-y-2">
+                            {transcript.length === 0 ? (
+                                <p className="text-[11px] text-muted-foreground text-center italic">Live transcript appears here as you speak…</p>
+                            ) : transcript.map((t, i) => (
+                                <div key={i} className={`text-xs ${t.role === 'assistant' ? 'text-foreground' : 'text-primary'}`}>
+                                    <span className="font-semibold">{t.role === 'assistant' ? 'Assistant' : 'You'}:</span> {t.text}
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
+
+                <button onClick={stop}
+                    className="w-full bg-red-500 hover:bg-red-500/90 text-white font-medium rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 text-sm">
+                    <MicOff className="w-4 h-4" /> End call
+                </button>
+            </div>
         </div>
     );
 }

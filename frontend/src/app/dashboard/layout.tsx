@@ -19,7 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const pathname = usePathname();
     const [collapsed, setCollapsed] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-        Networks: true, 'AI Workspace': true, CRM: true
+        Networks: true, 'AI Workspace': true, CRM: true, Voice: true
     });
     const [oversightUnread, setOversightUnread] = useState(0);
 
@@ -96,13 +96,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             children: [
                 { name: 'WhatsApp', href: '/dashboard/whatsapp', icon: MessageSquare, section: 'whatsapp' },
                 { name: 'Instagram', href: '/dashboard/instagram', icon: Camera, section: 'instagram' },
-                { name: 'Voice · Assistants', href: '/dashboard/voice/assistants', icon: Phone },
-                { name: 'Voice · Numbers', href: '/dashboard/voice/numbers', icon: Phone },
-                { name: 'Voice · Calls', href: '/dashboard/voice/calls', icon: Phone },
                 // No section key — owner-defined role permissions don't
                 // yet include this; gating would hide it on shared
                 // workspaces. Owner-only writes are enforced backend-side.
                 { name: 'Facebook Ads', href: '/dashboard/meta', icon: Megaphone },
+            ]
+        },
+        {
+            name: 'Voice',
+            icon: Phone,
+            isGroup: true,
+            children: [
+                { name: 'Assistants', href: '/dashboard/voice/assistants', icon: Bot },
+                { name: 'Phone Numbers', href: '/dashboard/voice/numbers', icon: Phone },
+                { name: 'Call History', href: '/dashboard/voice/calls', icon: MessageSquare },
             ]
         },
         {

@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { loadCatalog } from '../../lib/model-access';
+import { TRANSCRIBERS, LLMS, VOICES } from '../../lib/voice-catalog';
 
 const planSchema = z.object({
     name: z.string().min(1),
@@ -27,6 +28,10 @@ const planSchema = z.object({
     // is allowed to use across every AI surface (agents, copilot,
     // campaigns, oversight). Empty = no restriction.
     allowedModels: z.array(z.string().max(200)).max(200).default([]),
+    // Voice pipeline allow-lists — same "empty = unrestricted" sentinel.
+    allowedVoiceTranscribers: z.array(z.string().max(200)).max(200).default([]),
+    allowedVoiceLlms: z.array(z.string().max(200)).max(200).default([]),
+    allowedVoiceVoices: z.array(z.string().max(200)).max(200).default([]),
     isActive: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     trialDays: z.number().int().min(0).nullable().optional(),
@@ -90,6 +95,41 @@ export class PlanController {
                 for (const m of cat[p]) flat.push({ provider: p, model: m, key: `${p}:${m}` });
             }
             return res.json({ success: true, catalog: cat, flat });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Voice pipeline catalogue for the plan editor. Same idea as
+    // modelCatalog above but for the STT/Realtime-LLM/TTS lists that
+    // the Voice product ships. UI ticks entries here to build the
+    // plan's `allowedVoice*` allow-lists.
+    async voiceCatalog(_req: Request, res: Response) {
+        try {
+            const transcribers = TRANSCRIBERS.map(t => ({
+                key: `${t.provider}:${t.model}`,
+                provider: t.provider,
+                model: t.model,
+                label: t.label,
+                costPerMin: t.costPerMin,
+            }));
+            const llms = LLMS.map(l => ({
+                key: `${l.provider}:${l.model}`,
+                provider: l.provider,
+                model: l.model,
+                label: l.label,
+                combinesSttTts: !!l.combinesSttTts,
+                inCostPer1M: l.inCostPer1M,
+                outCostPer1M: l.outCostPer1M,
+            }));
+            const voices = VOICES.map(v => ({
+                key: `${v.provider}:${v.voiceId}`,
+                provider: v.provider,
+                voiceId: v.voiceId,
+                label: v.label,
+                costPer1MChars: v.costPer1MChars,
+            }));
+            return res.json({ success: true, transcribers, llms, voices });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

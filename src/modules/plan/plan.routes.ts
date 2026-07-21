@@ -13,6 +13,7 @@ router.get('/public', authMiddleware, controller.listPublic.bind(controller));
 // Admin-only — full CRUD + catalog for the model-picker in the editor
 router.get('/', authMiddleware, requireAdmin, controller.list.bind(controller));
 router.get('/model-catalog', authMiddleware, requireAdmin, controller.modelCatalog.bind(controller));
+router.get('/voice-catalog', authMiddleware, requireAdmin, controller.voiceCatalog.bind(controller));
 router.post('/', authMiddleware, requireAdmin, controller.create.bind(controller));
 router.put('/:id', authMiddleware, requireAdmin, controller.update.bind(controller));
 router.post('/:id/default', authMiddleware, requireAdmin, controller.setDefault.bind(controller));

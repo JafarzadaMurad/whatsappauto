@@ -233,6 +233,19 @@ model Plan {
   // seeding step.
   allowedModels          String[] @default([])
 
+  // ─── Voice pipeline restrictions ─────────────────────────────────
+  // Same idea as `allowedModels` but scoped to the Voice product.
+  // Empty array = unrestricted (every entry in the voice catalogue is
+  // fair game). Entries are stored in the catalogue's canonical shape:
+  //   Transcribers  →  "provider:model"   e.g. "deepgram:nova-3"
+  //   Voice LLMs    →  "provider:model"   e.g. "openai-realtime:gpt-realtime-2.1"
+  //   Voice voices  →  "provider:voiceId" e.g. "openai:alloy"
+  // Backend filters voice-catalog + voice-assistant editor drop-downs
+  // against these arrays before returning them to the UI.
+  allowedVoiceTranscribers String[] @default([])
+  allowedVoiceLlms         String[] @default([])
+  allowedVoiceVoices       String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

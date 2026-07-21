@@ -13,7 +13,7 @@ import {
     estimateCostPerMinute,
     findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
-import { loadAllowedModels, normaliseProvider } from '../../lib/model-access';
+import { loadAllowedModels, loadAllowedVoice, normaliseProvider } from '../../lib/model-access';
 
 // Shared editor payload — every field is optional on PATCH, required
 // on create (create dupes editor defaults).
@@ -102,35 +102,69 @@ export class VoiceAssistantController {
             // admin already provisions via Platform Keys, and Vapi
             // treats them the same way.
             const allowed = workspaceId ? await loadAllowedModels(workspaceId) : [];
-            const gateLlm = (l: { provider: string; model: string }) => {
-                if (allowed.length === 0) return true;
-                const p = normaliseProvider(l.provider === 'openai-realtime' ? 'OPENAI' : l.provider);
-                return allowed.includes(`${p}:${l.model}`);
+            const voice = workspaceId ? await loadAllowedVoice(workspaceId) : { transcribers: [], llms: [], voices: [] };
+
+            // Voice-specific list gates. Each list keeps the "empty
+            // array = unrestricted" sentinel so plans admins haven't
+            // opened yet keep showing the full catalogue.
+            const gateTranscriber = (t: { provider: string; model: string }) => {
+                if (voice.transcribers.length === 0) return true;
+                return voice.transcribers.includes(`${t.provider}:${t.model}`);
             };
+            const gateVoice = (v: { provider: string; voiceId: string }) => {
+                if (voice.voices.length === 0) return true;
+                return voice.voices.includes(`${v.provider}:${v.voiceId}`);
+            };
+            const gateLlm = (l: { provider: string; model: string }) => {
+                // Two gates stacked: legacy text-model list (uppercase
+                // provider) AND the new voice-LLM list (raw provider).
+                // Both must accept the model. Whichever is empty is
+                // treated as unrestricted for that dimension.
+                if (allowed.length > 0) {
+                    const p = normaliseProvider(l.provider === 'openai-realtime' ? 'OPENAI' : l.provider);
+                    if (!allowed.includes(`${p}:${l.model}`)) return false;
+                }
+                if (voice.llms.length > 0) {
+                    if (!voice.llms.includes(`${l.provider}:${l.model}`)) return false;
+                }
+                return true;
+            };
+
+            const transcribers = TRANSCRIBERS.filter(gateTranscriber);
             const llms = LLMS.filter(gateLlm);
+            const voices = VOICES.filter(gateVoice);
 
             const presetsWithCost = PRESETS
                 .map(p => ({
                     ...p,
                     estimate: estimateCostPerMinute({ transcriber: p.transcriber, llm: p.llm, tts: p.tts }),
                 }))
-                // Drop presets whose LLM the plan doesn't cover — no
-                // point letting the user pick a preset that would then
-                // fail the create/update model gate.
+                // Drop presets whose LLM / transcriber / voice the plan
+                // doesn't cover — no point letting the user pick a
+                // preset that would then fail the create/update gates.
                 .filter(p => {
-                    const [prov, model] = p.llm.split(':');
-                    return gateLlm({ provider: prov, model });
+                    const [tProv, tModel] = p.transcriber.split(':');
+                    const [lProv, lModel] = p.llm.split(':');
+                    const [vProv, vId] = p.tts.split(':');
+                    return gateTranscriber({ provider: tProv, model: tModel })
+                        && gateLlm({ provider: lProv, model: lModel })
+                        && gateVoice({ provider: vProv, voiceId: vId });
                 });
+
+            const planRestricted = allowed.length > 0
+                || voice.transcribers.length > 0
+                || voice.llms.length > 0
+                || voice.voices.length > 0;
 
             return res.json({
                 success: true,
-                transcribers: TRANSCRIBERS,
+                transcribers,
                 llms,
-                voices: VOICES,
+                voices,
                 voiceModels: VOICE_MODELS,
                 languages: LANGUAGES,
                 presets: presetsWithCost,
-                planRestricted: allowed.length > 0,
+                planRestricted,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });

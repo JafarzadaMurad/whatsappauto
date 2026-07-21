@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CreditCard, Loader2, Plus, Trash2, Pencil, X, Star, Coins, Cpu, CheckCircle2 } from "lucide-react";
+// Admin plans — list view.
+// Editing lives on a dedicated page per plan (`/admin/plans/[id]/edit`)
+// with a tabbed sidebar. The list page just does at-a-glance browsing +
+// quick actions (star = default, trash = delete, click card = edit).
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+    CreditCard, Loader2, Plus, Trash2, Pencil, Star, Coins,
+    Phone, Bot, Users,
+} from "lucide-react";
 import api from "@/lib/api";
 
 type Plan = {
-    id?: string;
+    id: string;
     name: string;
     description?: string;
     price: number;
@@ -23,6 +33,9 @@ type Plan = {
     copilotVoiceEnabled: boolean;
     copilotVoiceMultiplier: number;
     allowedModels: string[];
+    allowedVoiceTranscribers?: string[];
+    allowedVoiceLlms?: string[];
+    allowedVoiceVoices?: string[];
     isActive: boolean;
     isDefault?: boolean;
     trialDays?: number | null;
@@ -30,167 +43,40 @@ type Plan = {
     _count?: { users: number };
 };
 
-type CatalogEntry = { provider: string; model: string; key: string };
-
-const emptyPlan = (): Plan => ({
-    name: "", description: "", price: 0, currency: "USD", interval: "month",
-    maxAgents: 1, maxWhatsappAccounts: 1, maxInstagramAccounts: 1, maxAutomations: 1,
-    monthlyMessageLimit: 1000,
-    monthlyCredits: 10000, allowCustomApiKeys: false, overageBehavior: "hard_block",
-    copilotEnabled: false, copilotVoiceEnabled: false, copilotVoiceMultiplier: 5.0,
-    allowedModels: [],
-    isActive: true, isDefault: false, trialDays: 14, stripePriceId: ""
-});
-
-// Simple margin-aware cost preview shown under the monthlyCredits input
-// in the editor. The pricing constants are the same the backend uses:
-//   1 credit = $0.0001
-//   default AiPricing margin multiplier = 3.0
-// so raw provider cost ≈ credits / (margin * 10_000). We compare that
-// to the plan's charged price so the admin sees at a glance whether the
-// price + credit combo is profitable, break-even, or a loss.
-function CreditCostHint({
-    credits,
-    planPrice,
-    currency,
-    interval,
-}: {
-    credits: number;
-    planPrice: number;
-    currency: string;
-    interval: string;
-}) {
-    if (!credits || credits <= 0) return null;
-
-    const retail = credits * 0.0001;        // what the user "paid for" in retail value
-    const cost3x = credits * 0.0001 / 3;    // real provider cost at default 3x margin
-    const cost2x = credits * 0.0001 / 2;
-    const marginPct = planPrice > 0 ? Math.round(((planPrice - cost3x) / planPrice) * 100) : null;
-
-    const fmtUsd = (n: number) => n < 0.01 ? `<$0.01` : `$${n.toFixed(2)}`;
-    const profitable = planPrice > 0 && planPrice >= cost3x;
-
-    return (
-        <div className={`rounded-xl border p-3 text-xs space-y-2 ${
-            planPrice > 0 && !profitable
-                ? 'bg-red-500/5 border-red-500/30'
-                : 'bg-amber-500/5 border-amber-500/20'
-        }`}>
-            <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-foreground flex items-center gap-1.5">
-                    <Coins className="w-3.5 h-3.5 text-amber-400" />
-                    {credits.toLocaleString()} credits = <span className="text-amber-400">{fmtUsd(retail)}</span> retail value
-                </span>
-                {planPrice > 0 && marginPct !== null && (
-                    <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                        profitable ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
-                    }`}>
-                        {profitable ? `~${marginPct}% margin` : 'loss-making'}
-                    </span>
-                )}
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
-                <div>
-                    <div className="text-[10px] uppercase tracking-wide">Estimated provider cost / {interval}</div>
-                    <div className="font-mono text-foreground">
-                        {fmtUsd(cost3x)} <span className="text-[10px] text-muted-foreground">@ 3× margin (default)</span>
-                    </div>
-                    <div className="font-mono text-muted-foreground text-[10px]">
-                        {fmtUsd(cost2x)} @ 2× margin
-                    </div>
-                </div>
-                <div>
-                    <div className="text-[10px] uppercase tracking-wide">Plan price</div>
-                    <div className="font-mono text-foreground">
-                        {planPrice > 0 ? `${planPrice.toFixed(2)} ${currency}` : 'free'}
-                    </div>
-                    {planPrice > 0 && (
-                        <div className="text-[10px] text-muted-foreground">
-                            {profitable
-                                ? `Covers real cost + ${fmtUsd(planPrice - cost3x)} margin`
-                                : `Under real cost by ${fmtUsd(cost3x - planPrice)}`}
-                        </div>
-                    )}
-                </div>
-            </div>
-            <p className="text-[10px] text-muted-foreground pt-1 border-t border-border">
-                Assumes every credit is spent. Real burn depends on model mix — Opus 4 costs 5× a Haiku call at the same
-                token count. Tune per-model margin under <span className="text-primary">Admin → AI Pricing</span>.
-            </p>
-        </div>
-    );
-}
-
 export default function AdminPlansPage() {
+    const router = useRouter();
     const [plans, setPlans] = useState<Plan[]>([]);
-    const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
     const [loading, setLoading] = useState(true);
-    const [editing, setEditing] = useState<Plan | null>(null);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     const load = async () => {
         try {
-            const [plansRes, catRes] = await Promise.all([
-                api.get('/plans'),
-                api.get('/plans/model-catalog').catch(() => null),
-            ]);
-            if (plansRes.data.success) {
-                // Backfill allowedModels so an admin editing a pre-migration
-                // row doesn't hit `undefined.includes` in the model picker.
-                setPlans(plansRes.data.plans.map((p: any) => ({ ...p, allowedModels: p.allowedModels || [] })));
-            }
-            if (catRes?.data?.success) setCatalog(catRes.data.flat || []);
+            const res = await api.get('/plans');
+            if (res.data.success) setPlans(res.data.plans);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
     useEffect(() => { load(); }, []);
 
-    const catalogByProvider = useMemo(() => {
-        const groups: Record<string, CatalogEntry[]> = {};
-        for (const c of catalog) {
-            (groups[c.provider] = groups[c.provider] || []).push(c);
-        }
-        return groups;
-    }, [catalog]);
-
-    const save = async () => {
-        if (!editing) return;
-        setSaving(true);
-        setError(null);
-        try {
-            const payload = { ...editing };
-            delete (payload as any)._count;
-            if (editing.id) await api.put(`/plans/${editing.id}`, payload);
-            else await api.post('/plans', payload);
-            setEditing(null);
-            load();
-        } catch (err: any) {
-            setError(err.response?.data?.message || err.message);
-        } finally { setSaving(false); }
-    };
-
     const toggleDefault = async (p: Plan, e: React.MouseEvent) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (!p.id) return;
         if (!p.isDefault && p.price > 0) {
-            alert(`"${p.name}" has a price of ${p.price} ${p.currency}. Only free plans (price 0) can be set as default — the default plan is given to new sign-ups automatically.`);
+            alert(`"${p.name}" has a price of ${p.price} ${p.currency}. Only free plans (price 0) can be set as default.`);
             return;
         }
         try {
-            if (p.isDefault) {
-                await api.delete(`/plans/${p.id}/default`);
-            } else {
-                await api.post(`/plans/${p.id}/default`, {});
-            }
+            if (p.isDefault) await api.delete(`/plans/${p.id}/default`);
+            else await api.post(`/plans/${p.id}/default`, {});
             load();
         } catch (err: any) {
             alert(err.response?.data?.message || err.message);
         }
     };
 
-    const remove = async (p: Plan) => {
-        if (!p.id || !confirm(`Delete plan "${p.name}"?`)) return;
+    const remove = async (p: Plan, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm(`Delete plan "${p.name}"?`)) return;
         try {
             await api.delete(`/plans/${p.id}`);
             load();
@@ -198,16 +84,6 @@ export default function AdminPlansPage() {
             alert(err.response?.data?.message || err.message);
         }
     };
-
-    const num = (label: string, key: keyof Plan, hint?: string) => (
-        <div>
-            <label className="text-xs font-medium text-muted-foreground">{label}</label>
-            <input type="number" value={editing![key] as number}
-                onChange={e => setEditing({ ...editing!, [key]: Number(e.target.value) })}
-                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-            {hint && <p className="text-[10px] text-muted-foreground mt-0.5">{hint}</p>}
-        </div>
-    );
 
     if (loading) return (
         <div className="flex justify-center items-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
@@ -221,9 +97,9 @@ export default function AdminPlansPage() {
                         <div className="p-2 bg-primary/10 text-primary rounded-xl"><CreditCard className="w-6 h-6" /></div>
                         Subscription Plans
                     </h1>
-                    <p className="text-sm text-muted-foreground mt-1">Create and manage the plans users can subscribe to.</p>
+                    <p className="text-sm text-muted-foreground mt-1">Create and manage the plans users can subscribe to. Click a plan to open the editor.</p>
                 </div>
-                <button onClick={() => { setEditing(emptyPlan()); setError(null); }}
+                <button onClick={() => router.push('/dashboard/admin/plans/new')}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-4 py-2.5 flex items-center gap-2 transition-all">
                     <Plus className="w-5 h-5" /> New Plan
                 </button>
@@ -236,7 +112,8 @@ export default function AdminPlansPage() {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {plans.map(p => (
-                        <div key={p.id} className={`bg-card border rounded-2xl p-5 space-y-3 ${p.isDefault ? 'border-amber-400/60' : 'border-border'}`}>
+                        <Link key={p.id} href={`/dashboard/admin/plans/${p.id}/edit`}
+                            className={`bg-card border rounded-2xl p-5 space-y-3 hover:border-primary/50 transition-colors block ${p.isDefault ? 'border-amber-400/60' : 'border-border'}`}>
                             <div className="flex items-start justify-between">
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -266,248 +143,39 @@ export default function AdminPlansPage() {
                             </div>
                             {p.description && <p className="text-xs text-muted-foreground">{p.description}</p>}
                             <ul className="text-xs text-muted-foreground space-y-1">
-                                <li>Agents: {p.maxAgents < 0 ? '∞' : p.maxAgents}</li>
-                                <li>WhatsApp accounts: {p.maxWhatsappAccounts < 0 ? '∞' : p.maxWhatsappAccounts}</li>
-                                <li>Instagram accounts: {p.maxInstagramAccounts < 0 ? '∞' : p.maxInstagramAccounts}</li>
-                                <li>Automations: {p.maxAutomations < 0 ? '∞' : p.maxAutomations}</li>
-                                <li>Messages/month: {p.monthlyMessageLimit < 0 ? '∞' : p.monthlyMessageLimit}</li>
+                                <li className="flex items-center gap-1.5">
+                                    <Bot className="w-3 h-3" />
+                                    Agents: {p.maxAgents < 0 ? '∞' : p.maxAgents} · Automations: {p.maxAutomations < 0 ? '∞' : p.maxAutomations}
+                                </li>
+                                <li>WhatsApp: {p.maxWhatsappAccounts < 0 ? '∞' : p.maxWhatsappAccounts} · Instagram: {p.maxInstagramAccounts < 0 ? '∞' : p.maxInstagramAccounts}</li>
                                 <li className="flex items-center gap-1.5 font-semibold text-foreground">
                                     <Coins className="w-3.5 h-3.5 text-amber-400" />
                                     {(p.monthlyCredits || 0).toLocaleString()} credits / month
                                     {p.allowCustomApiKeys && <span className="text-emerald-400 font-normal text-xs"> · own-key OK</span>}
                                 </li>
                                 {p.copilotEnabled && <li className="text-blue-400 font-semibold">In-app copilot{p.copilotVoiceEnabled && <span> · voice ({p.copilotVoiceMultiplier}×)</span>}</li>}
+                                {((p.allowedVoiceTranscribers?.length || 0) + (p.allowedVoiceLlms?.length || 0) + (p.allowedVoiceVoices?.length || 0)) > 0 && (
+                                    <li className="flex items-center gap-1.5 text-purple-400">
+                                        <Phone className="w-3 h-3" /> Voice pipeline restricted
+                                    </li>
+                                )}
                             </ul>
                             <div className="flex items-center justify-between pt-2 border-t border-border">
-                                <span className="text-xs text-muted-foreground">{p._count?.users || 0} subscriber(s)</span>
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Users className="w-3 h-3" /> {p._count?.users || 0} subscriber(s)
+                                </span>
                                 <div className="flex gap-1">
-                                    <button onClick={() => { setEditing(p); setError(null); }}
-                                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors">
+                                    <span className="p-1.5 rounded-lg text-muted-foreground group-hover:text-primary">
                                         <Pencil className="w-4 h-4" />
-                                    </button>
-                                    <button onClick={() => remove(p)}
+                                    </span>
+                                    <button onClick={(e) => remove(p, e)}
                                         className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
                                         <Trash2 className="w-4 h-4" />
                                     </button>
                                 </div>
                             </div>
-                        </div>
+                        </Link>
                     ))}
-                </div>
-            )}
-
-            {/* Editor modal */}
-            {editing && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setEditing(null)}>
-                    <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between p-4 border-b border-border">
-                            <h3 className="font-semibold">{editing.id ? 'Edit Plan' : 'New Plan'}</h3>
-                            <button onClick={() => setEditing(null)} className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
-                        <div className="p-4 space-y-3">
-                            {error && <div className="text-xs text-red-400">{error}</div>}
-                            <div>
-                                <label className="text-xs font-medium text-muted-foreground">Name</label>
-                                <input type="text" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
-                                    placeholder="Pro" className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                            </div>
-                            <div>
-                                <label className="text-xs font-medium text-muted-foreground">Description</label>
-                                <textarea value={editing.description || ''} onChange={e => setEditing({ ...editing, description: e.target.value })} rows={2}
-                                    className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none" />
-                            </div>
-                            <div className="grid grid-cols-3 gap-3">
-                                {num('Price', 'price')}
-                                <div>
-                                    <label className="text-xs font-medium text-muted-foreground">Currency</label>
-                                    <input type="text" value={editing.currency} onChange={e => setEditing({ ...editing, currency: e.target.value })}
-                                        className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                                </div>
-                                <div>
-                                    <label className="text-xs font-medium text-muted-foreground">Interval</label>
-                                    <select value={editing.interval} onChange={e => setEditing({ ...editing, interval: e.target.value as any })}
-                                        className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
-                                        <option value="month" className="bg-card">month</option>
-                                        <option value="year" className="bg-card">year</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <p className="text-xs text-muted-foreground pt-1">Limits — use <code className="bg-secondary px-1 rounded">-1</code> for unlimited.</p>
-                            <div className="grid grid-cols-2 gap-3">
-                                {num('Max agents', 'maxAgents')}
-                                {num('Max automations', 'maxAutomations')}
-                                {num('Max WhatsApp accounts', 'maxWhatsappAccounts')}
-                                {num('Max Instagram accounts', 'maxInstagramAccounts')}
-                            </div>
-                            {num('Monthly message limit', 'monthlyMessageLimit')}
-                            <div className="pt-3 mt-3 border-t border-border space-y-3">
-                                <p className="text-xs font-semibold text-primary">Credits</p>
-                                {num('Monthly credits', 'monthlyCredits', 'Monthly credit budget. Every AI call is drawn from this pool.')}
-                                <CreditCostHint credits={editing.monthlyCredits} planPrice={editing.price} currency={editing.currency} interval={editing.interval} />
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={editing.allowCustomApiKeys}
-                                        onChange={e => setEditing({ ...editing, allowCustomApiKeys: e.target.checked })}
-                                        className="w-4 h-4 accent-primary rounded" />
-                                    <span className="text-sm">Allow bring-your-own API keys</span>
-                                    <span className="text-[10px] text-muted-foreground">— Pro+ only</span>
-                                </label>
-                                <div>
-                                    <label className="text-xs font-medium text-muted-foreground">When credits run out</label>
-                                    <select value={editing.overageBehavior}
-                                        onChange={e => setEditing({ ...editing, overageBehavior: e.target.value as any })}
-                                        className="mt-1 w-full bg-card border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
-                                        <option value="hard_block" className="bg-card">Hard block (return 402)</option>
-                                        <option value="top_up" className="bg-card">Allow past zero (admin tops up manually)</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="pt-3 mt-3 border-t border-border space-y-3">
-                                <p className="text-xs font-semibold text-blue-400">In-app copilot</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={editing.copilotEnabled}
-                                        onChange={e => setEditing({ ...editing, copilotEnabled: e.target.checked, copilotVoiceEnabled: e.target.checked ? editing.copilotVoiceEnabled : false })}
-                                        className="w-4 h-4 accent-primary rounded" />
-                                    <span className="text-sm">Enable chat copilot (text)</span>
-                                </label>
-                                <label className={`flex items-center gap-2 ${editing.copilotEnabled ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}>
-                                    <input type="checkbox" checked={editing.copilotVoiceEnabled} disabled={!editing.copilotEnabled}
-                                        onChange={e => setEditing({ ...editing, copilotVoiceEnabled: e.target.checked })}
-                                        className="w-4 h-4 accent-primary rounded" />
-                                    <span className="text-sm">Enable voice mode (Realtime API — expensive)</span>
-                                </label>
-                                {editing.copilotVoiceEnabled && (
-                                    <div>
-                                        <label className="text-xs font-medium text-muted-foreground">Voice credit multiplier</label>
-                                        <input type="number" step="0.1" min={1}
-                                            value={editing.copilotVoiceMultiplier}
-                                            onChange={e => setEditing({ ...editing, copilotVoiceMultiplier: Number(e.target.value) })}
-                                            className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono" />
-                                        <p className="text-[10px] text-muted-foreground mt-0.5">Multiplied on top of the Realtime model rate — 5× default protects margin.</p>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* AI models allow-list — the whole point of this
-                                editor: tick which models from the AI Models
-                                Catalogue this plan can use. Empty = pass-through
-                                (every model in the catalogue). Everywhere users
-                                pick a model (agent editor, copilot picker) the
-                                list is filtered to what's ticked here. */}
-                            <div className="pt-3 mt-3 border-t border-border space-y-3">
-                                <div className="flex items-center justify-between flex-wrap gap-2">
-                                    <div>
-                                        <p className="text-xs font-semibold text-primary flex items-center gap-2">
-                                            <Cpu className="w-3.5 h-3.5" /> Allowed AI models
-                                        </p>
-                                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                                            Empty = allow everything in the AI Models Catalogue. Otherwise, only ticked models can be picked on this plan.
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <button type="button"
-                                            onClick={() => setEditing({ ...editing, allowedModels: catalog.map(c => c.key) })}
-                                            className="text-[10px] px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground">
-                                            Select all
-                                        </button>
-                                        <button type="button"
-                                            onClick={() => setEditing({ ...editing, allowedModels: [] })}
-                                            className="text-[10px] px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground">
-                                            Clear (allow all)
-                                        </button>
-                                    </div>
-                                </div>
-                                {catalog.length === 0 ? (
-                                    <div className="text-[11px] text-amber-400">
-                                        AI Models Catalogue is empty. Add models under Admin → AI Models first.
-                                    </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {Object.entries(catalogByProvider).map(([provider, entries]) => (
-                                            <div key={provider}>
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{provider}</span>
-                                                    <span className="text-[10px] text-muted-foreground">
-                                                        {entries.filter(e => editing.allowedModels.includes(e.key)).length}/{entries.length}
-                                                    </span>
-                                                </div>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                    {entries.map(e => {
-                                                        const on = editing.allowedModels.includes(e.key);
-                                                        return (
-                                                            <button key={e.key} type="button"
-                                                                onClick={() => setEditing({
-                                                                    ...editing,
-                                                                    allowedModels: on
-                                                                        ? editing.allowedModels.filter(k => k !== e.key)
-                                                                        : [...editing.allowedModels, e.key],
-                                                                })}
-                                                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-mono border transition-colors ${
-                                                                    on
-                                                                        ? 'border-primary bg-primary/10 text-primary'
-                                                                        : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
-                                                                }`}>
-                                                                {on && <CheckCircle2 className="w-3 h-3" />}
-                                                                {e.model}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                {editing.allowedModels.length === 0 && (
-                                    <div className="text-[11px] text-muted-foreground italic">
-                                        No models ticked — this plan currently allows every model in the catalogue.
-                                    </div>
-                                )}
-                            </div>
-                            {editing.price === 0 && (
-                                <div>
-                                    <label className="text-xs font-medium text-muted-foreground">Trial / free period (days, blank = no expiry)</label>
-                                    <input type="number" min={0}
-                                        value={editing.trialDays ?? ''}
-                                        onChange={e => setEditing({ ...editing, trialDays: e.target.value === '' ? null : Number(e.target.value) })}
-                                        className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                                </div>
-                            )}
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={!!editing.isDefault}
-                                    disabled={editing.price > 0}
-                                    onChange={e => {
-                                        if (e.target.checked && editing.price > 0) {
-                                            alert(`Default plan must have price 0. This plan costs ${editing.price} ${editing.currency}.`);
-                                            return;
-                                        }
-                                        setEditing({ ...editing, isDefault: e.target.checked });
-                                    }}
-                                    className="w-4 h-4 accent-primary rounded disabled:opacity-50" />
-                                <span className={`text-sm ${editing.price > 0 ? 'text-muted-foreground' : ''}`}>
-                                    Default plan (auto-assigned to new sign-ups)
-                                    {editing.price > 0 && <span className="text-xs"> — only free plans</span>}
-                                </span>
-                            </label>
-                            <div>
-                                <label className="text-xs font-medium text-muted-foreground">Stripe Price ID (optional)</label>
-                                <input type="text" value={editing.stripePriceId || ''} onChange={e => setEditing({ ...editing, stripePriceId: e.target.value })}
-                                    placeholder="price_..." className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                            </div>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={editing.isActive} onChange={e => setEditing({ ...editing, isActive: e.target.checked })}
-                                    className="w-4 h-4 accent-primary rounded" />
-                                <span className="text-sm">Active (visible to users)</span>
-                            </label>
-                        </div>
-                        <div className="p-4 border-t border-border flex justify-end gap-2">
-                            <button onClick={() => setEditing(null)} className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-secondary/50">Cancel</button>
-                            <button onClick={save} disabled={saving || !editing.name.trim()}
-                                className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-5 py-2 flex items-center gap-2 text-sm transition-all disabled:opacity-60">
-                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Plan'}
-                            </button>
-                        </div>
-                    </div>
                 </div>
             )}
         </div>

@@ -52,6 +52,50 @@ export async function loadAllowedModels(workspaceId: string): Promise<string[]> 
 }
 
 /**
+ * Load the workspace's plan-scoped voice-pipeline allow-lists. Each of
+ * the three arrays follows the same "empty = unrestricted" sentinel as
+ * `loadAllowedModels`.
+ */
+export async function loadAllowedVoice(workspaceId: string): Promise<{
+    transcribers: string[]; llms: string[]; voices: string[];
+}> {
+    const empty = { transcribers: [] as string[], llms: [] as string[], voices: [] as string[] };
+    if (!workspaceId) return empty;
+    const ws = await prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: {
+            plan: {
+                select: {
+                    allowedVoiceTranscribers: true,
+                    allowedVoiceLlms: true,
+                    allowedVoiceVoices: true,
+                },
+            },
+            owner: {
+                select: {
+                    plan: {
+                        select: {
+                            allowedVoiceTranscribers: true,
+                            allowedVoiceLlms: true,
+                            allowedVoiceVoices: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+    // Prefer workspace plan; fall back to owner user's plan when the
+    // workspace hasn't been assigned yet (matches loadAllowedModels).
+    const source = ws?.plan || ws?.owner?.plan || null;
+    if (!source) return empty;
+    return {
+        transcribers: source.allowedVoiceTranscribers || [],
+        llms: source.allowedVoiceLlms || [],
+        voices: source.allowedVoiceVoices || [],
+    };
+}
+
+/**
  * Read the AI Models Catalogue from SystemConfig. Same shape the
  * `/api/admin/ai-models` endpoint exposes: { OPENAI: [], CLAUDE: [],
  * GEMINI: [], GLM: [] }. Kept here (small duplication) so the copilot

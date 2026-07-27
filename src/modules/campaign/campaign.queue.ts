@@ -42,17 +42,27 @@ export const startCampaignWorker = () => {
         if (campaign.status !== 'RUNNING') return;
 
         const agent = campaign.agent;
-        // Agent or instance may have been deleted after the campaign was
-        // created (we use SetNull on delete so the campaign itself
-        // survives). Fail the recipient gracefully.
-        if (!agent || !campaign.instanceId) {
+        const isTemplate = (campaign as any).mode === 'fixed_template';
+        // Instance is always required. Agent is required only when the
+        // campaign will actually call an LLM (ai_compose mode). Fixed
+        // templates run agent-less — no LLM key, no per-message cost.
+        if (!campaign.instanceId) {
             await prisma.campaignRecipient.update({
                 where: { id: recipientId },
-                data: { status: 'FAILED', error: !agent ? 'Agent deleted' : 'Instance deleted' }
+                data: { status: 'FAILED', error: 'Instance deleted' }
             });
             return;
         }
-        if (!(agent as any).isActive || !agent.provider) return;
+        if (!isTemplate) {
+            if (!agent) {
+                await prisma.campaignRecipient.update({
+                    where: { id: recipientId },
+                    data: { status: 'FAILED', error: 'Agent deleted' }
+                });
+                return;
+            }
+            if (!(agent as any).isActive || !agent.provider) return;
+        }
 
         const sock = sessions.get(campaign.instanceId);
         if (!sock) {
@@ -72,7 +82,10 @@ export const startCampaignWorker = () => {
         try {
             let text: string;
             let result: any = null;
-            const providerInfo = agent.provider;
+            // Only defined on the AI branch — the template branch skips
+            // it entirely because there's no LLM call and no billable
+            // provider to record against.
+            let providerInfo: any = null;
 
             if ((campaign as any).mode === 'fixed_template' && (campaign as any).messageTemplate) {
                 // Fixed-template path — no LLM call. Interpolate simple
@@ -88,6 +101,8 @@ export const startCampaignWorker = () => {
                     .replaceAll('{{name}}', client?.name || 'there');
             } else {
                 // AI-composed path — legacy behaviour.
+                if (!agent) throw new Error('Agent required for ai_compose');
+                providerInfo = agent.provider;
                 let aiModel: any;
                 if (providerInfo.provider === 'OPENAI') {
                     aiModel = createOpenAI({ apiKey: providerInfo.apiKey } as any).chat(agent.model);
@@ -147,7 +162,7 @@ export const startCampaignWorker = () => {
 
             // Save conversation log (only for AI-composed sends —
             // fixed-template sends don't burn tokens, no log entry needed).
-            if (result) {
+            if (result && agent) {
                 await prisma.aiConversationLog.create({
                     data: {
                         agentId: agent.id,

@@ -6,7 +6,10 @@ import { getWorkspaceId } from '../../lib/workspace-context';
 
 const createCampaignSchema = z.object({
     name: z.string().min(1),
-    agentId: z.string().uuid(),
+    // Optional. Required only when mode='ai_compose' — a fixed-template
+    // campaign doesn't call any LLM, so there's no reason to force the
+    // user to pick an agent. Validated below.
+    agentId: z.string().uuid().nullable().optional(),
     instanceId: z.string().uuid(),
     phoneNumbers: z.array(z.string().min(1)).min(1),
 
@@ -81,12 +84,20 @@ export class CampaignController {
             const workspaceId = getWorkspaceId(req);
             const data = createCampaignSchema.parse(req.body);
 
-            // Verify agent and instance belong to workspace
+            // AI-compose mode needs an agent; fixed_template doesn't
+            // (no LLM call). Validate here rather than in the Zod
+            // schema so we can give the user a plain-language reason.
+            if (data.mode === 'ai_compose' && !data.agentId) {
+                return res.status(400).json({ success: false, message: 'AI-composed campaigns need an agent. Pick one or switch to a fixed template.' });
+            }
+            // Verify agent (optional) and instance belong to workspace.
             const [agent, instance] = await Promise.all([
-                prisma.agent.findFirst({ where: { id: data.agentId, workspaceId } }),
+                data.agentId
+                    ? prisma.agent.findFirst({ where: { id: data.agentId, workspaceId } })
+                    : Promise.resolve(null),
                 prisma.instance.findFirst({ where: { id: data.instanceId, workspaceId } })
             ]);
-            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+            if (data.agentId && !agent) return res.status(404).json({ success: false, message: 'Agent not found' });
             if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
 
             // Validate pacing (min ≤ max) — a misconfig here would make
@@ -131,7 +142,7 @@ export class CampaignController {
                 data: {
                     userId,
                     workspaceId,
-                    agentId: data.agentId,
+                    agentId: data.agentId || null,
                     instanceId: data.instanceId,
                     name: data.name,
                     status: startAsRunning ? 'RUNNING' : 'PENDING',

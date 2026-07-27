@@ -184,7 +184,9 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
 
     const disabled = submitting
         || !name.trim()
-        || !agentId
+        // Agent required only for AI-composed mode — fixed templates
+        // don't call any LLM so the agent picker becomes optional.
+        || (mode === 'ai_compose' && !agentId)
         || !instanceId
         || phoneList.length === 0
         || (mode === 'fixed_template' && !messageTemplate.trim())
@@ -196,12 +198,13 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
         try {
             const payload: any = {
                 name: name.trim(),
-                agentId, instanceId,
+                instanceId,
                 phoneNumbers: phoneList,
                 mode,
                 minDelaySec, maxDelaySec,
                 skipExisting,
             };
+            if (agentId) payload.agentId = agentId;
             if (mode === 'fixed_template') payload.messageTemplate = messageTemplate.trim();
             if (mediaUrl.trim()) {
                 payload.mediaUrl = mediaUrl.trim();
@@ -251,7 +254,13 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
                                 className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
                         </Field>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <Field label={<span className="flex items-center gap-1.5"><Bot className="w-3 h-3" /> AI Agent</span>}>
+                            <Field label={<span className="flex items-center gap-1.5">
+                                <Bot className="w-3 h-3" /> AI Agent
+                                <span className="text-[10px] text-muted-foreground font-normal">
+                                    {mode === 'ai_compose' ? '(required)' : '(optional)'}
+                                </span>
+                            </span>}
+                                hint={mode === 'fixed_template' ? 'Not needed for fixed templates — attach one only if you want replies to be handled by an agent.' : undefined}>
                                 {agents.length === 0 ? (
                                     <div className="bg-amber-500/5 border border-amber-500/25 rounded-lg px-3 py-2 text-xs text-amber-400 flex items-center justify-between gap-2">
                                         <span>No agents yet</span>
@@ -260,7 +269,7 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
                                 ) : (
                                     <select value={agentId} onChange={e => setAgentId(e.target.value)}
                                         className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm">
-                                        <option value="" disabled className="bg-card">Select agent</option>
+                                        <option value="" className="bg-card">{mode === 'fixed_template' ? '— none' : 'Select agent'}</option>
                                         {agents.map(a => <option key={a.id} value={a.id} className="bg-card">{a.name}</option>)}
                                     </select>
                                 )}

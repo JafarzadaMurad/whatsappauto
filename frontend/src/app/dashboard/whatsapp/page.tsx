@@ -81,20 +81,29 @@ export default function WhatsAppPage() {
         };
     }, [instances.map(i => i.id).join(',')]);
 
-    // Poll the REST /qr endpoint until either a QR arrives or the
-    // instance flips to CONNECTED. Belt-and-braces alongside the
-    // socket listener — the socket race (listener attached AFTER
-    // Baileys already emitted the first QR) is what causes the
-    // "yaratdım, QR gəlmir" bug users hit on a fresh instance.
+    // Poll the REST /qr endpoint until the instance flips to
+    // CONNECTED (or a 5-minute wall-clock). Belt-and-braces alongside
+    // the socket listener — the socket race (listener attached AFTER
+    // Baileys already emitted the first QR OR the CONNECTED event)
+    // is what causes both the "QR gəlmir" and "modal bağlanmır,
+    // status connecting qalır" bugs on a fresh instance. When we see
+    // CONNECTED we close the modal ourselves and patch the list row
+    // so the UI doesn't wait for a page refresh.
     const pollForQr = async (instanceId: string) => {
         const startedAt = Date.now();
-        while (Date.now() - startedAt < 60_000) {
+        while (Date.now() - startedAt < 5 * 60_000) {
             try {
                 const r = await api.get(`/instances/${instanceId}/qr`);
-                if (r.data?.status === 'CONNECTED') return;
-                if (r.data?.qr) {
-                    setActiveQr(prev => prev?.id === instanceId ? prev : { id: instanceId, qrUrl: r.data.qr });
+                if (r.data?.status === 'CONNECTED') {
+                    setActiveQr(prev => prev?.id === instanceId ? null : prev);
+                    setInstances(prev => prev.map(i => i.id === instanceId ? { ...i, status: 'CONNECTED' } : i));
                     return;
+                }
+                if (r.data?.qr) {
+                    // Keep polling — the user still has to scan and
+                    // we want to close the modal ourselves once the
+                    // pairing completes, socket message or not.
+                    setActiveQr(prev => (prev?.id === instanceId && prev.qrUrl === r.data.qr) ? prev : { id: instanceId, qrUrl: r.data.qr });
                 }
             } catch { /* keep polling */ }
             await new Promise(r => setTimeout(r, 1500));

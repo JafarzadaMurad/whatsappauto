@@ -1222,9 +1222,11 @@ model Campaign {
 
   // Send-pacing controls. The queue picks a uniform-random delay in
   // [minDelaySec, maxDelaySec] between each message so the burst
-  // looks less bot-like on the receiving end.
-  minDelaySec Int @default(10)
-  maxDelaySec Int @default(15)
+  // looks less bot-like on the receiving end. Defaults + server-side
+  // floor (30s / 60s) protect the Baileys account from Meta's spam
+  // heuristics that kick in on tight bursts of outbound-only chats.
+  minDelaySec Int @default(45)
+  maxDelaySec Int @default(90)
 
   // Scheduling. `scheduledFor` in the future = campaign stays PENDING
   // until that moment (worker respects it via bullmq's `delay`).

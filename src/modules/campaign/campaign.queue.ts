@@ -133,6 +133,17 @@ export const startCampaignWorker = () => {
 
             if (!text) throw new Error('Empty message body');
 
+            // "Typing…" presence for a realistic 2-5 s window before the
+            // send. Meta's spam heuristics on personal-line Baileys
+            // accounts weight bursts of instant outbound-only sends
+            // very heavily; the typing indicator alone doesn't stop a
+            // ban but it changes the fingerprint enough to matter.
+            try {
+                await sock.sendPresenceUpdate('composing', recipient.remoteJid);
+                await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 3000)));
+                await sock.sendPresenceUpdate('paused', recipient.remoteJid);
+            } catch { /* presence is best-effort */ }
+
             // Send WhatsApp message — media-first when configured, then
             // caption via the same send (Baileys accepts { image, caption }).
             const mediaUrl = (campaign as any).mediaUrl as string | null;

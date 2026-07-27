@@ -168,8 +168,11 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
     const [mediaUrl, setMediaUrl] = useState("");
     const [mediaType, setMediaType] = useState<'' | 'image' | 'video' | 'document' | 'audio'>('');
 
-    const [minDelaySec, setMinDelaySec] = useState(10);
-    const [maxDelaySec, setMaxDelaySec] = useState(15);
+    // Delay is enforced server-side (30-60 s floor) so users can't
+    // accidentally torch their WhatsApp number. Kept as constants
+    // here purely for the estimated-total-time preview.
+    const minDelaySec = 45;
+    const maxDelaySec = 90;
     const [skipExisting, setSkipExisting] = useState(false);
     const [scheduleLater, setScheduleLater] = useState(false);
     const [scheduledFor, setScheduledFor] = useState("");
@@ -362,23 +365,20 @@ function NewCampaignModal({ agents, instances, onClose, onLaunched }: {
 
                     {/* ─── Delivery ─── */}
                     <Section icon={Timer} title="Delivery">
-                        <div className="grid grid-cols-2 gap-3">
-                            <Field label="Min delay (s)" hint="Between messages">
-                                <input type="number" min={1} max={3600} value={minDelaySec}
-                                    onChange={e => setMinDelaySec(Math.max(1, Number(e.target.value)))}
-                                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
-                            </Field>
-                            <Field label="Max delay (s)">
-                                <input type="number" min={minDelaySec} max={3600} value={maxDelaySec}
-                                    onChange={e => setMaxDelaySec(Math.max(minDelaySec, Number(e.target.value)))}
-                                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
-                            </Field>
-                        </div>
-                        {phoneList.length > 1 && (
-                            <div className="bg-secondary/30 border border-border rounded-lg p-2.5 text-[11px] text-muted-foreground flex items-center gap-1.5">
-                                <Info className="w-3 h-3" /> Estimated total send time: <span className="font-mono text-foreground">~{totalHuman}</span>
+                        <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-lg p-3 text-xs space-y-1.5">
+                            <div className="font-medium text-emerald-400/90 flex items-center gap-1.5">
+                                <Timer className="w-3.5 h-3.5" /> Safety-first pacing
                             </div>
-                        )}
+                            <p className="text-muted-foreground leading-relaxed">
+                                Messages go out <span className="font-mono text-foreground">{minDelaySec}–{maxDelaySec}s</span> apart with a realistic "typing…" pause before each send.
+                                Enforced server-side (min 30 s / max 60 s floor) so your WhatsApp number doesn't get flagged by Meta's spam checks for cold outreach.
+                            </p>
+                            {phoneList.length > 1 && (
+                                <div className="pt-1 border-t border-emerald-500/15 flex items-center gap-1.5 text-muted-foreground">
+                                    <Info className="w-3 h-3" /> Estimated total send time: <span className="font-mono text-foreground">~{totalHuman}</span>
+                                </div>
+                            )}
+                        </div>
                         <label className="flex items-start gap-2 p-2.5 rounded-lg border border-border cursor-pointer hover:bg-secondary/40">
                             <input type="checkbox" checked={scheduleLater}
                                 onChange={e => setScheduleLater(e.target.checked)}

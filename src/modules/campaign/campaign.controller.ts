@@ -19,8 +19,12 @@ const createCampaignSchema = z.object({
     messageTemplate: z.string().max(4096).optional(),
     mediaUrl: z.string().url().max(2048).optional(),
     mediaType: z.enum(['image', 'video', 'document', 'audio']).optional(),
-    minDelaySec: z.number().int().min(1).max(3600).default(10),
-    maxDelaySec: z.number().int().min(1).max(3600).default(15),
+    // Delay is clamped to safe floors below regardless of what the
+    // caller sends — Meta bans numbers that burst faster than ~30s
+    // per outbound message on cold contacts. Accept anything shape-wise
+    // so old clients don't 400, then floor it before storing.
+    minDelaySec: z.number().int().min(1).max(3600).default(45),
+    maxDelaySec: z.number().int().min(1).max(3600).default(90),
     scheduledFor: z.string().datetime().nullable().optional(),
     skipExisting: z.boolean().default(false),
 });
@@ -100,10 +104,17 @@ export class CampaignController {
             if (data.agentId && !agent) return res.status(404).json({ success: false, message: 'Agent not found' });
             if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
 
-            // Validate pacing (min ≤ max) — a misconfig here would make
-            // every message fire in the same 1 ms window on the worker.
-            const minMs = Math.max(1000, data.minDelaySec * 1000);
-            const maxMs = Math.max(minMs, data.maxDelaySec * 1000);
+            // Safety floor. Meta's spam heuristics ban personal-line
+            // Baileys accounts when outbound bursts fire faster than
+            // ~30s per message on cold contacts. Clamp both ends so
+            // a misconfigured caller can't spike the risk. The UI
+            // hides these knobs entirely now.
+            const SAFE_MIN_SEC = 30;
+            const SAFE_MAX_SEC = 60;
+            const clampedMinSec = Math.max(SAFE_MIN_SEC, data.minDelaySec);
+            const clampedMaxSec = Math.max(SAFE_MAX_SEC, data.maxDelaySec, clampedMinSec);
+            const minMs = clampedMinSec * 1000;
+            const maxMs = clampedMaxSec * 1000;
 
             // Fixed-template mode without a template is nonsensical.
             if (data.mode === 'fixed_template' && !data.messageTemplate?.trim()) {
@@ -150,8 +161,10 @@ export class CampaignController {
                     messageTemplate: data.messageTemplate || null,
                     mediaUrl: data.mediaUrl || null,
                     mediaType: data.mediaType || null,
-                    minDelaySec: data.minDelaySec,
-                    maxDelaySec: data.maxDelaySec,
+                    // Store the clamped values so resume + admin views
+                    // match what the worker actually enforces.
+                    minDelaySec: clampedMinSec,
+                    maxDelaySec: clampedMaxSec,
                     scheduledFor,
                     skipExisting: data.skipExisting,
                 },
@@ -219,8 +232,13 @@ export class CampaignController {
             const pending = await prisma.campaignRecipient.findMany({
                 where: { campaignId: id, status: 'PENDING' }
             });
-            const minMs = Math.max(1000, ((campaign as any).minDelaySec ?? 10) * 1000);
-            const maxMs = Math.max(minMs, ((campaign as any).maxDelaySec ?? 15) * 1000);
+            // Same safety floor as create — protects re-queued
+            // recipients even if the stored value was somehow set below
+            // the safe window (old rows from before the clamp existed).
+            const rawMin = ((campaign as any).minDelaySec ?? 45);
+            const rawMax = ((campaign as any).maxDelaySec ?? 90);
+            const minMs = Math.max(30_000, rawMin * 1000);
+            const maxMs = Math.max(60_000, rawMax * 1000, minMs);
 
             for (let i = 0; i < pending.length; i++) {
                 const delay = i * (minMs + Math.floor(Math.random() * (maxMs - minMs + 1)));

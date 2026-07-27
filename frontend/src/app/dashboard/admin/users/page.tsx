@@ -315,7 +315,7 @@ function CreateUserModal({ plans, onClose, onCreated }: {
                             <span className="text-xs font-medium text-muted-foreground">Workspace name (optional)</span>
                             <input type="text" value={form.workspaceName}
                                 onChange={e => setForm({ ...form, workspaceName: e.target.value })}
-                                placeholder="Defaults to \"<name>'s Workspace\""
+                                placeholder="Defaults to <name>'s Workspace"
                                 className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm" />
                         </label>
                     )}

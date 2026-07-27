@@ -119,7 +119,10 @@ function LoginInner() {
                     <div className="mt-8 text-center">
                         <p className="text-sm text-muted-foreground">
                             Don't have an account?{" "}
-                            <button onClick={() => router.push('/register')} className="text-primary hover:underline font-medium">
+                            <button onClick={() => {
+                                const next = params.get('next');
+                                router.push(next ? `/register?next=${encodeURIComponent(next)}` : '/register');
+                            }} className="text-primary hover:underline font-medium">
                                 Create one
                             </button>
                         </p>

@@ -81,6 +81,26 @@ export default function WhatsAppPage() {
         };
     }, [instances.map(i => i.id).join(',')]);
 
+    // Poll the REST /qr endpoint until either a QR arrives or the
+    // instance flips to CONNECTED. Belt-and-braces alongside the
+    // socket listener — the socket race (listener attached AFTER
+    // Baileys already emitted the first QR) is what causes the
+    // "yaratdım, QR gəlmir" bug users hit on a fresh instance.
+    const pollForQr = async (instanceId: string) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 60_000) {
+            try {
+                const r = await api.get(`/instances/${instanceId}/qr`);
+                if (r.data?.status === 'CONNECTED') return;
+                if (r.data?.qr) {
+                    setActiveQr(prev => prev?.id === instanceId ? prev : { id: instanceId, qrUrl: r.data.qr });
+                    return;
+                }
+            } catch { /* keep polling */ }
+            await new Promise(r => setTimeout(r, 1500));
+        }
+    };
+
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newInstanceName) return;
@@ -106,6 +126,9 @@ export default function WhatsAppPage() {
                 }
                 setInstances(prev => [inst, ...prev]);
                 setNewInstanceName("");
+                // Kick the REST poll immediately — don't wait for
+                // React to re-render and attach the socket listener.
+                pollForQr(inst.id);
             }
         } catch (err) { console.error(err); }
         finally { setCreating(false); }
@@ -152,7 +175,10 @@ export default function WhatsAppPage() {
             // Persist the choice on the instance, then start the link flow.
             await api.put(`/instances/${id}`, { syncHistory: wantsHistory });
             await api.post(`/instances/${id}/restart`);
-            // QR will arrive via socket
+            // Belt-and-braces: REST poll for the QR alongside the
+            // socket listener. Socket alone drops the very first QR
+            // on races we can't fully close from the client.
+            pollForQr(id);
         } catch (err) { console.error(err); }
     };
 

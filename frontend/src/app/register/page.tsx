@@ -1,25 +1,30 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
 import api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import GoogleSignIn from "@/components/GoogleSignIn";
 
-export default function RegisterPage() {
+function RegisterInner() {
     const router = useRouter();
+    const params = useSearchParams();
     const setAuth = useAuthStore((state) => state.login);
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [form, setForm] = useState({ name: "", email: "", password: "" });
 
-    // Skip the register form for users who already have a session.
+    // Skip the register form for users who already have a session —
+    // honour ?next= so accept-invite links deep-return correctly.
     useEffect(() => {
-        if (isAuthenticated) router.replace('/dashboard');
-    }, [isAuthenticated, router]);
+        if (isAuthenticated) {
+            const next = params.get('next');
+            router.replace(next && next.startsWith('/') ? next : '/dashboard');
+        }
+    }, [isAuthenticated, params, router]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -30,7 +35,8 @@ export default function RegisterPage() {
             const res = await api.post('/auth/register', form);
             if (res.data.success) {
                 setAuth(res.data.user, res.data.token);
-                router.push('/dashboard');
+                const next = params.get('next');
+                router.push(next && next.startsWith('/') ? next : '/dashboard');
             }
         } catch (err: any) {
             setError(err.response?.data?.message || err.message || "Failed to register");
@@ -123,7 +129,10 @@ export default function RegisterPage() {
                     <div className="mt-8 text-center">
                         <p className="text-sm text-muted-foreground">
                             Already have an account?{" "}
-                            <button onClick={() => router.push('/login')} className="text-primary hover:underline font-medium">
+                            <button onClick={() => {
+                                const next = params.get('next');
+                                router.push(next ? `/login?next=${encodeURIComponent(next)}` : '/login');
+                            }} className="text-primary hover:underline font-medium">
                                 Log in
                             </button>
                         </p>
@@ -131,5 +140,13 @@ export default function RegisterPage() {
                 </div>
             </motion.div>
         </div>
+    );
+}
+
+export default function RegisterPage() {
+    return (
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}>
+            <RegisterInner />
+        </Suspense>
     );
 }

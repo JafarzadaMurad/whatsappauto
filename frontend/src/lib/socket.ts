@@ -26,9 +26,21 @@ export function createSocket(opts?: { workspaceId?: string | null }): Socket {
             }
         } catch { /* corrupt storage — fall through unauthenticated */ }
         if (!workspaceId) {
+            // Zustand persists the workspace store under
+            // `alchatbot-workspace-storage` — see workspaceStore.ts. We
+            // pull `activeWorkspaceId` out of that blob so the handshake
+            // joins the correct room. Old plain `workspaceId` key kept
+            // as a last-ditch fallback for pre-Zustand builds.
             try {
-                workspaceId = window.localStorage.getItem('workspaceId');
+                const raw = window.localStorage.getItem('alchatbot-workspace-storage');
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    workspaceId = parsed?.state?.activeWorkspaceId || null;
+                }
             } catch { /* ignore */ }
+            if (!workspaceId) {
+                try { workspaceId = window.localStorage.getItem('workspaceId'); } catch { /* ignore */ }
+            }
         }
     }
     return io(base, {

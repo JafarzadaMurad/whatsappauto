@@ -11,10 +11,25 @@ const aiModelsController = new AiModelsController();
 router.use(authMiddleware, requireAdmin);
 
 router.get('/users', controller.listUsers.bind(controller));
+router.post('/users', controller.createUser.bind(controller));
 router.get('/users/:id', controller.getUser.bind(controller));
 router.put('/users/:id', controller.updateUser.bind(controller));
 router.post('/users/:id/verify-email', controller.verifyEmail.bind(controller));
 router.delete('/users/:id', controller.deleteUser.bind(controller));
+
+// Per-user workspace helpers
+router.post('/users/:id/workspaces', controller.createWorkspaceForUser.bind(controller));
+
+// Cross-user workspace management (list + drill + mutate)
+router.get('/workspaces', controller.listWorkspaces.bind(controller));
+router.get('/workspaces/:id', controller.getWorkspace.bind(controller));
+router.put('/workspaces/:id', controller.updateWorkspace.bind(controller));
+router.delete('/workspaces/:id', controller.deleteWorkspace.bind(controller));
+router.put('/workspaces/:id/transfer', controller.transferWorkspace.bind(controller));
+router.post('/workspaces/:id/members', controller.addWorkspaceMember.bind(controller));
+router.put('/workspaces/:id/members/:memberId', controller.updateWorkspaceMember.bind(controller));
+router.delete('/workspaces/:id/members/:memberId', controller.removeWorkspaceMember.bind(controller));
+
 router.get('/config', controller.getConfig.bind(controller));
 router.put('/config', controller.setConfig.bind(controller));
 

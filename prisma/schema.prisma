@@ -1206,6 +1206,35 @@ model Campaign {
   name       String
   status     String   @default("PENDING") // PENDING, RUNNING, PAUSED, COMPLETED, FAILED
 
+  // ─── Message composition ──────────────────────────────────────────
+  // "ai_compose" — agent generates the opening message on the fly.
+  //   messageTemplate is ignored.
+  // "fixed_template" — send messageTemplate verbatim, with {{phone}}
+  //   and {{name}} interpolation from the recipient row / Client.
+  mode            String  @default("ai_compose")
+  messageTemplate String? @db.Text
+
+  // Optional media attached to the first message. `mediaType` is one
+  // of image | video | document | audio. Only URL-addressable media
+  // is supported (no direct uploads yet).
+  mediaUrl   String?
+  mediaType  String?
+
+  // Send-pacing controls. The queue picks a uniform-random delay in
+  // [minDelaySec, maxDelaySec] between each message so the burst
+  // looks less bot-like on the receiving end.
+  minDelaySec Int @default(10)
+  maxDelaySec Int @default(15)
+
+  // Scheduling. `scheduledFor` in the future = campaign stays PENDING
+  // until that moment (worker respects it via bullmq's `delay`).
+  scheduledFor DateTime?
+
+  // When true, we skip any recipient number that already has a
+  // conversation with the campaign's Instance — so re-runs don't
+  // spam existing customers.
+  skipExisting Boolean @default(false)
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

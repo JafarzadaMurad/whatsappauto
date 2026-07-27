@@ -8,7 +8,18 @@ const createCampaignSchema = z.object({
     name: z.string().min(1),
     agentId: z.string().uuid(),
     instanceId: z.string().uuid(),
-    phoneNumbers: z.array(z.string().min(1)).min(1)
+    phoneNumbers: z.array(z.string().min(1)).min(1),
+
+    // Optional advanced controls — all default to the previous
+    // behaviour so existing callers keep working unchanged.
+    mode: z.enum(['ai_compose', 'fixed_template']).default('ai_compose'),
+    messageTemplate: z.string().max(4096).optional(),
+    mediaUrl: z.string().url().max(2048).optional(),
+    mediaType: z.enum(['image', 'video', 'document', 'audio']).optional(),
+    minDelaySec: z.number().int().min(1).max(3600).default(10),
+    maxDelaySec: z.number().int().min(1).max(3600).default(15),
+    scheduledFor: z.string().datetime().nullable().optional(),
+    skipExisting: z.boolean().default(false),
 });
 
 export class CampaignController {
@@ -78,6 +89,43 @@ export class CampaignController {
             if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
             if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
 
+            // Validate pacing (min ≤ max) — a misconfig here would make
+            // every message fire in the same 1 ms window on the worker.
+            const minMs = Math.max(1000, data.minDelaySec * 1000);
+            const maxMs = Math.max(minMs, data.maxDelaySec * 1000);
+
+            // Fixed-template mode without a template is nonsensical.
+            if (data.mode === 'fixed_template' && !data.messageTemplate?.trim()) {
+                return res.status(400).json({ success: false, message: 'Fixed-template mode requires a message template.' });
+            }
+            // Media type is required when a media URL is supplied.
+            if (data.mediaUrl && !data.mediaType) {
+                return res.status(400).json({ success: false, message: 'mediaType is required when mediaUrl is set.' });
+            }
+
+            // Optionally skip numbers that already have a conversation
+            // with this instance — avoids re-messaging existing customers.
+            let filteredPhones = data.phoneNumbers.map(p => p.trim()).filter(Boolean);
+            if (data.skipExisting) {
+                const jids = filteredPhones.map(p => p.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
+                const existing = await prisma.message.findMany({
+                    where: { instanceId: data.instanceId, remoteJid: { in: jids } },
+                    select: { remoteJid: true },
+                    distinct: ['remoteJid'],
+                });
+                const existingSet = new Set(existing.map(e => e.remoteJid));
+                filteredPhones = filteredPhones.filter(p => !existingSet.has(p.replace(/[^0-9]/g, '') + '@s.whatsapp.net'));
+            }
+            if (filteredPhones.length === 0) {
+                return res.status(400).json({ success: false, message: 'No recipients left after filtering.' });
+            }
+
+            const scheduledFor = data.scheduledFor ? new Date(data.scheduledFor) : null;
+            const scheduledOffsetMs = scheduledFor && scheduledFor.getTime() > Date.now()
+                ? scheduledFor.getTime() - Date.now()
+                : 0;
+            const startAsRunning = scheduledOffsetMs === 0;
+
             // Create campaign
             const campaign = await prisma.campaign.create({
                 data: {
@@ -86,27 +134,37 @@ export class CampaignController {
                     agentId: data.agentId,
                     instanceId: data.instanceId,
                     name: data.name,
-                    status: 'RUNNING'
-                }
+                    status: startAsRunning ? 'RUNNING' : 'PENDING',
+                    mode: data.mode,
+                    messageTemplate: data.messageTemplate || null,
+                    mediaUrl: data.mediaUrl || null,
+                    mediaType: data.mediaType || null,
+                    minDelaySec: data.minDelaySec,
+                    maxDelaySec: data.maxDelaySec,
+                    scheduledFor,
+                    skipExisting: data.skipExisting,
+                },
             });
 
             // Create recipients
-            const recipients = data.phoneNumbers.map(phone => ({
+            const recipients = filteredPhones.map(phone => ({
                 campaignId: campaign.id,
-                phone: phone.trim(),
-                remoteJid: phone.trim().replace(/[^0-9]/g, '') + '@s.whatsapp.net',
+                phone,
+                remoteJid: phone.replace(/[^0-9]/g, '') + '@s.whatsapp.net',
                 status: 'PENDING'
             }));
 
             await prisma.campaignRecipient.createMany({ data: recipients });
 
-            // Enqueue with staggered delays (10-15s apart)
+            // Enqueue with staggered delays. Add the schedule offset to
+            // the first job so scheduled campaigns don't fire until then.
             const created = await prisma.campaignRecipient.findMany({
                 where: { campaignId: campaign.id }
             });
 
             for (let i = 0; i < created.length; i++) {
-                const delay = i * (10000 + Math.floor(Math.random() * 5000));
+                const perMsg = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+                const delay = scheduledOffsetMs + (i * perMsg);
                 await campaignQueue.add('send-outbound', {
                     recipientId: created[i].id,
                     campaignId: campaign.id,
@@ -145,13 +203,16 @@ export class CampaignController {
 
             await prisma.campaign.update({ where: { id }, data: { status: 'RUNNING' } });
 
-            // Re-enqueue pending recipients
+            // Re-enqueue pending recipients with the campaign's
+            // configured delay window (defaults to 10-15 s if unset).
             const pending = await prisma.campaignRecipient.findMany({
                 where: { campaignId: id, status: 'PENDING' }
             });
+            const minMs = Math.max(1000, ((campaign as any).minDelaySec ?? 10) * 1000);
+            const maxMs = Math.max(minMs, ((campaign as any).maxDelaySec ?? 15) * 1000);
 
             for (let i = 0; i < pending.length; i++) {
-                const delay = i * (10000 + Math.floor(Math.random() * 5000));
+                const delay = i * (minMs + Math.floor(Math.random() * (maxMs - minMs + 1)));
                 await campaignQueue.add('send-outbound', {
                     recipientId: pending[i].id,
                     campaignId: id,

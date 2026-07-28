@@ -21,6 +21,9 @@ import { config } from '../../config';
 function wsBase(): string {
     // Same host as FRONTEND_URL but wss:// scheme. Twilio media streams
     // MUST be secure WebSocket in production — Twilio rejects ws://.
+    // Path is /api/voice/stream (not /voice/stream) so Caddy's usual
+    // `/api/* → backend` rule routes the upgrade to us instead of
+    // dropping it on the Next.js frontend.
     const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/^https?:\/\//, '');
     return `wss://${base.replace(/\/$/, '')}`;
 }
@@ -97,7 +100,7 @@ export class VoiceWebhookController {
             // be escaped as `&amp;` or Twilio's TwiML parser bombs
             // with error 12100 "Document parse failure" and speaks
             // "an application error has occurred". Been there.
-            const rawStreamUrl = `${wsBase()}/voice/stream?assistantId=${numberRow.voiceAssistant.id}&callSid=${encodeURIComponent(callSid)}`;
+            const rawStreamUrl = `${wsBase()}/api/voice/stream?assistantId=${numberRow.voiceAssistant.id}&callSid=${encodeURIComponent(callSid)}`;
             const streamUrl = rawStreamUrl.replaceAll('&', '&amp;');
 
             // <Connect><Stream> pipes bi-directional linear16 μ-law audio

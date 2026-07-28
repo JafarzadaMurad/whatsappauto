@@ -18,6 +18,16 @@ import { startReminderScheduler } from './modules/agent/reminder.scheduler';
 import { seedAiPricing } from './lib/ai-pricing.seed';
 import { attachVoiceBridge } from './modules/voice/voice-bridge';
 
+// Global safety nets — Baileys / socket handlers occasionally throw
+// asynchronously and would otherwise take the whole PM2 process down,
+// giving the frontend intermittent 502s. Log + keep running instead.
+process.on('unhandledRejection', (reason: any) => {
+    logger.error({ err: reason?.message || reason, stack: reason?.stack }, '[fatal] unhandled promise rejection — process survives');
+});
+process.on('uncaughtException', (err: any) => {
+    logger.error({ err: err?.message || err, stack: err?.stack }, '[fatal] uncaught exception — process survives');
+});
+
 const server = http.createServer(app);
 
 // Voice bridge — Twilio Media Streams ⇄ OpenAI Realtime WebSocket
@@ -36,6 +46,13 @@ export const io = new Server(server, {
         origin: config.FRONTEND_URL,
         credentials: true,
     },
+    // CRITICAL: socket.io's engine.io defaults to destroying every
+    // WebSocket upgrade whose path isn't its own after ~1 s — that
+    // races the voice bridge attached above at /voice/stream and
+    // triggers Twilio error 31901 "Stream - WebSocket - Connection
+    // Timeout" on outbound test calls. Turning it off lets other
+    // upgrade handlers (like ours) own their paths.
+    destroyUpgrade: false,
 });
 
 // ─── Socket.IO auth + workspace rooms ───────────────────────────────

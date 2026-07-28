@@ -96,14 +96,28 @@ export function attachVoiceBridge(httpServer: HttpServer) {
 
     httpServer.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url || '', `http://${req.headers.host}`);
-        if (url.pathname !== '/voice/stream') return; // let socket.io / others handle it
+        // Accept both /voice/stream and /api/voice/stream. Caddy is
+        // usually configured to proxy /api/* → backend and everything
+        // else → Next.js frontend, so the /api-prefixed path is the
+        // safe one for Twilio. Both work locally.
+        if (url.pathname !== '/voice/stream' && url.pathname !== '/api/voice/stream') return;
+        logger.info({
+            pathname: url.pathname,
+            assistantId: url.searchParams.get('assistantId'),
+            callSid: url.searchParams.get('callSid'),
+            remote: (socket as any).remoteAddress,
+            userAgent: req.headers['user-agent'],
+        }, '[voice-bridge] upgrade received — accepting');
         wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     });
 
-    wss.on('connection', (twilioWs, req) => handleConnection(twilioWs, req).catch(err => {
-        logger.error({ err: err.message, stack: err.stack }, '[voice-bridge] connection handler crashed');
-        try { twilioWs.close(); } catch { /* ignore */ }
-    }));
+    wss.on('connection', (twilioWs, req) => {
+        logger.info({ url: req.url }, '[voice-bridge] WSS connection open');
+        handleConnection(twilioWs, req).catch(err => {
+            logger.error({ err: err.message, stack: err.stack }, '[voice-bridge] connection handler crashed');
+            try { twilioWs.close(); } catch { /* ignore */ }
+        });
+    });
 
     logger.info('[voice-bridge] WebSocket server attached on /voice/stream');
 }

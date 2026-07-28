@@ -117,24 +117,69 @@ export default function VoiceAssistantEditorPage() {
     // Live-test WebRTC widget state — opened by the header's Talk btn.
     const [talkOpen, setTalkOpen] = useState(false);
 
+    // Set once by the load flow when it detects the saved
+    // provider/model isn't in the filtered catalog anymore — e.g. the
+    // plan admin removed access, or a provider's platform key was
+    // cleared. Shown as a banner above the pipeline.
+    const [migratedNotice, setMigratedNotice] = useState<string[]>([]);
+
     const load = useCallback(async () => {
         try {
             const [aRes, cRes] = await Promise.all([
                 api.get(`/voice/assistants/${id}`),
                 api.get('/voice/catalog'),
             ]);
-            if (aRes.data.success) {
-                setAssistant(aRes.data.assistant);
-                setEstimate(aRes.data.estimate);
-            }
-            if (cRes.data.success) setCatalog({
+            const cat = cRes.data.success ? {
                 transcribers: cRes.data.transcribers,
                 llms: cRes.data.llms,
                 voices: cRes.data.voices,
                 voiceModels: cRes.data.voiceModels || [],
                 languages: cRes.data.languages || [],
                 presets: cRes.data.presets,
-            });
+            } : null;
+
+            if (aRes.data.success && cat) {
+                // Auto-migrate the saved pipeline off any provider/model
+                // that vanished from the catalog (plan restriction change
+                // or a platform key got cleared). Without this, the
+                // Transcriber / Model / Voice drawer's Model dropdown
+                // sits empty and users can't tell why.
+                const saved = aRes.data.assistant as Assistant;
+                const notices: string[] = [];
+                const patched: Assistant = { ...saved };
+
+                const hasTranscriber = cat.transcribers.some((t: any) =>
+                    t.provider === saved.transcriberProvider && t.model === saved.transcriberModel);
+                if (!hasTranscriber && cat.transcribers[0]) {
+                    notices.push(`transcriber ${saved.transcriberProvider}/${saved.transcriberModel} → ${cat.transcribers[0].provider}/${cat.transcribers[0].model}`);
+                    patched.transcriberProvider = cat.transcribers[0].provider;
+                    patched.transcriberModel = cat.transcribers[0].model;
+                }
+
+                const hasLlm = cat.llms.some((l: any) =>
+                    l.provider === saved.llmProvider && l.model === saved.llmModel);
+                if (!hasLlm && cat.llms[0]) {
+                    notices.push(`model ${saved.llmProvider}/${saved.llmModel} → ${cat.llms[0].provider}/${cat.llms[0].model}`);
+                    patched.llmProvider = cat.llms[0].provider;
+                    patched.llmModel = cat.llms[0].model;
+                }
+
+                const hasVoice = cat.voices.some((v: any) =>
+                    v.provider === saved.ttsProvider && v.voiceId === saved.ttsVoiceId);
+                if (!hasVoice && cat.voices[0]) {
+                    notices.push(`voice ${saved.ttsProvider}/${saved.ttsVoiceId} → ${cat.voices[0].provider}/${cat.voices[0].voiceId}`);
+                    patched.ttsProvider = cat.voices[0].provider;
+                    patched.ttsVoiceId = cat.voices[0].voiceId;
+                }
+
+                setAssistant(patched);
+                setEstimate(aRes.data.estimate);
+                setMigratedNotice(notices);
+            } else if (aRes.data.success) {
+                setAssistant(aRes.data.assistant);
+                setEstimate(aRes.data.estimate);
+            }
+            if (cat) setCatalog(cat);
         } finally { setLoading(false); }
     }, [id]);
 
@@ -273,6 +318,25 @@ export default function VoiceAssistantEditorPage() {
 
             {/* Assistant tab — original Model Presets + Component cards + First message + System Prompt + Behaviour */}
             {tab === 'assistant' && <>
+
+            {migratedNotice.length > 0 && (
+                <div className="bg-amber-500/5 border border-amber-500/25 rounded-2xl px-4 py-3 flex items-start gap-3">
+                    <div className="p-1 bg-amber-500/15 text-amber-400 rounded-md mt-0.5 flex-shrink-0">!</div>
+                    <div className="flex-1 min-w-0 text-xs">
+                        <div className="font-medium text-amber-400/90">Pipeline auto-updated</div>
+                        <p className="text-muted-foreground mt-0.5">
+                            Some previously-selected voice components are no longer available (plan removed access, or platform key was cleared). We snapped them to the first allowed option — <span className="font-mono">Save</span> to persist:
+                        </p>
+                        <ul className="text-muted-foreground/90 mt-1 space-y-0.5">
+                            {migratedNotice.map((n, i) => (<li key={i} className="font-mono">· {n}</li>))}
+                        </ul>
+                    </div>
+                    <button onClick={() => setMigratedNotice([])}
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary/50 flex-shrink-0">
+                        ×
+                    </button>
+                </div>
+            )}
 
             {/* Model Presets */}
             <div className="bg-card border border-border rounded-2xl p-5 space-y-4">

@@ -33,19 +33,35 @@ export class VoiceWebhookController {
             const to = String(req.body?.To || '');
             const from = String(req.body?.From || '');
             const callSid = String(req.body?.CallSid || '');
+            const direction = String(req.body?.Direction || ''); // inbound | outbound-api | outbound-dial
 
-            const numberRow = await prisma.phoneNumber.findFirst({
+            // For an inbound call `To` is one of our provisioned numbers.
+            // For an outbound test call `From` is our number; `To` is the
+            // remote party. Look under both so the same webhook serves
+            // both directions without a URL fork.
+            let numberRow = await prisma.phoneNumber.findFirst({
                 where: { number: to, isActive: true },
                 include: {
                     voiceAssistant: true,
                     workspace: { select: { id: true } },
                 },
             });
+            let isOutbound = false;
+            if (!numberRow) {
+                numberRow = await prisma.phoneNumber.findFirst({
+                    where: { number: from, isActive: true },
+                    include: {
+                        voiceAssistant: true,
+                        workspace: { select: { id: true } },
+                    },
+                });
+                if (numberRow) isOutbound = true;
+            }
 
             // No assistant → play a short "not available" message and
             // hang up so Twilio doesn't leave the caller hanging.
             if (!numberRow || !numberRow.voiceAssistant) {
-                logger.warn({ to, from, callSid }, '[voice] inbound call to unassigned number');
+                logger.warn({ to, from, callSid, direction }, '[voice] call to unassigned number');
                 res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">This number is not currently assigned to an assistant.</Say>
@@ -54,20 +70,22 @@ export class VoiceWebhookController {
                 return;
             }
 
-            // Log the call as it starts. `startedAt` = now; duration +
-            // costs get filled on the /status hook.
-            await prisma.phoneCall.create({
-                data: {
-                    workspaceId: numberRow.workspace.id,
-                    voiceAssistantId: numberRow.voiceAssistant.id,
-                    phoneNumberId: numberRow.id,
-                    direction: 'inbound',
-                    fromNumber: from,
-                    toNumber: to,
-                    status: 'ringing',
-                    startedAt: new Date(),
-                },
-            }).catch(err => logger.error({ err: err.message, callSid }, '[voice] create call row failed'));
+            // On the outbound path we already created a PhoneCall row
+            // at dial time (see voice-assistant.testCall) — don't dupe.
+            if (!isOutbound) {
+                await prisma.phoneCall.create({
+                    data: {
+                        workspaceId: numberRow.workspace.id,
+                        voiceAssistantId: numberRow.voiceAssistant.id,
+                        phoneNumberId: numberRow.id,
+                        direction: 'inbound',
+                        fromNumber: from,
+                        toNumber: to,
+                        status: 'ringing',
+                        startedAt: new Date(),
+                    },
+                }).catch(err => logger.error({ err: err.message, callSid }, '[voice] create call row failed'));
+            }
 
             // Store the assistantId in the stream URL as a custom
             // parameter (Twilio forwards it to us on WS connect). Prefer

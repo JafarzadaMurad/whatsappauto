@@ -163,10 +163,18 @@ export default function CallHistoryPage() {
                                         </td>
                                         <td className="px-4 py-3 text-xs">{c.voiceAssistant?.name || '—'}</td>
                                         <td className="px-4 py-3">
-                                            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${statusColor(c.status)}`}>
-                                                <StatusIcon className="w-3 h-3" />
-                                                {c.status}
-                                            </span>
+                                            <div className="inline-flex items-center gap-1.5">
+                                                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${statusColor(c.status)}`}>
+                                                    <StatusIcon className="w-3 h-3" />
+                                                    {c.status}
+                                                </span>
+                                                {c.errorLog && (
+                                                    <span title="This call recorded bridge errors — open for diagnostics"
+                                                        className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-400">
+                                                        <AlertTriangle className="w-3 h-3" />
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-4 py-3 text-right font-mono text-xs">{fmtDuration(c.durationSec)}</td>
                                         <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">${(c.totalCostUsd || 0).toFixed(3)}</td>

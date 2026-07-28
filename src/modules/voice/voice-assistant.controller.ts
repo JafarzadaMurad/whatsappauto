@@ -537,6 +537,7 @@ export class VoiceAssistantController {
                         toNumber,
                         status: 'ringing',
                         startedAt: new Date(),
+                        twilioCallSid: call.sid,
                     },
                 }).catch(() => {});
 

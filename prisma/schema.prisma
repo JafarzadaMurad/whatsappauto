@@ -1901,6 +1901,13 @@ model PhoneCall {
   // without SSH-ing to the box.
   errorLog      String? @db.Text
 
+  // Twilio call SID (CA...) — set on both inbound webhook and
+  // outbound testCall paths. The bridge uses it to find its own
+  // PhoneCall row reliably; without it the fuzzy startedAt window
+  // match missed outbound rows created many seconds before the
+  // bridge WSS handshake completes.
+  twilioCallSid String? @unique
+
   startedAt DateTime @default(now())
   endedAt   DateTime?
 

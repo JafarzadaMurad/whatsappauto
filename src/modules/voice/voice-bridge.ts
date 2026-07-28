@@ -200,23 +200,33 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
             : 0;
 
         try {
-            // Locate the row created by the /webhook handler. We match
-            // by workspace + startedAt window because Twilio didn't
-            // send us the exact PhoneCall id.
-            const row = await prisma.phoneCall.findFirst({
+            // Prefer the reliable CallSid match — outbound rows are
+            // created seconds-to-minutes before the bridge starts, so
+            // the old "startedAt within 5s" window missed them and no
+            // diagnostics were persisted. Fall back to the fuzzy match
+            // for rows that predate the twilioCallSid column.
+            const row = (callSid && await prisma.phoneCall.findFirst({
+                where: { twilioCallSid: callSid },
+            })) || await prisma.phoneCall.findFirst({
                 where: {
                     workspaceId: asst.workspaceId,
                     voiceAssistantId: asst.id,
-                    startedAt: { gte: new Date(startedAt - 5000) },
+                    startedAt: { gte: new Date(startedAt - 5 * 60_000) },
                 },
                 orderBy: { startedAt: 'desc' },
             });
             if (row) {
                 const totalCost = (row.telephonyCostUsd || 0) + llmCostUsd;
-                // Credits: retail = totalCost × 10 000 (1 credit = $0.0001).
-                // Voice multiplier lives on the plan; skipping the join
-                // here since ledger integration comes in the next commit.
                 const credits = Math.ceil(totalCost * 10_000);
+                // If we never sent a single audio delta AND we saw at
+                // least one diagnostic entry, this was a broken bridge
+                // (usually OpenAI rejecting our session config). Mark
+                // it 'failed' so the operator can spot it in the list
+                // without opening every row.
+                const sawOutput = outputAudioBytes > 0;
+                const nextStatus = (!sawOutput && diag.length > 0)
+                    ? 'failed'
+                    : (row.status === 'ringing' || row.status === 'in-progress' ? 'completed' : row.status);
                 await prisma.phoneCall.update({
                     where: { id: row.id },
                     data: {
@@ -226,12 +236,18 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                         durationSec: durationSec || row.durationSec,
                         endedAt: new Date(),
                         endedReason,
-                        status: row.status === 'ringing' || row.status === 'in-progress' ? 'completed' : row.status,
+                        status: nextStatus,
                         transcript: transcript.length ? (transcript as any) : undefined,
                         errorLog: diag.length ? diag.join('\n') : undefined,
                     },
                 });
                 dbCallId = row.id;
+            } else {
+                // No row match at all — log the diagnostics so `pm2 logs`
+                // still has a trace even though DB persistence failed.
+                if (diag.length > 0) {
+                    logger.warn({ assistantId, callSid, diag }, '[voice-bridge] no PhoneCall row matched — orphan diagnostics');
+                }
             }
         } catch (err: any) {
             logger.error({ err: err.message }, '[voice-bridge] tally failed');

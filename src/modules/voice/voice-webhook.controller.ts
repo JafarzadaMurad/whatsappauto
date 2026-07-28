@@ -83,6 +83,7 @@ export class VoiceWebhookController {
                         toNumber: to,
                         status: 'ringing',
                         startedAt: new Date(),
+                        twilioCallSid: callSid || null,
                     },
                 }).catch(err => logger.error({ err: err.message, callSid }, '[voice] create call row failed'));
             }

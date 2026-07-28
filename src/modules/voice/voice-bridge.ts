@@ -155,7 +155,6 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     const oaiWs = new WebSocket(oaiUrl, {
         headers: {
             Authorization: `Bearer ${openaiKey}`,
-            'OpenAI-Beta': 'realtime=v1',
         },
     });
 
@@ -169,6 +168,15 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     // Turn-by-turn transcript accumulator. Each entry is one utterance.
     // { role: 'assistant' | 'user', text, at }
     const transcript: Array<{ role: 'assistant' | 'user'; text: string; at: number }> = [];
+    // Diagnostic log — every OpenAI/Twilio error we see gets appended
+    // here and written to PhoneCall.errorLog on shutdown so the
+    // operator can see WHY the assistant hung up.
+    const diag: string[] = [];
+    const logDiag = (line: string) => {
+        const stamped = `[${new Date().toISOString()}] ${line}`;
+        diag.push(stamped);
+        if (diag.length > 200) diag.shift();
+    };
 
     const shutdown = async (endedReason: string) => {
         if (closed) return;
@@ -220,6 +228,7 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                         endedReason,
                         status: row.status === 'ringing' || row.status === 'in-progress' ? 'completed' : row.status,
                         transcript: transcript.length ? (transcript as any) : undefined,
+                        errorLog: diag.length ? diag.join('\n') : undefined,
                     },
                 });
                 dbCallId = row.id;
@@ -239,11 +248,17 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     // ─── OpenAI side ────────────────────────────────────────────
     oaiWs.on('open', () => {
         logger.info({ assistantId, callSid, realtimeModel, voice }, '[voice-bridge] OpenAI Realtime connected');
+        logDiag(`OpenAI Realtime connected · model=${realtimeModel} · voice=${voice}`);
 
-        // Configure the Realtime session. `g711_ulaw` on both sides
-        // means Twilio's raw base64 payloads pass through untouched
-        // and OpenAI's responses come back in the same encoding we can
-        // forward straight to Twilio — no PCM resampling anywhere.
+        // GA session.update shape:
+        //   audio.input:  format + transcription + noise_reduction + VAD (turn_detection)
+        //   audio.output: format + voice + speed
+        // The old top-level `voice`/`input_audio_format`/`output_audio_format`/
+        // `input_audio_transcription` still work on the *legacy* preview
+        // models but are rejected on `gpt-realtime` (GA) with a
+        // `unknown_parameter` error — which was crashing the session
+        // immediately after connect and making Twilio speak "an
+        // application error has occurred".
         const instructions = asst.systemPrompt || 'You are a helpful phone assistant. Reply in short, natural sentences.';
         oaiWs.send(JSON.stringify({
             type: 'session.update',
@@ -251,27 +266,36 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 type: 'realtime',
                 model: realtimeModel,
                 instructions,
-                voice,
-                input_audio_format: 'g711_ulaw',
-                output_audio_format: 'g711_ulaw',
-                input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
-                turn_detection: {
-                    type: 'server_vad',
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: Math.max(200, asst.responseDelayMs || 400),
+                audio: {
+                    input: {
+                        format: 'g711_ulaw',
+                        transcription: { model: 'gpt-4o-mini-transcribe' },
+                        turn_detection: {
+                            type: 'server_vad',
+                            threshold: 0.5,
+                            prefix_padding_ms: 300,
+                            silence_duration_ms: Math.max(200, asst.responseDelayMs || 400),
+                        },
+                    },
+                    output: {
+                        format: 'g711_ulaw',
+                        voice,
+                        speed: asst.ttsSpeed ?? 1.0,
+                    },
                 },
-                temperature: asst.llmTemperature ?? 0.5,
-                max_response_output_tokens: asst.llmMaxTokens || 250,
+                max_output_tokens: asst.llmMaxTokens || 250,
             },
         }));
 
         // If the assistant speaks first, kick off an initial response.
+        // GA renamed `modalities` → `output_modalities` — passing the
+        // old name is silently ignored (no audio comes back), so ensure
+        // we send the new one.
         if (asst.firstMessageMode === 'assistant-speaks-first' && asst.firstMessage) {
             oaiWs.send(JSON.stringify({
                 type: 'response.create',
                 response: {
-                    modalities: ['audio', 'text'],
+                    output_modalities: ['audio'],
                     instructions: `Say the following as your greeting, then wait for the caller: "${asst.firstMessage.replace(/"/g, '\\"')}"`,
                 },
             }));
@@ -281,7 +305,13 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     oaiWs.on('message', (raw: Buffer) => {
         try {
             const ev = JSON.parse(raw.toString());
-            if (ev.type === 'response.audio.delta' && ev.delta && streamSid) {
+            // GA renamed most `response.audio.*` events to `response.output_audio.*`.
+            // Accept both so we work across the API's rolling rename.
+            const isAudioDelta = (ev.type === 'response.audio.delta' || ev.type === 'response.output_audio.delta') && ev.delta;
+            const isAudioDone = ev.type === 'response.audio.done' || ev.type === 'response.output_audio.done';
+            const isTranscriptDone = ev.type === 'response.audio_transcript.done' || ev.type === 'response.output_audio_transcript.done';
+
+            if (isAudioDelta && streamSid) {
                 // Base64 μ-law chunk → forward to Twilio as-is.
                 outputAudioBytes += Buffer.from(ev.delta, 'base64').length;
                 twilioWs.send(JSON.stringify({
@@ -289,33 +319,47 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                     streamSid,
                     media: { payload: ev.delta },
                 }));
-            } else if (ev.type === 'response.audio.done') {
-                // Mark boundary so Twilio finishes playing this response
-                // before treating incoming audio as an interruption.
+            } else if (isAudioDone) {
                 twilioWs.send(JSON.stringify({
                     event: 'mark',
                     streamSid,
                     mark: { name: 'response-end' },
                 }));
             } else if (ev.type === 'error') {
-                logger.error({ err: ev.error }, '[voice-bridge] OpenAI error event');
-            } else if (ev.type === 'response.audio_transcript.done') {
-                // Full assistant utterance for this response.
+                const err = ev.error || {};
+                const line = `OpenAI error · ${err.type || 'error'} · ${err.code || '-'} · ${err.message || 'no message'}${err.param ? ` · param=${err.param}` : ''}`;
+                logger.error({ err }, '[voice-bridge] ' + line);
+                logDiag(line);
+            } else if (isTranscriptDone) {
                 const text = String(ev.transcript || '').trim();
                 if (text) transcript.push({ role: 'assistant', text, at: Date.now() });
             } else if (ev.type === 'conversation.item.input_audio_transcription.completed') {
-                // Whisper-side transcription of what the caller just said.
                 const text = String(ev.transcript || '').trim();
                 if (text) transcript.push({ role: 'user', text, at: Date.now() });
             }
         } catch { /* non-JSON keepalives etc. */ }
     });
 
-    oaiWs.on('close', () => { void shutdown('openai_closed'); });
-    oaiWs.on('error', (err) => {
-        logger.error({ err: err.message }, '[voice-bridge] OpenAI socket error');
+    oaiWs.on('close', (code, reason) => {
+        const line = `OpenAI socket closed · code=${code} · reason=${reason?.toString() || '-'}`;
+        logDiag(line);
+        void shutdown('openai_closed');
+    });
+    oaiWs.on('error', (err: any) => {
+        const line = `OpenAI socket error · ${err.message || err.code || err}`;
+        logger.error({ err: err.message }, '[voice-bridge] ' + line);
+        logDiag(line);
         void shutdown('openai_error');
     });
+    // 5-second connect timeout — if the WSS handshake never completes,
+    // we should shut down cleanly rather than let Twilio play silence.
+    const connectTimer = setTimeout(() => {
+        if (oaiWs.readyState !== WebSocket.OPEN) {
+            logDiag(`OpenAI WS connect timeout after 5 s (readyState=${oaiWs.readyState})`);
+            void shutdown('openai_connect_timeout');
+        }
+    }, 5000);
+    oaiWs.once('open', () => clearTimeout(connectTimer));
 
     // ─── Twilio side ────────────────────────────────────────────
     twilioWs.on('message', (raw: Buffer) => {

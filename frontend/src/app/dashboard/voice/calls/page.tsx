@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
     PhoneCall, Loader2, Coins, ArrowDownLeft, ArrowUpRight, Globe, X,
-    CheckCircle2, XCircle, Voicemail, PhoneOff,
+    CheckCircle2, XCircle, Voicemail, PhoneOff, AlertTriangle,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -31,6 +31,7 @@ type Call = {
     creditsUsed: number;
     transcript: Array<{ role: 'user' | 'assistant'; text: string; at?: string }> | null;
     recordingUrl: string | null;
+    errorLog: string | null;
     startedAt: string;
     endedAt: string | null;
     voiceAssistant?: { id: string; name: string } | null;
@@ -234,6 +235,20 @@ function CallDrawer({ call, onClose }: { call: Call; onClose: () => void }) {
                         <div>
                             <h4 className="text-xs font-semibold mb-2">Recording</h4>
                             <audio controls src={call.recordingUrl} className="w-full" />
+                        </div>
+                    )}
+
+                    {call.errorLog && (
+                        <div>
+                            <h4 className="text-xs font-semibold flex items-center gap-1.5 mb-2 text-amber-400">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Diagnostics
+                            </h4>
+                            <p className="text-[10px] text-muted-foreground mb-1">
+                                Everything the bridge saw that wasn't happy audio — OpenAI Realtime errors, WebSocket drops, Twilio frame anomalies. If the call played "an application error has occurred", the reason is in here.
+                            </p>
+                            <pre className="bg-secondary/30 border border-border rounded-lg p-2.5 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+{call.errorLog}
+                            </pre>
                         </div>
                     )}
 

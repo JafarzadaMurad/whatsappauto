@@ -1893,6 +1893,13 @@ model PhoneCall {
 
   transcript    Json?   // [{role:'user'|'assistant', text, at}]
   recordingUrl  String?
+  // Newline-separated diagnostic log the voice-bridge appends to
+  // whenever the OpenAI Realtime WS emits `error`, closes with a
+  // failure, or the Twilio media stream drops with an unexpected
+  // frame. Shown on the Voice → Call History detail so operators
+  // can debug "the assistant said 'application error, goodbye'"
+  // without SSH-ing to the box.
+  errorLog      String? @db.Text
 
   startedAt DateTime @default(now())
   endedAt   DateTime?

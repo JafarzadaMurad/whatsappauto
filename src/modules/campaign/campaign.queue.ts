@@ -133,31 +133,45 @@ export const startCampaignWorker = () => {
 
             if (!text) throw new Error('Empty message body');
 
+            // Resolve the recipient's actual JID via onWhatsApp. On WA
+            // Business App accounts the classic `@s.whatsapp.net` form
+            // sometimes silently no-ops — onWhatsApp returns the correct
+            // (possibly `@lid`) JID + a genuine "does the number exist"
+            // check. Falls back to the stored remoteJid if lookup fails.
+            const { resolveWhatsAppJid } = await import('../messaging/messaging.service');
+            const jid = await resolveWhatsAppJid(sock, recipient.phone).catch(() => recipient.remoteJid);
+
             // "Typing…" presence for a realistic 2-5 s window before the
             // send. Meta's spam heuristics on personal-line Baileys
             // accounts weight bursts of instant outbound-only sends
             // very heavily; the typing indicator alone doesn't stop a
             // ban but it changes the fingerprint enough to matter.
             try {
-                await sock.sendPresenceUpdate('composing', recipient.remoteJid);
+                await sock.sendPresenceUpdate('composing', jid);
                 await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 3000)));
-                await sock.sendPresenceUpdate('paused', recipient.remoteJid);
+                await sock.sendPresenceUpdate('paused', jid);
             } catch { /* presence is best-effort */ }
 
             // Send WhatsApp message — media-first when configured, then
             // caption via the same send (Baileys accepts { image, caption }).
             const mediaUrl = (campaign as any).mediaUrl as string | null;
             const mediaType = (campaign as any).mediaType as string | null;
+            let sendResult: any;
             if (mediaUrl && mediaType) {
                 const mediaPayload: any = { caption: text };
                 if (mediaType === 'image') mediaPayload.image = { url: mediaUrl };
                 else if (mediaType === 'video') mediaPayload.video = { url: mediaUrl };
                 else if (mediaType === 'audio') mediaPayload.audio = { url: mediaUrl };
                 else if (mediaType === 'document') mediaPayload.document = { url: mediaUrl };
-                await sock.sendMessage(recipient.remoteJid, mediaPayload);
+                sendResult = await sock.sendMessage(jid, mediaPayload);
             } else {
-                await sock.sendMessage(recipient.remoteJid, { text });
+                sendResult = await sock.sendMessage(jid, { text });
             }
+            // Baileys returns `undefined` on some silent failures (WA
+            // Business restrictions, socket race). Treat that as failure
+            // so the recipient row surfaces the truth instead of showing
+            // SENT while the message never left the client.
+            if (!sendResult) throw new Error('WhatsApp did not confirm the send — likely a Business-account restriction. Try opening the chat on the phone once, then retry.');
 
             // Save to Message table (so incoming handler has history)
             await prisma.message.create({

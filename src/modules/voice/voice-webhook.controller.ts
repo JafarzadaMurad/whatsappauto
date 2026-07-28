@@ -92,7 +92,13 @@ export class VoiceWebhookController {
             // parameter (Twilio forwards it to us on WS connect). Prefer
             // path-based routing so the WS server can dispatch fast
             // without parsing query strings.
-            const streamUrl = `${wsBase()}/voice/stream?assistantId=${numberRow.voiceAssistant.id}&callSid=${encodeURIComponent(callSid)}`;
+            //
+            // CRITICAL: `&` inside an XML attribute is illegal; it must
+            // be escaped as `&amp;` or Twilio's TwiML parser bombs
+            // with error 12100 "Document parse failure" and speaks
+            // "an application error has occurred". Been there.
+            const rawStreamUrl = `${wsBase()}/voice/stream?assistantId=${numberRow.voiceAssistant.id}&callSid=${encodeURIComponent(callSid)}`;
+            const streamUrl = rawStreamUrl.replaceAll('&', '&amp;');
 
             // <Connect><Stream> pipes bi-directional linear16 μ-law audio
             // over the WebSocket. `track="inbound_track"` alone streams

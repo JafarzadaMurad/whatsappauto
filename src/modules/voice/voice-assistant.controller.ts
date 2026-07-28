@@ -524,7 +524,10 @@ export class VoiceAssistantController {
                     to: toNumber,
                     url: `${base}/api/voice/webhook`,
                     statusCallback: `${base}/api/voice/status`,
-                    statusCallbackEvent: ['completed', 'no-answer', 'busy', 'failed', 'canceled'],
+                    // Twilio only accepts initiated | ringing | answered | completed
+                    // as statusCallbackEvent values. Passing call *statuses*
+                    // like no-answer / busy / canceled triggers warning 21626.
+                    statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
                 });
 
                 await prisma.phoneCall.create({
@@ -591,6 +594,70 @@ export class VoiceAssistantController {
             }
         } catch (error: any) {
             logger.error({ err: error.message }, '[voice] call-status failed');
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Pull Twilio's own logs for a call — the summary + every
+    // notification Twilio recorded (warnings, errors, TwiML parser
+    // problems). Notifications are the gold: they're what the Twilio
+    // Console shows when a call ended with "Application error has
+    // occurred" and pinpoint the exact reason our bridge dropped.
+    async twilioEvents(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const sid = req.params.sid as string;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const { getTwilioForWorkspace, TwilioNotConfiguredError } = await import('../../lib/twilio');
+            try {
+                const client = await getTwilioForWorkspace(workspaceId);
+                const [call, notifications, recordings] = await Promise.all([
+                    client.calls(sid).fetch(),
+                    client.calls(sid).notifications.list({ limit: 50 }).catch(() => []),
+                    client.calls(sid).recordings.list({ limit: 5 }).catch(() => []),
+                ]);
+                return res.json({
+                    success: true,
+                    call: {
+                        sid: call.sid,
+                        status: call.status,
+                        direction: call.direction,
+                        from: call.from,
+                        to: call.to,
+                        duration: call.duration,
+                        price: call.price,
+                        priceUnit: call.priceUnit,
+                        startTime: call.startTime,
+                        endTime: call.endTime,
+                        errorCode: (call as any).errorCode || null,
+                        errorMessage: (call as any).errorMessage || null,
+                    },
+                    notifications: notifications.map((n: any) => ({
+                        sid: n.sid,
+                        errorCode: n.errorCode,
+                        log: n.log,                    // 0=error, 1=warning
+                        messageDate: n.messageDate,
+                        messageText: n.messageText,
+                        moreInfo: n.moreInfo,
+                    })),
+                    recordings: recordings.map((r: any) => ({
+                        sid: r.sid,
+                        duration: r.duration,
+                        channels: r.channels,
+                        source: r.source,
+                        status: r.status,
+                        uri: r.uri,
+                    })),
+                    consoleUrl: `https://console.twilio.com/us1/monitor/logs/call-logs/${encodeURIComponent(sid)}`,
+                });
+            } catch (err: any) {
+                if (err instanceof TwilioNotConfiguredError) {
+                    return res.status(400).json({ success: false, code: 'twilio_not_configured', message: err.message });
+                }
+                throw err;
+            }
+        } catch (error: any) {
+            logger.error({ err: error.message }, '[voice] twilio-events failed');
             return res.status(500).json({ success: false, message: error.message });
         }
     }

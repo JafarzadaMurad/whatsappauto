@@ -653,6 +653,7 @@ export class InboxController {
             let sent: any;
             try {
                 sent = await sock.sendMessage(body.remoteJid, payload);
+                if (!sent) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
             } catch (e: any) {
                 return res.status(502).json({ success: false, message: e.message || 'Send failed' });
             }
@@ -749,7 +750,8 @@ export class InboxController {
             const sock = sessions.get(accountId);
             if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
             try {
-                await sock.sendMessage(remoteJid, { text });
+                const sent = await sock.sendMessage(remoteJid, { text });
+                if (!sent) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
             } catch (e: any) {
                 return res.status(502).json({ success: false, message: e.message || 'Send failed' });
             }

@@ -317,7 +317,7 @@ export class PhoneNumberController {
                 to: body.toNumber,
                 url: publicUrl('/api/voice/webhook'),
                 statusCallback: publicUrl('/api/voice/status'),
-                statusCallbackEvent: ['completed', 'no-answer', 'busy', 'failed', 'canceled'],
+                statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
             });
 
             // Log the outbound row up front so the operator sees it in

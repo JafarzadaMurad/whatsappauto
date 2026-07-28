@@ -21,7 +21,7 @@ const DEFAULT_MODELS: Record<string, string[]> = {
         'gpt-5.5', 'gpt-5.5-pro',
         'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-pro',
         'gpt-5.3-codex', 'chat-latest',
-        'gpt-realtime-2.1', 'gpt-realtime-2.1-mini',
+        'gpt-realtime', 'gpt-realtime-mini',
         // Legacy IDs still accepted by the API — kept so existing agent
         // configs referencing older ids keep billing correctly.
         'gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini',

@@ -18,7 +18,7 @@ import {
     Plus, Trash2, Music, Ear, Waves, Rabbit, Turtle,
     Phone, BookOpen, Wrench, LineChart, Settings2,
     PhoneCall as PhoneCallIcon, MicOff, Voicemail, FileText,
-    CheckCircle2,
+    CheckCircle2, PhoneOutgoing, AlertCircle,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -116,6 +116,7 @@ export default function VoiceAssistantEditorPage() {
     const [tab, setTab] = useState<'assistant' | 'logs' | 'tools' | 'analysis' | 'advanced'>('assistant');
     // Live-test WebRTC widget state — opened by the header's Talk btn.
     const [talkOpen, setTalkOpen] = useState(false);
+    const [testCallOpen, setTestCallOpen] = useState(false);
 
     // Set once by the load flow when it detects the saved
     // provider/model isn't in the filtered catalog anymore — e.g. the
@@ -278,6 +279,11 @@ export default function VoiceAssistantEditorPage() {
                         title="Live test this assistant in your browser (mic required)"
                         className="bg-emerald-500 hover:bg-emerald-500/90 text-white font-medium rounded-xl px-4 py-2 flex items-center gap-2 text-sm">
                         <PhoneCallIcon className="w-4 h-4" /> Talk
+                    </button>
+                    <button onClick={() => setTestCallOpen(true)}
+                        title="Dial a real phone number using this assistant"
+                        className="bg-secondary/70 hover:bg-secondary border border-border font-medium rounded-xl px-4 py-2 flex items-center gap-2 text-sm">
+                        <PhoneOutgoing className="w-4 h-4" /> Test call
                     </button>
                     <button onClick={() => setAssistant({ ...assistant, isPublished: !assistant.isPublished })}
                         className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
@@ -549,6 +555,7 @@ export default function VoiceAssistantEditorPage() {
                 No Twilio, no phone number needed to sanity-check a
                 prompt / voice combination. */}
             {talkOpen && <TalkWidget assistantId={id} assistantName={assistant.name} onClose={() => setTalkOpen(false)} />}
+            {testCallOpen && <TestCallDialog assistantId={id} assistantName={assistant.name} onClose={() => setTestCallOpen(false)} />}
         </div>
     );
 }
@@ -1420,6 +1427,99 @@ function TalkWidget({ assistantId, assistantName, onClose }: {
                     className="w-full bg-red-500 hover:bg-red-500/90 text-white font-medium rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 text-sm">
                     <MicOff className="w-4 h-4" /> End call
                 </button>
+            </div>
+        </div>
+    );
+}
+
+// ─── Test call dialog ─────────────────────────────────────────────
+// Fires a real outbound Twilio call from any phone number bound to
+// this assistant. Backend hunts for the number itself so the UI only
+// asks for the destination.
+function TestCallDialog({ assistantId, assistantName, onClose }: {
+    assistantId: string;
+    assistantName: string;
+    onClose: () => void;
+}) {
+    const [to, setTo] = useState('');
+    const [dialing, setDialing] = useState(false);
+    const [result, setResult] = useState<{ callSid: string; fromNumber: string } | null>(null);
+    const [error, setError] = useState<{ code?: string; message: string } | null>(null);
+
+    const dial = async () => {
+        if (!to.trim()) { setError({ message: 'Enter a destination number in E.164 format (e.g. +14155551234).' }); return; }
+        setDialing(true);
+        setError(null);
+        try {
+            const res = await api.post(`/voice/assistants/${assistantId}/test-call`, { toNumber: to.trim() });
+            if (res.data?.success) setResult({ callSid: res.data.callSid, fromNumber: res.data.fromNumber });
+        } catch (err: any) {
+            setError({
+                code: err.response?.data?.code,
+                message: err.response?.data?.message || err.message,
+            });
+        } finally { setDialing(false); }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <h3 className="font-semibold flex items-center gap-2">
+                        <PhoneOutgoing className="w-4 h-4 text-primary" /> Test call
+                    </h3>
+                    <button onClick={onClose} className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    <em>{assistantName}</em> will place a real WhatsApp… no wait, a real Twilio call. Charges land on your Twilio account.
+                </p>
+                <div>
+                    <label className="text-xs font-medium text-muted-foreground">Destination (E.164)</label>
+                    <input value={to} onChange={e => setTo(e.target.value)}
+                        placeholder="+14155551234"
+                        disabled={!!result}
+                        className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm font-mono disabled:opacity-60" />
+                </div>
+
+                {error && (
+                    <div className="bg-red-500/10 border border-red-500/25 rounded-lg p-3 text-xs space-y-1.5">
+                        <div className="flex items-start gap-2 text-red-400">
+                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                            <span>{error.message}</span>
+                        </div>
+                        {error.code === 'no_phone_number' && (
+                            <Link href="/dashboard/voice/numbers"
+                                className="text-primary hover:underline inline-flex items-center gap-1">
+                                Go to Phone Numbers →
+                            </Link>
+                        )}
+                        {error.code === 'twilio_not_configured' && (
+                            <Link href="/dashboard/voice/numbers"
+                                className="text-primary hover:underline inline-flex items-center gap-1">
+                                Connect Twilio →
+                            </Link>
+                        )}
+                    </div>
+                )}
+
+                {result ? (
+                    <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3 text-xs space-y-1">
+                        <div className="font-medium text-emerald-400/90 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Call initiated
+                        </div>
+                        <div className="text-muted-foreground">Dialling <span className="font-mono text-foreground">{to}</span> from <span className="font-mono text-foreground">{result.fromNumber}</span>.</div>
+                        <div className="text-[10px] text-muted-foreground font-mono break-all">{result.callSid}</div>
+                        <p className="text-muted-foreground pt-1">Watch it live on Voice → Call History.</p>
+                    </div>
+                ) : (
+                    <button onClick={dial} disabled={dialing || !to.trim()}
+                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2.5 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60">
+                        {dialing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneOutgoing className="w-4 h-4" />}
+                        Dial now
+                    </button>
+                )}
             </div>
         </div>
     );

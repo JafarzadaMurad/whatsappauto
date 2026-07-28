@@ -59,8 +59,8 @@ const DEFAULT_ROWS: Row[] = [
     // chat-latest alias — mirrors the current flagship (5.6-sol)
     { provider: 'openai',    model: 'chat-latest',                  inputCostPer1M: 5,    outputCostPer1M: 30,   cachedCostPer1M: 0.50 },
     // Realtime — audio tokens (~100 per audio-second)
-    { provider: 'openai',    model: 'gpt-realtime-2.1',             inputCostPer1M: 32,   outputCostPer1M: 64,   cachedCostPer1M: 0.40 },
-    { provider: 'openai',    model: 'gpt-realtime-2.1-mini',        inputCostPer1M: 10,   outputCostPer1M: 20,   cachedCostPer1M: 0.30 },
+    { provider: 'openai',    model: 'gpt-realtime',             inputCostPer1M: 32,   outputCostPer1M: 64,   cachedCostPer1M: 0.40 },
+    { provider: 'openai',    model: 'gpt-realtime-mini',        inputCostPer1M: 10,   outputCostPer1M: 20,   cachedCostPer1M: 0.30 },
     // Legacy aliases still accepted by the API — kept so existing
     // workspaces with the old ids in their agent config keep billing
     // correctly instead of hitting the fallback estimator.

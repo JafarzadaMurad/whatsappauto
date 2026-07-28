@@ -133,10 +133,17 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     // pipeline logs the fallback but keeps the call alive).
     const llmEntry = findLlm(asst.llmProvider, asst.llmModel);
     const isRealtime = !!llmEntry?.combinesSttTts;
-    const realtimeModel = isRealtime ? asst.llmModel : 'gpt-realtime-2.1';
+    // Map any legacy `2.1` id from the old seed to the GA name so
+    // in-flight assistants keep working after the rename.
+    const legacyMap: Record<string, string> = {
+        'gpt-realtime-2.1': 'gpt-realtime',
+        'gpt-realtime-2.1-mini': 'gpt-realtime-mini',
+    };
+    const canonicalModel = legacyMap[asst.llmModel] || asst.llmModel;
+    const realtimeModel = isRealtime ? canonicalModel : 'gpt-realtime';
     if (!isRealtime) {
         logger.warn({ picked: `${asst.llmProvider}/${asst.llmModel}` },
-            '[voice-bridge] non-Realtime LLM picked — falling back to gpt-realtime-2.1');
+            '[voice-bridge] non-Realtime LLM picked — falling back to gpt-realtime');
     }
 
     const voice = pickRealtimeVoice(asst.ttsProvider, asst.ttsVoiceId);
@@ -178,8 +185,8 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
         const outTokens = Math.round(outSec * AUDIO_TOKENS_PER_SEC);
 
         // Realtime pricing lives in AiPricing — reuse ai-pricing seed's
-        // gpt-realtime-2.1 row. Cost = tokens * per-1M.
-        const llmForCost = findLlm('openai-realtime', realtimeModel) || findLlm('openai-realtime', 'gpt-realtime-2.1');
+        // gpt-realtime row. Cost = tokens * per-1M.
+        const llmForCost = findLlm('openai-realtime', realtimeModel) || findLlm('openai-realtime', 'gpt-realtime');
         const llmCostUsd = llmForCost
             ? (inTokens / 1_000_000) * llmForCost.inCostPer1M + (outTokens / 1_000_000) * llmForCost.outCostPer1M
             : 0;

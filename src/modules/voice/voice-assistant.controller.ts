@@ -404,7 +404,14 @@ export class VoiceAssistantController {
             const voice = (asst.ttsProvider === 'openai' && allowedVoices.includes(asst.ttsVoiceId))
                 ? asst.ttsVoiceId
                 : 'alloy';
-            const model = /realtime/i.test(asst.llmModel) ? asst.llmModel : 'gpt-realtime-2.1';
+            // OpenAI Realtime GA models. The seed catalog used to list
+            // fictional "gpt-realtime-2.1" — auto-map that to the real
+            // GA id so old assistants still Talk. Anything non-realtime
+            // falls back to gpt-realtime too.
+            const rawModel = asst.llmModel;
+            let model = /realtime/i.test(rawModel) ? rawModel : 'gpt-realtime';
+            if (model === 'gpt-realtime-2.1') model = 'gpt-realtime';
+            else if (model === 'gpt-realtime-2.1-mini') model = 'gpt-realtime-mini';
 
             const instructions = (asst.systemPrompt || 'You are a helpful assistant.') +
                 (asst.firstMessage ? `\n\nOpen the conversation with: "${asst.firstMessage.replace(/"/g, '\\"')}"` : '');
@@ -452,6 +459,79 @@ export class VoiceAssistantController {
             });
         } catch (error: any) {
             logger.error({ err: error.message }, '[voice-test] session failed');
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Test call ─────────────────────────────────────────────────
+    // Dial an arbitrary destination using any phone number bound to
+    // this assistant. Shortcut for the "Test call" button on the
+    // assistant editor — reuses the same Twilio path phone-number's
+    // outbound endpoint uses, but resolves the "from" number from
+    // the assistant assignment instead of asking the caller to pick
+    // one. Returns 400 with a helpful pointer when no number is
+    // linked yet so the UI can direct the operator to Voice → Phone
+    // Numbers.
+    async testCall(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const { toNumber } = z.object({ toNumber: z.string().min(4).max(20) }).parse(req.body);
+
+            const asst = await prisma.voiceAssistant.findFirst({ where: { id, workspaceId }, select: { id: true, name: true } });
+            if (!asst) return res.status(404).json({ success: false, message: 'Assistant not found' });
+
+            const number = await prisma.phoneNumber.findFirst({
+                where: { workspaceId, voiceAssistantId: id, isActive: true },
+                orderBy: { createdAt: 'asc' },
+            });
+            if (!number) return res.status(400).json({
+                success: false,
+                code: 'no_phone_number',
+                message: 'This assistant has no phone number assigned. Buy or import one on Voice → Phone Numbers, then set its "Assigned assistant" to this one.',
+            });
+
+            const { getTwilioForWorkspace, TwilioNotConfiguredError } = await import('../../lib/twilio');
+            try {
+                const client = await getTwilioForWorkspace(workspaceId);
+                const { config } = await import('../../config');
+                const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
+                const call = await client.calls.create({
+                    from: number.number,
+                    to: toNumber,
+                    url: `${base}/api/voice/webhook`,
+                    statusCallback: `${base}/api/voice/status`,
+                    statusCallbackEvent: ['completed', 'no-answer', 'busy', 'failed', 'canceled'],
+                });
+
+                await prisma.phoneCall.create({
+                    data: {
+                        workspaceId,
+                        voiceAssistantId: id,
+                        phoneNumberId: number.id,
+                        direction: 'outbound',
+                        fromNumber: number.number,
+                        toNumber,
+                        status: 'ringing',
+                        startedAt: new Date(),
+                    },
+                }).catch(() => {});
+
+                return res.status(201).json({
+                    success: true,
+                    callSid: call.sid,
+                    fromNumber: number.number,
+                });
+            } catch (err: any) {
+                if (err instanceof TwilioNotConfiguredError) {
+                    return res.status(400).json({ success: false, code: 'twilio_not_configured', message: err.message });
+                }
+                throw err;
+            }
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            logger.error({ err: error.message }, '[voice-test-call] failed');
             return res.status(500).json({ success: false, message: error.message });
         }
     }

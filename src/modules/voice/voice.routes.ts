@@ -27,6 +27,7 @@ router.get('/assistants/:id', assistants.get.bind(assistants));
 router.put('/assistants/:id', assistants.update.bind(assistants));
 router.delete('/assistants/:id', assistants.remove.bind(assistants));
 router.post('/assistants/:id/test-session', assistants.testSession.bind(assistants));
+router.post('/assistants/:id/test-call', assistants.testCall.bind(assistants));
 
 router.get('/calls', assistants.listCalls.bind(assistants));
 

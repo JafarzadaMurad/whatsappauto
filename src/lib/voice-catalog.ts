@@ -75,8 +75,8 @@ export const TRANSCRIBERS: TranscriberEntry[] = [
 // ─── LLMs ──────────────────────────────────────────────────────────
 export const LLMS: LlmEntry[] = [
     // Speech-to-speech models (skip transcriber + TTS layers)
-    { provider: 'openai-realtime', model: 'gpt-realtime-2.1',       label: 'GPT Realtime 2.1',       inCostPer1M: 32, outCostPer1M: 64, latencyMs: 500, intelligence: 'Great',     combinesSttTts: true },
-    { provider: 'openai-realtime', model: 'gpt-realtime-2.1-mini',  label: 'GPT Realtime 2.1 Mini',  inCostPer1M: 10, outCostPer1M: 20, latencyMs: 500, intelligence: 'Good',      combinesSttTts: true },
+    { provider: 'openai-realtime', model: 'gpt-realtime',       label: 'GPT Realtime',       inCostPer1M: 32, outCostPer1M: 64, latencyMs: 500, intelligence: 'Great',     combinesSttTts: true },
+    { provider: 'openai-realtime', model: 'gpt-realtime-mini',  label: 'GPT Realtime Mini',  inCostPer1M: 10, outCostPer1M: 20, latencyMs: 500, intelligence: 'Good',      combinesSttTts: true },
     // OpenAI text LLMs (used behind Deepgram STT + Cartesia/OpenAI TTS)
     { provider: 'openai', model: 'gpt-5.6-sol',   label: 'GPT-5.6 Sol',   inCostPer1M: 5,    outCostPer1M: 30,  latencyMs: 700, intelligence: 'Best' },
     { provider: 'openai', model: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', inCostPer1M: 2.5,  outCostPer1M: 15,  latencyMs: 500, intelligence: 'Excellent' },
@@ -176,7 +176,7 @@ export const PRESETS: Preset[] = [
     {
         key: 'ultra-fast', label: 'Ultra Fast', hint: 'Sub-500ms voice-to-voice via OpenAI Realtime (skips discrete STT/TTS).',
         transcriber: 'openai:gpt-4o-transcribe',
-        llm: 'openai-realtime:gpt-realtime-2.1',
+        llm: 'openai-realtime:gpt-realtime',
         tts: 'openai:alloy',
     },
     {

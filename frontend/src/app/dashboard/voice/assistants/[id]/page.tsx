@@ -1434,8 +1434,39 @@ function TalkWidget({ assistantId, assistantName, onClose }: {
 
 // ─── Test call dialog ─────────────────────────────────────────────
 // Fires a real outbound Twilio call from any phone number bound to
-// this assistant. Backend hunts for the number itself so the UI only
-// asks for the destination.
+// this assistant. Backend hunts for the number itself; we poll
+// Twilio for live status so the operator sees geo-permission blocks,
+// invalid destinations, unverified-trial rejections, etc. without
+// digging through Twilio Console.
+type TwilioStatus = {
+    status: string;
+    duration?: string;
+    errorCode?: number | null;
+    errorMessage?: string | null;
+};
+
+// Human-readable hint for the most common Twilio outbound error codes.
+// Full list: https://www.twilio.com/docs/api/errors
+function twilioErrorHint(code: number | null | undefined): string | null {
+    if (!code) return null;
+    switch (code) {
+        case 13224: case 13225:
+            return 'Twilio account has this destination country blocked. Enable it in Twilio Console → Voice → Geo Permissions.';
+        case 13223:
+            return 'Destination number is invalid or unreachable. Double-check the E.164 format (must start with +).';
+        case 21215:
+            return 'Twilio account has geographic permissions blocking this country. Enable it in Twilio Console → Voice → Geo Permissions.';
+        case 21219:
+            return "'To' number is not verified — Twilio trial accounts can only call verified numbers. Verify it in Twilio Console → Phone Numbers → Verified Caller IDs, or upgrade the account.";
+        case 21606: case 21212:
+            return "'From' number isn't voice-capable or not owned by this Twilio account.";
+        case 32017: case 32403:
+            return 'Twilio account balance too low to place the call.';
+        default:
+            return null;
+    }
+}
+
 function TestCallDialog({ assistantId, assistantName, onClose }: {
     assistantId: string;
     assistantName: string;
@@ -1444,6 +1475,7 @@ function TestCallDialog({ assistantId, assistantName, onClose }: {
     const [to, setTo] = useState('');
     const [dialing, setDialing] = useState(false);
     const [result, setResult] = useState<{ callSid: string; fromNumber: string } | null>(null);
+    const [twStatus, setTwStatus] = useState<TwilioStatus | null>(null);
     const [error, setError] = useState<{ code?: string; message: string } | null>(null);
 
     const dial = async () => {
@@ -1461,6 +1493,43 @@ function TestCallDialog({ assistantId, assistantName, onClose }: {
         } finally { setDialing(false); }
     };
 
+    // Poll Twilio for real status every 2 s until the call reaches a
+    // terminal state or 60 s elapses. Twilio only settles into
+    // `failed` (with errorCode) a moment after we create the call —
+    // that's what the operator actually needs to see.
+    useEffect(() => {
+        if (!result?.callSid) return;
+        let cancelled = false;
+        const startedAt = Date.now();
+        const terminal = new Set(['completed', 'failed', 'busy', 'no-answer', 'canceled']);
+        (async () => {
+            while (!cancelled && Date.now() - startedAt < 60_000) {
+                try {
+                    const s = await api.get(`/voice/calls/${result.callSid}/status`);
+                    if (s.data?.success) {
+                        setTwStatus({
+                            status: s.data.status,
+                            duration: s.data.duration,
+                            errorCode: s.data.errorCode,
+                            errorMessage: s.data.errorMessage,
+                        });
+                        if (terminal.has(s.data.status)) return;
+                    }
+                } catch { /* keep polling */ }
+                await new Promise(r => setTimeout(r, 2000));
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [result?.callSid]);
+
+    const statusColor = (s?: string) => {
+        if (!s) return 'text-muted-foreground';
+        if (s === 'in-progress' || s === 'completed') return 'text-emerald-400';
+        if (s === 'ringing' || s === 'queued') return 'text-primary';
+        return 'text-red-400';
+    };
+    const hint = twilioErrorHint(twStatus?.errorCode);
+
     return (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
@@ -1473,7 +1542,7 @@ function TestCallDialog({ assistantId, assistantName, onClose }: {
                     </button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                    <em>{assistantName}</em> will place a real WhatsApp… no wait, a real Twilio call. Charges land on your Twilio account.
+                    <em>{assistantName}</em> will place a real Twilio call. Charges land on your Twilio account.
                 </p>
                 <div>
                     <label className="text-xs font-medium text-muted-foreground">Destination (E.164)</label>
@@ -1489,31 +1558,48 @@ function TestCallDialog({ assistantId, assistantName, onClose }: {
                             <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                             <span>{error.message}</span>
                         </div>
-                        {error.code === 'no_phone_number' && (
+                        {(error.code === 'no_phone_number' || error.code === 'twilio_not_configured') && (
                             <Link href="/dashboard/voice/numbers"
                                 className="text-primary hover:underline inline-flex items-center gap-1">
-                                Go to Phone Numbers →
-                            </Link>
-                        )}
-                        {error.code === 'twilio_not_configured' && (
-                            <Link href="/dashboard/voice/numbers"
-                                className="text-primary hover:underline inline-flex items-center gap-1">
-                                Connect Twilio →
+                                Open Phone Numbers →
                             </Link>
                         )}
                     </div>
                 )}
 
-                {result ? (
-                    <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3 text-xs space-y-1">
-                        <div className="font-medium text-emerald-400/90 flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Call initiated
+                {result && (
+                    <div className="bg-secondary/30 border border-border rounded-lg p-3 text-xs space-y-1.5">
+                        <div className="font-medium flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Call created
                         </div>
-                        <div className="text-muted-foreground">Dialling <span className="font-mono text-foreground">{to}</span> from <span className="font-mono text-foreground">{result.fromNumber}</span>.</div>
+                        <div className="text-muted-foreground">
+                            Dialling <span className="font-mono text-foreground">{to}</span> from <span className="font-mono text-foreground">{result.fromNumber}</span>.
+                        </div>
                         <div className="text-[10px] text-muted-foreground font-mono break-all">{result.callSid}</div>
-                        <p className="text-muted-foreground pt-1">Watch it live on Voice → Call History.</p>
+                        <div className="pt-1 border-t border-border flex items-center gap-1.5">
+                            <span className="text-muted-foreground">Twilio status:</span>
+                            {twStatus ? (
+                                <span className={`font-mono font-medium ${statusColor(twStatus.status)}`}>{twStatus.status}</span>
+                            ) : (
+                                <span className="text-muted-foreground inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> checking…</span>
+                            )}
+                            {twStatus?.duration && Number(twStatus.duration) > 0 && (
+                                <span className="text-muted-foreground">· {twStatus.duration}s</span>
+                            )}
+                        </div>
+                        {twStatus?.errorMessage && (
+                            <div className="bg-red-500/10 border border-red-500/25 rounded-md px-2 py-1.5 text-red-400 space-y-1">
+                                <div className="font-medium">
+                                    Twilio error {twStatus.errorCode ? `#${twStatus.errorCode}` : ''}
+                                </div>
+                                <div className="text-muted-foreground text-[11px]">{twStatus.errorMessage}</div>
+                                {hint && <div className="text-amber-400 text-[11px]">{hint}</div>}
+                            </div>
+                        )}
                     </div>
-                ) : (
+                )}
+
+                {!result && (
                     <button onClick={dial} disabled={dialing || !to.trim()}
                         className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2.5 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60">
                         {dialing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneOutgoing className="w-4 h-4" />}

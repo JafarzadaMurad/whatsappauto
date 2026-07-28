@@ -416,9 +416,20 @@ export class VoiceAssistantController {
             const instructions = (asst.systemPrompt || 'You are a helpful assistant.') +
                 (asst.firstMessage ? `\n\nOpen the conversation with: "${asst.firstMessage.replace(/"/g, '\\"')}"` : '');
 
+            // OpenAI Realtime GA `client_secrets` endpoint. Same shape
+            // the in-app copilot voice mode uses — voice goes under
+            // audio.output.voice (top-level `voice` returns 400
+            // "unknown parameter" in the GA shape).
             const axios = (await import('axios')).default;
             const r = await axios.post('https://api.openai.com/v1/realtime/client_secrets', {
-                session: { type: 'realtime', model, instructions, voice },
+                session: {
+                    type: 'realtime',
+                    model,
+                    instructions,
+                    audio: {
+                        output: { voice },
+                    },
+                },
             }, {
                 headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
                 timeout: 15_000,
@@ -426,8 +437,19 @@ export class VoiceAssistantController {
             });
 
             if (r.status >= 400) {
-                logger.error({ status: r.status, body: r.data, model }, '[voice-test] OpenAI mint rejected');
-                return res.status(500).json({ success: false, message: `OpenAI ${r.status}: ${r.data?.error?.message || 'mint failed'}` });
+                const oaiErr = r.data?.error || {};
+                logger.error({
+                    status: r.status,
+                    oaiCode: oaiErr.code,
+                    oaiParam: oaiErr.param,
+                    oaiMessage: oaiErr.message,
+                    body: r.data,
+                    model, voice,
+                }, '[voice-test] OpenAI mint rejected');
+                return res.status(500).json({
+                    success: false,
+                    message: `OpenAI ${r.status}: ${oaiErr.message || 'mint failed'}`,
+                });
             }
 
             const clientSecret = r.data?.value || r.data?.client_secret?.value;
@@ -532,6 +554,42 @@ export class VoiceAssistantController {
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             logger.error({ err: error.message }, '[voice-test-call] failed');
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Poll Twilio for a call's live status by SID. Used by the Test
+    // call dialog to surface Twilio-side failures the user can't see
+    // from a bare `client.calls.create` success (geo permissions,
+    // invalid destination, unverified trial recipient, etc.).
+    async callStatus(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const sid = req.params.sid as string;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const { getTwilioForWorkspace, TwilioNotConfiguredError } = await import('../../lib/twilio');
+            try {
+                const client = await getTwilioForWorkspace(workspaceId);
+                const call = await client.calls(sid).fetch();
+                return res.json({
+                    success: true,
+                    status: call.status,          // queued | ringing | in-progress | completed | busy | no-answer | canceled | failed
+                    duration: call.duration,
+                    errorCode: (call as any).errorCode || null,
+                    errorMessage: (call as any).errorMessage || null,
+                    from: call.from,
+                    to: call.to,
+                    startTime: call.startTime,
+                    endTime: call.endTime,
+                });
+            } catch (err: any) {
+                if (err instanceof TwilioNotConfiguredError) {
+                    return res.status(400).json({ success: false, code: 'twilio_not_configured', message: err.message });
+                }
+                throw err;
+            }
+        } catch (error: any) {
+            logger.error({ err: error.message }, '[voice] call-status failed');
             return res.status(500).json({ success: false, message: error.message });
         }
     }

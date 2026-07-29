@@ -20,35 +20,36 @@ const createProviderSchema = z.object({
 const AUTO_SEEDABLE = ['OPENAI', 'CLAUDE', 'GEMINI'] as const;
 
 // Ensure the workspace has an AiProvider row for every provider the
-// admin has configured a platform key for. Idempotent — inserts only
-// missing rows, uses the platform key as `apiKey` and marks them
-// useOwnKey=false so the credit-guard bills against the plan pool.
-// Without this seed, workspaces on a paid plan that never manually
-// added an API key saw an empty provider dropdown when creating an
-// agent even though credits were available.
+// admin has configured a platform key for. Idempotent + self-healing:
+// - Missing row → insert with the current platform key, useOwnKey=false
+// - Existing platform-backed row (useOwnKey=false) → refresh apiKey to
+//   the current platform key so a rotated admin key propagates without
+//   manual re-provisioning.
+// - Existing BYOK row (useOwnKey=true) → leave alone.
 async function seedPlatformProviders(workspaceId: string, userId: string): Promise<void> {
     if (!workspaceId) return;
     const existing = await prisma.aiProvider.findMany({
         where: { workspaceId },
-        select: { provider: true },
+        select: { id: true, provider: true, apiKey: true, useOwnKey: true },
     });
-    const have = new Set(existing.map(e => e.provider));
+    const byProvider = new Map(existing.map(e => [e.provider, e]));
     for (const provider of AUTO_SEEDABLE) {
-        if (have.has(provider)) continue;
         const key = await resolvePlatformKey(provider);
         if (!key) continue;
+        const row = byProvider.get(provider);
         try {
-            await prisma.aiProvider.create({
-                data: {
-                    userId,
-                    workspaceId,
-                    provider,
-                    apiKey: key,
-                    useOwnKey: false,
-                },
-            });
+            if (!row) {
+                await prisma.aiProvider.create({
+                    data: { userId, workspaceId, provider, apiKey: key, useOwnKey: false },
+                });
+            } else if (!row.useOwnKey && row.apiKey !== key) {
+                await prisma.aiProvider.update({
+                    where: { id: row.id },
+                    data: { apiKey: key },
+                });
+            }
         } catch (err: any) {
-            logger.warn({ err: err.message, provider, workspaceId }, '[ai-providers] auto-seed failed (race?)');
+            logger.warn({ err: err.message, provider, workspaceId }, '[ai-providers] auto-seed failed');
         }
     }
 }

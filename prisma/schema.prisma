@@ -532,7 +532,15 @@ model AiProvider {
   agents Agent[]
   oversightAgents OversightAgent[]
 
-  @@unique([userId, provider])
+  // Providers are workspace-scoped, not user-scoped. The old
+  // (userId, provider) unique blocked auto-seeding OPENAI for
+  // any workspace where the owner already had an OPENAI row on
+  // some *other* workspace they own — so those workspaces stayed
+  // without OpenAI in the dropdown despite the platform key being
+  // set. Constraint moved to (workspaceId, provider); the userId
+  // is still tracked for audit/ownership but no longer part of
+  // the uniqueness key.
+  @@unique([workspaceId, provider])
   @@index([workspaceId])
 }
 

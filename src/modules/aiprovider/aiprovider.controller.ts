@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { resolvePlatformKey } from '../../lib/ai-pricing';
+import { logger } from '../../utils/logger';
 
 const createProviderSchema = z.object({
     provider: z.enum(['OPENAI', 'CLAUDE', 'GEMINI', 'GLM']),
@@ -12,10 +14,58 @@ const createProviderSchema = z.object({
     useOwnKey: z.boolean().optional(),
 });
 
+// Providers we can auto-seed. Only ones the platform-key resolver
+// currently supports for LLM billing. GLM has no platform key path
+// yet, so we leave it out (admin can still add it BYOK).
+const AUTO_SEEDABLE = ['OPENAI', 'CLAUDE', 'GEMINI'] as const;
+
+// Ensure the workspace has an AiProvider row for every provider the
+// admin has configured a platform key for. Idempotent — inserts only
+// missing rows, uses the platform key as `apiKey` and marks them
+// useOwnKey=false so the credit-guard bills against the plan pool.
+// Without this seed, workspaces on a paid plan that never manually
+// added an API key saw an empty provider dropdown when creating an
+// agent even though credits were available.
+async function seedPlatformProviders(workspaceId: string, userId: string): Promise<void> {
+    if (!workspaceId) return;
+    const existing = await prisma.aiProvider.findMany({
+        where: { workspaceId },
+        select: { provider: true },
+    });
+    const have = new Set(existing.map(e => e.provider));
+    for (const provider of AUTO_SEEDABLE) {
+        if (have.has(provider)) continue;
+        const key = await resolvePlatformKey(provider);
+        if (!key) continue;
+        try {
+            await prisma.aiProvider.create({
+                data: {
+                    userId,
+                    workspaceId,
+                    provider,
+                    apiKey: key,
+                    useOwnKey: false,
+                },
+            });
+        } catch (err: any) {
+            logger.warn({ err: err.message, provider, workspaceId }, '[ai-providers] auto-seed failed (race?)');
+        }
+    }
+}
+
 export class AiProviderController {
     async listProviders(req: Request, res: Response) {
         try {
+            const userId = (req as any).user?.id;
             const workspaceId = getWorkspaceId(req);
+            // Auto-seed platform-backed providers so a fresh workspace
+            // on any plan can pick a provider from the dropdown right
+            // away without going to Settings first. Also self-heals
+            // for existing workspaces where the admin added a platform
+            // key after those workspaces were provisioned.
+            if (workspaceId && userId) {
+                await seedPlatformProviders(workspaceId, userId).catch(() => {});
+            }
             const providers = await prisma.aiProvider.findMany({
                 where: { workspaceId },
                 select: { id: true, provider: true, apiKey: true, useOwnKey: true, createdAt: true }

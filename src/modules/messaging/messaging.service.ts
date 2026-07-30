@@ -88,6 +88,34 @@ export async function inspectWhatsAppNumber(sock: any, phone: string) {
     }
 
     out.wouldSendTo = out.lid || pnJid;
+
+    // Encryption handshake. Everything above can look perfect while the
+    // Signal layer quietly fails: WhatsApp accepts the node, nobody can
+    // decrypt it, and no receipt is ever returned — which is exactly the
+    // "sent but never acknowledged" signature. assertSessions performs
+    // the prekey fetch and session build that a real send depends on, so
+    // it separates "our encryption state is broken" from "WhatsApp is
+    // refusing this recipient".
+    for (const [label, jid] of [['pn', pnJid], ['lid', out.lid]] as const) {
+        if (!jid) continue;
+        const key = `session_${label}`;
+        try {
+            const validated = await sock?.signalRepository?.validateSession?.(jid);
+            out[`${key}_exists`] = validated?.exists ?? null;
+            if (validated && !validated.exists) out[`${key}_reason`] = validated.reason ?? null;
+        } catch (err: any) {
+            out[`${key}_validateError`] = err.message;
+        }
+        try {
+            // force=true so it re-fetches prekeys rather than trusting a
+            // cached session — the same work a first send would do.
+            out[key] = await sock?.assertSessions?.([jid], true);
+        } catch (err: any) {
+            out[key] = false;
+            out[`${key}_error`] = err.message;
+        }
+    }
+
     return out;
 }
 

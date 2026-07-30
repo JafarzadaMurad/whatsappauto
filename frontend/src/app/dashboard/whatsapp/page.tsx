@@ -419,6 +419,15 @@ type DiagReport = {
     onWhatsApp?: any;
     onWhatsAppError?: string;
     lidError?: string;
+    // Signal handshake probe — see inspectWhatsAppNumber.
+    session_pn?: boolean;
+    session_pn_exists?: boolean | null;
+    session_pn_error?: string;
+    session_pn_reason?: string;
+    session_lid?: boolean;
+    session_lid_exists?: boolean | null;
+    session_lid_error?: string;
+    session_lid_reason?: string;
 };
 
 function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: () => void }) {
@@ -536,6 +545,16 @@ function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: (
                             <Row label="Phone JID" value={report.pnJid} />
                             <Row label="LID mapping" value={report.lid || '— none cached —'} />
                             <Row label="Would send to" value={report.wouldSendTo} strong />
+                            <div className="pt-1.5 mt-1.5 border-t border-border space-y-1.5">
+                                <SessionRow label="Encryption via phone JID"
+                                    ok={report.session_pn} exists={report.session_pn_exists}
+                                    error={report.session_pn_error || report.session_pn_reason} />
+                                {report.lid && (
+                                    <SessionRow label="Encryption via LID"
+                                        ok={report.session_lid} exists={report.session_lid_exists}
+                                        error={report.session_lid_error || report.session_lid_reason} />
+                                )}
+                            </div>
                         </div>
 
                         <div className="bg-secondary/20 border border-border rounded-lg p-3 space-y-2">
@@ -582,6 +601,35 @@ function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: (
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+// Result of the Signal handshake probe. A failure here means the
+// message can never be decrypted by the recipient no matter how it's
+// addressed — which is what separates a broken encryption session from
+// WhatsApp refusing the recipient outright.
+function SessionRow({ label, ok, exists, error }: {
+    label: string;
+    ok?: boolean;
+    exists?: boolean | null;
+    error?: string | null;
+}) {
+    const state = ok === true ? 'ok' : ok === false ? 'fail' : 'unknown';
+    return (
+        <div className="flex items-start justify-between gap-3">
+            <span className="text-muted-foreground flex-shrink-0">{label}</span>
+            <span className="text-right">
+                <span className={
+                    state === 'ok' ? 'text-emerald-400 font-semibold'
+                        : state === 'fail' ? 'text-red-400 font-semibold'
+                            : 'text-muted-foreground'
+                }>
+                    {state === 'ok' ? 'established' : state === 'fail' ? 'FAILED' : 'unknown'}
+                </span>
+                {exists === false && <span className="text-muted-foreground"> · no cached session</span>}
+                {error && <div className="text-[10px] text-red-400/80 break-all">{error}</div>}
+            </span>
         </div>
     );
 }

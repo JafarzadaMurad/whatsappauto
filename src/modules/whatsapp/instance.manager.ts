@@ -88,6 +88,32 @@ function makeDeviceCache(instanceId: string): DeviceCache {
 
 export const deviceCaches = new Map<string, DeviceCache>();
 
+// ─── Outgoing message store (retry receipts) ───────────────────────
+// WhatsApp asks the sender to re-encrypt and resend when a recipient
+// device can't decrypt a message. Baileys serves that through its
+// `getMessage` hook, and a message it can't produce is dropped without
+// any error surfacing — the send looked fine, and nothing ever arrives.
+// Retries land within seconds, so an in-memory copy answers nearly all
+// of them; the DB column behind it covers process restarts.
+const OUTGOING_TTL_MS = 10 * 60_000;
+const outgoingPayloads = new Map<string, { message: any; at: number }>();
+
+export function rememberOutgoing(waMsgId: string, message: any) {
+    if (!waMsgId || !message) return;
+    outgoingPayloads.set(waMsgId, { message, at: Date.now() });
+    if (outgoingPayloads.size > 2000) {
+        const cutoff = Date.now() - OUTGOING_TTL_MS;
+        for (const [k, v] of outgoingPayloads) if (v.at < cutoff) outgoingPayloads.delete(k);
+    }
+}
+
+export function getOutgoingPayload(waMsgId: string): any | undefined {
+    const e = outgoingPayloads.get(waMsgId);
+    if (!e) return undefined;
+    if (Date.now() - e.at > OUTGOING_TTL_MS) { outgoingPayloads.delete(waMsgId); return undefined; }
+    return e.message;
+}
+
 // ─── Send trace ────────────────────────────────────────────────────
 // Records the ids we've just sent so the event handlers below can log
 // *every* server event that mentions them — acks, receipts, retries,
@@ -289,12 +315,27 @@ export class InstanceManager {
                     try {
                         const waMsgId = key?.id;
                         if (!waMsgId) return undefined;
+
+                        // Hot path — retry receipts usually arrive within
+                        // seconds of the send, so the in-memory copy
+                        // answers almost every one without a query.
+                        const cached = getOutgoingPayload(waMsgId);
+                        if (cached) return cached;
+
                         const row = await prisma.message.findFirst({
                             where: { instanceId, waMsgId },
-                            select: { pollPayload: true },
+                            select: { pollPayload: true, waPayload: true },
                         });
-                        if (!row?.pollPayload) return undefined;
-                        return reviveBuffers(row.pollPayload as any);
+                        // waPayload covers ordinary messages; pollPayload
+                        // is the older poll-specific column kept so vote
+                        // decryption keeps working for existing rows.
+                        const stored = row?.waPayload ?? row?.pollPayload;
+                        if (!stored) {
+                            logger.warn(`[wa-retry] ${instanceId} ${waMsgId} retry requested but original content is gone — message will be dropped`);
+                            return undefined;
+                        }
+                        logger.info(`[wa-retry] ${instanceId} ${waMsgId} serving retry from ${row?.waPayload ? 'waPayload' : 'pollPayload'}`);
+                        return reviveBuffers(stored as any);
                     } catch { return undefined; }
                 },
             });
@@ -384,7 +425,25 @@ export class InstanceManager {
                         messageTimestamp: result?.messageTimestamp ?? null,
                     })}`);
                 } catch { /* never let logging break a send */ }
-                if (waMsgId !== 'NONE') traceSend(instanceId, waMsgId, target);
+                if (waMsgId !== 'NONE') {
+                    traceSend(instanceId, waMsgId, target);
+                    // Keep the proto so a retry receipt can be answered.
+                    // Without this Baileys has nothing to re-encrypt and
+                    // the message is dropped with no error and no ack.
+                    rememberOutgoing(waMsgId, result?.message);
+                    // Persist behind the in-memory copy so retries still
+                    // work after a restart. Deferred because the Message
+                    // row is written by the caller *after* this returns,
+                    // so an immediate update would match nothing.
+                    if (result?.message) {
+                        setTimeout(() => {
+                            prisma.message.updateMany({
+                                where: { instanceId, waMsgId },
+                                data: { waPayload: JSON.parse(JSON.stringify(result.message)) },
+                            }).catch(() => {});
+                        }, 3000).unref?.();
+                    }
+                }
                 return result;
             };
 

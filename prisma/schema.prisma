@@ -432,6 +432,15 @@ model Message {
   // fires. Null for every other message type.
   pollPayload Json?
 
+  // Outgoing message proto, kept so Baileys can answer retry receipts.
+  // When a recipient device fails to decrypt, WhatsApp asks the sender
+  // to re-encrypt and resend; Baileys serves that through its
+  // `getMessage` hook. Without the original content the retry can't be
+  // fulfilled and the message is silently dropped — no error, no ack,
+  // and it simply never arrives. Buffers are stored in the same
+  // placeholder form as pollPayload and revived on read.
+  waPayload Json?
+
   // Links a reply / reaction / poll-vote message back to the row it
   // refers to. Set to the parent's waMsgId. The inbox UI uses this
   // to render replies (and aggregate poll votes) under the original

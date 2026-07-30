@@ -164,6 +164,34 @@ export class WhatsappController {
         }
     }
 
+    // ─── Number diagnostics ─────────────────────────────────────────
+    // Answers "why didn't my message reach this number?" without shell
+    // access: is it registered on WhatsApp at all, what JID would we
+    // address, and does a LID mapping exist for it.
+    async checkNumber(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const phone = String(req.query.phone || '').trim();
+            if (!phone) return res.status(400).json({ success: false, message: 'phone query param is required' });
+
+            const instance = await prisma.instance.findFirst({
+                where: { id, workspaceId },
+                select: { id: true, status: true },
+            });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            const sock: any = sessions.get(id);
+            if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+
+            const { inspectWhatsAppNumber } = await import('../messaging/messaging.service');
+            const report = await inspectWhatsAppNumber(sock, phone);
+            return res.json({ success: true, report });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     // ─── Logout ─────────────────────────────────────────────────────
     // Disconnects the phone but keeps the DB row so the CRM can offer
     // a rebind by re-scanning the QR. Differs from DELETE which drops

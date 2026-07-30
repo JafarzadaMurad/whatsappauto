@@ -28,36 +28,67 @@ export async function resolveWhatsAppJid(sock: any, to: string): Promise<string>
     if (!digits) throw new Error(`Invalid phone number: "${to}"`);
     const pnJid = `${digits}@s.whatsapp.net`;
 
-    // 1. Ask Baileys whether this contact is LID-addressed. The store is
-    //    filled in as messages and device lists flow through, so for any
-    //    contact we've ever talked to this hits immediately.
+    // 1. Existence check FIRST. A stale or bogus LID mapping will happily
+    //    resolve and we'll address a device that isn't there — the send
+    //    then dies with no ack and no error. onWhatsApp is authoritative
+    //    and cheap, so ask before trusting any cached mapping.
+    try {
+        const results = await sock.onWhatsApp(digits);
+        if (Array.isArray(results) && results.length > 0) {
+            const hit = results.find((r: any) => r?.exists);
+            if (!hit) {
+                throw new Error(
+                    `${digits} is not registered on WhatsApp. Check the number — ` +
+                    `it must include the country code and no leading zero.`
+                );
+            }
+        }
+    } catch (err: any) {
+        if (/not registered on WhatsApp/.test(err.message)) throw err;
+        logger.warn({ err: err.message, to }, '[messaging] onWhatsApp check failed — continuing');
+    }
+
+    // 2. Prefer the LID when the conversation is LID-addressed. The store
+    //    checks its cache, then the auth key store, then queries the
+    //    server via USync — so it resolves for contacts we've never
+    //    exchanged messages with too.
     try {
         const lid = await sock?.signalRepository?.lidMapping?.getLIDForPN?.(pnJid);
-        if (lid) {
-            logger.debug({ to: pnJid, lid }, '[messaging] addressing via LID');
-            return lid;
-        }
+        if (lid) return lid;
     } catch (err: any) {
         logger.warn({ err: err.message, to: pnJid }, '[messaging] LID lookup failed');
     }
 
-    // 2. onWhatsApp both validates the number and returns whichever JID
-    //    form the server considers canonical for it.
+    return pnJid;
+}
+
+// Diagnostic for "why didn't my message arrive?". Reports whether the
+// number is on WhatsApp at all, which JID form we'd address, and what
+// the LID mapping store knows. Exposed via
+// GET /instances/:id/check-number?phone=… so support can answer the
+// question without shell access.
+export async function inspectWhatsAppNumber(sock: any, phone: string) {
+    const digits = String(phone).replace(/[^0-9]/g, '');
+    const pnJid = `${digits}@s.whatsapp.net`;
+    const out: Record<string, any> = { input: phone, digits, pnJid };
+
     try {
         const results = await sock.onWhatsApp(digits);
-        const hit = Array.isArray(results) ? results.find((r: any) => r?.exists) : null;
-        if (hit?.lid) return hit.lid;
-        if (hit?.jid) return hit.jid;
-        if (Array.isArray(results) && results.length > 0 && !hit) {
-            throw new Error(`${digits} is not registered on WhatsApp`);
-        }
+        out.onWhatsApp = results ?? null;
+        out.registered = Array.isArray(results) && results.some((r: any) => r?.exists);
     } catch (err: any) {
-        // A genuine "not registered" verdict should surface to the caller.
-        if (/not registered on WhatsApp/.test(err.message)) throw err;
-        logger.warn({ err: err.message, to }, '[messaging] onWhatsApp lookup failed — falling back to phone JID');
+        out.onWhatsAppError = err.message;
+        out.registered = null;
     }
 
-    return pnJid;
+    try {
+        out.lid = await sock?.signalRepository?.lidMapping?.getLIDForPN?.(pnJid) ?? null;
+    } catch (err: any) {
+        out.lidError = err.message;
+    }
+
+    out.wouldSendTo = out.lid || pnJid;
+    return out;
 }
 
 export class MessagingService {

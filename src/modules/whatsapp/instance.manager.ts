@@ -43,29 +43,73 @@ type DeviceCache = {
 
 const DEVICE_CACHE_TTL_MS = 5 * 60_000;
 
-function makeDeviceCache(): DeviceCache {
+function makeDeviceCache(instanceId: string): DeviceCache {
     const store = new Map<string, { value: any; at: number }>();
     const fresh = (e?: { value: any; at: number }) =>
         e && Date.now() - e.at < DEVICE_CACHE_TTL_MS ? e.value : undefined;
+
+    // Owning this cache also makes device enumeration observable. If
+    // WhatsApp reports zero devices for a contact, Baileys encrypts for
+    // nobody: the send resolves, a message id comes back, the node goes
+    // out addressed to no one, and no ack ever returns — indistinguish-
+    // able from success at the call site. Logging what lands here is the
+    // cheapest way to see that.
+    const describe = (value: any) =>
+        Array.isArray(value) ? `${value.length} device(s): [${value.join(',')}]` : JSON.stringify(value);
+
     return {
         get: (key) => fresh(store.get(key)),
-        set: (key, value) => { store.set(key, { value, at: Date.now() }); },
+        set: (key, value) => {
+            store.set(key, { value, at: Date.now() });
+            logger.info(`[wa-devices] ${instanceId} ${key} → ${describe(value)}`);
+        },
         mget: (keys) => {
             const out: Record<string, any> = {};
+            const hits: string[] = [];
             for (const k of keys) {
                 const v = fresh(store.get(k));
-                if (v !== undefined) out[k] = v;
+                if (v !== undefined) { out[k] = v; hits.push(k); }
+            }
+            if (keys.length) {
+                const misses = keys.filter(k => !hits.includes(k));
+                logger.info(`[wa-devices] ${instanceId} lookup hit=[${hits.join(',')}] miss=[${misses.join(',')}]`);
             }
             return out;
         },
         mset: (pairs) => {
-            for (const { key, value } of pairs) store.set(key, { value, at: Date.now() });
+            for (const { key, value } of pairs) {
+                store.set(key, { value, at: Date.now() });
+                logger.info(`[wa-devices] ${instanceId} ${key} → ${describe(value)}`);
+            }
         },
         del: (key) => store.delete(key),
     };
 }
 
 export const deviceCaches = new Map<string, DeviceCache>();
+
+// ─── Send trace ────────────────────────────────────────────────────
+// Records the ids we've just sent so the event handlers below can log
+// *every* server event that mentions them — acks, receipts, retries,
+// decryption failures. When a message reports no ack the question is
+// always "did WhatsApp say anything at all about it?", and this is
+// what answers it. Entries expire so the map can't grow unbounded.
+const TRACE_TTL_MS = 120_000;
+const sendTrace = new Map<string, { instanceId: string; jid: string; at: number }>();
+
+export function traceSend(instanceId: string, waMsgId: string, jid: string) {
+    sendTrace.set(waMsgId, { instanceId, jid, at: Date.now() });
+    if (sendTrace.size > 500) {
+        const cutoff = Date.now() - TRACE_TTL_MS;
+        for (const [k, v] of sendTrace) if (v.at < cutoff) sendTrace.delete(k);
+    }
+}
+
+export function isTraced(waMsgId?: string | null): boolean {
+    if (!waMsgId) return false;
+    const e = sendTrace.get(waMsgId);
+    return !!e && Date.now() - e.at < TRACE_TTL_MS;
+}
 
 import { setInstanceWorkspace, forgetInstanceWorkspace, emitToWorkspaceSync } from '../../lib/socket-rooms';
 
@@ -165,7 +209,7 @@ export class InstanceManager {
             // they're testing a fix and need the very next send to
             // re-enumerate devices. Only the four methods Baileys calls
             // are needed (mget / mset / get / set).
-            const deviceCache = makeDeviceCache();
+            const deviceCache = makeDeviceCache(instanceId);
             deviceCaches.set(instanceId, deviceCache);
 
             const sock = makeWASocket({
@@ -251,14 +295,41 @@ export class InstanceManager {
                         how = `pn-lookup-threw(${err.message})`;
                     }
                 }
-                const result = await rawSendMessage(target, content, options);
+                const t0 = Date.now();
+                let result: any;
+                try {
+                    result = await rawSendMessage(target, content, options);
+                } catch (err: any) {
+                    // A throw here is the *good* failure mode — it means
+                    // Baileys knew something was wrong. Log it fully; the
+                    // silent path is the one that's been hard to chase.
+                    logger.error(
+                        `[wa-send] ${instanceId} FAILED requested=${jid} sentTo=${target} how=${how} ` +
+                        `err=${err?.message} output=${JSON.stringify(err?.output || err?.data || null)}`
+                    );
+                    throw err;
+                }
+                const waMsgId = result?.key?.id || 'NONE';
                 // Everything on ONE line — pino-pretty prints structured
                 // fields on following lines, which `grep` filters out, and
-                // this is the line operators will be grepping during a
-                // "message didn't arrive" investigation.
+                // this is the line operators grep during a "message didn't
+                // arrive" investigation.
                 logger.info(
-                    `[wa-send] ${instanceId} requested=${jid} sentTo=${target} how=${how} waMsgId=${(result as any)?.key?.id || 'NONE'}`
+                    `[wa-send] ${instanceId} requested=${jid} sentTo=${target} how=${how} ` +
+                    `waMsgId=${waMsgId} tookMs=${Date.now() - t0} status=${result?.status ?? 'n/a'}`
                 );
+                // Full envelope — key (id / remoteJid / fromMe / participant),
+                // status and message type. Answers "what exactly did we
+                // hand WhatsApp and what did it hand back".
+                try {
+                    logger.info(`[wa-send-detail] ${instanceId} ${waMsgId} ${JSON.stringify({
+                        key: result?.key ?? null,
+                        status: result?.status ?? null,
+                        messageTypes: result?.message ? Object.keys(result.message) : [],
+                        messageTimestamp: result?.messageTimestamp ?? null,
+                    })}`);
+                } catch { /* never let logging break a send */ }
+                if (waMsgId !== 'NONE') traceSend(instanceId, waMsgId, target);
                 return result;
             };
 
@@ -918,9 +989,33 @@ export class InstanceManager {
             // it on the matching Message row by waMsgId and emit a
             // realtime message.status event so the inbox can swap the
             // tick icon without a refresh.
+            // Raw server feedback for anything we just sent. Separate from
+            // the receipt handler below on purpose: that one only reacts
+            // to numeric status changes, so an event carrying an error or
+            // a retry request would pass through invisibly.
+            sock.ev.on('message-receipt.update', (updates: any[]) => {
+                for (const u of updates || []) {
+                    if (!isTraced(u?.key?.id)) continue;
+                    try {
+                        logger.info(`[wa-receipt] ${instanceId} ${u.key.id} ${JSON.stringify({
+                            remoteJid: u.key?.remoteJid,
+                            receipt: u.receipt ?? null,
+                        })}`);
+                    } catch { /* ignore */ }
+                }
+            });
+
             sock.ev.on('messages.update', async (updates: any[]) => {
                 for (const u of updates) {
                     const waId = u?.key?.id;
+                    // Log the whole update for traced sends before any
+                    // filtering — this is where a server-side rejection
+                    // would show up.
+                    if (isTraced(waId)) {
+                        try {
+                            logger.info(`[wa-update] ${instanceId} ${waId} ${JSON.stringify(u.update ?? u)}`);
+                        } catch { /* ignore */ }
+                    }
                     // Poll vote ingest. Baileys delivers vote updates
                     // here with `pollUpdates`. We look up the original
                     // poll row (pollPayload column) so

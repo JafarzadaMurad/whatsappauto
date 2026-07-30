@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { watchDelivery } from '../whatsapp/delivery-watchdog';
+import { resolveWhatsAppJid } from '../messaging/messaging.service';
 
 // Older rows in DB still carry "[Media/Unsupported]" / "[Media]" as the
 // literal preview text from before message-content.ts started producing
@@ -653,7 +654,9 @@ export class InboxController {
 
             let sent: any;
             try {
-                sent = await sock.sendMessage(body.remoteJid, payload);
+                // Same LID-vs-phone resolution as the text path.
+                const mediaJid = await resolveWhatsAppJid(sock, body.remoteJid);
+                sent = await sock.sendMessage(mediaJid, payload);
                 if (!sent) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
             } catch (e: any) {
                 return res.status(502).json({ success: false, message: e.message || 'Send failed' });
@@ -752,9 +755,19 @@ export class InboxController {
             const { sessions } = await import('../whatsapp/instance.manager');
             const sock = sessions.get(accountId);
             if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+            // Resolve to the JID WhatsApp actually expects. We store
+            // conversations under the phone JID (lid-resolver canonicalises
+            // inbound LIDs), but LID-addressed chats must be *sent* to the
+            // LID or the message silently dies in the socket.
+            let sendJid = remoteJid;
+            try {
+                sendJid = await resolveWhatsAppJid(sock, remoteJid);
+            } catch (e: any) {
+                return res.status(502).json({ success: false, message: e.message || 'Could not resolve recipient' });
+            }
             let sentText: any;
             try {
-                sentText = await sock.sendMessage(remoteJid, { text });
+                sentText = await sock.sendMessage(sendJid, { text });
                 if (!sentText) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
             } catch (e: any) {
                 return res.status(502).json({ success: false, message: e.message || 'Send failed' });

@@ -153,6 +153,40 @@ export class InstanceManager {
                 },
             });
 
+            // ─── LID addressing shim ─────────────────────────────────
+            // Baileys encodes the send target purely from the JID you
+            // pass (`isLid ? 'lid' : 's.whatsapp.net'` in messages-send)
+            // — it never translates a phone JID into a LID. Once a
+            // conversation is LID-addressed (standard whenever either
+            // side is a WhatsApp Business App account), sending to
+            // `<phone>@s.whatsapp.net` builds no Signal session: the
+            // call resolves, the UI ticks, and the message silently
+            // dies with no server ack.
+            //
+            // We store conversations under the phone JID on purpose
+            // (see lid-resolver) so the CRM has one stable key per
+            // contact. Rather than teach a dozen callsites the
+            // difference, translate once here — every consumer
+            // (inbox, agent replies, automations, campaigns, operator
+            // handoff) gets correct addressing for free.
+            const rawSendMessage = sock.sendMessage.bind(sock);
+            (sock as any).sendMessage = async (jid: string, content: any, options?: any) => {
+                let target = jid;
+                // Groups, broadcasts and explicit LIDs are already right.
+                if (typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
+                    try {
+                        const lid = await (sock as any)?.signalRepository?.lidMapping?.getLIDForPN?.(jid);
+                        if (lid) {
+                            target = lid;
+                            logger.debug({ instanceId, from: jid, to: lid }, '[lid-shim] re-addressed to LID');
+                        }
+                    } catch (err: any) {
+                        logger.warn({ err: err.message, instanceId, jid }, '[lid-shim] LID lookup failed — sending to phone JID');
+                    }
+                }
+                return rawSendMessage(target, content, options);
+            };
+
             sessions.set(instanceId, sock);
 
             sock.ev.on('connection.update', async (update) => {

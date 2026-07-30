@@ -2,29 +2,62 @@ import { sessions } from '../whatsapp/instance.manager';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 
-// Resolve the outbound recipient's JID. WhatsApp Business App accounts
-// scanned via Baileys sometimes need the LID (`@lid`) form instead of
-// the classic `@s.whatsapp.net` form — otherwise sendMessage returns
-// `undefined` (success-looking) but the message never leaves the socket.
-// Calling `onWhatsApp(number)` gives us the canonical JID whichever the
-// account uses, plus a genuine "does this number exist on WhatsApp?"
-// signal so we can return a real error instead of a phantom success.
+// Resolve the outbound recipient's JID.
+//
+// Baileys does NOT translate a phone JID into a LID on send — see
+// Socket/messages-send.js, which encodes the target with
+// `isLid ? 'lid' : 's.whatsapp.net'` based purely on the JID you hand
+// it. When the conversation is LID-addressed (the norm once either side
+// is a WhatsApp Business App account), addressing the classic
+// `<phone>@s.whatsapp.net` form builds no Signal session: sendMessage()
+// still resolves, the UI shows a tick, and the message never leaves the
+// socket. No ack ever arrives. That is the "gedir kimi görsənir, amma
+// getmir" bug.
+//
+// Order of preference:
+//   1. Group JIDs and already-LID JIDs pass through untouched.
+//   2. Baileys' own LID mapping store (populated from every inbound
+//      message and every usync device fetch) — authoritative.
+//   3. onWhatsApp() — also confirms the number exists at all.
+//   4. Synthetic phone JID — last resort, previous behaviour.
 export async function resolveWhatsAppJid(sock: any, to: string): Promise<string> {
-    // Already a JID? Trust it.
-    if (to.includes('@s.whatsapp.net') || to.includes('@lid') || to.includes('@g.us')) return to;
+    // Groups and explicit LIDs are already correct.
+    if (to.endsWith('@g.us') || to.endsWith('@lid')) return to;
+
     const digits = String(to).replace(/[^0-9]/g, '');
     if (!digits) throw new Error(`Invalid phone number: "${to}"`);
+    const pnJid = `${digits}@s.whatsapp.net`;
+
+    // 1. Ask Baileys whether this contact is LID-addressed. The store is
+    //    filled in as messages and device lists flow through, so for any
+    //    contact we've ever talked to this hits immediately.
+    try {
+        const lid = await sock?.signalRepository?.lidMapping?.getLIDForPN?.(pnJid);
+        if (lid) {
+            logger.debug({ to: pnJid, lid }, '[messaging] addressing via LID');
+            return lid;
+        }
+    } catch (err: any) {
+        logger.warn({ err: err.message, to: pnJid }, '[messaging] LID lookup failed');
+    }
+
+    // 2. onWhatsApp both validates the number and returns whichever JID
+    //    form the server considers canonical for it.
     try {
         const results = await sock.onWhatsApp(digits);
         const hit = Array.isArray(results) ? results.find((r: any) => r?.exists) : null;
+        if (hit?.lid) return hit.lid;
         if (hit?.jid) return hit.jid;
+        if (Array.isArray(results) && results.length > 0 && !hit) {
+            throw new Error(`${digits} is not registered on WhatsApp`);
+        }
     } catch (err: any) {
-        logger.warn({ err: err.message, to }, '[messaging] onWhatsApp lookup failed — falling back to synthetic JID');
+        // A genuine "not registered" verdict should surface to the caller.
+        if (/not registered on WhatsApp/.test(err.message)) throw err;
+        logger.warn({ err: err.message, to }, '[messaging] onWhatsApp lookup failed — falling back to phone JID');
     }
-    // Fallback — same shape the code used before. Better to try than
-    // hard-fail; if the number is registered under a variant, the
-    // classic form still delivers on most personal accounts.
-    return `${digits}@s.whatsapp.net`;
+
+    return pnJid;
 }
 
 export class MessagingService {

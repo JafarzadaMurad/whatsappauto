@@ -823,6 +823,15 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         return aiModels[p] || [];
     };
 
+    // Hide providers whose model list is empty on this plan — selecting
+    // one would leave the Model dropdown blank with no explanation. The
+    // agent's currently-saved provider always stays in the list so an
+    // existing config never silently disappears mid-edit.
+    const catalogueLoaded = Object.keys(aiModels).length > 0;
+    const usableProviders = catalogueLoaded
+        ? providers.filter(p => (aiModels[p.provider] || []).length > 0 || p.id === providerId)
+        : providers;
+
     const toggleActive = async () => {
         try {
             await api.put(`/agents/${id}`, { name, providerId, model, systemPrompt, allowedTableIds, skills, httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, timezone, isRouter, routerDescription: routerDescription || null, routableAgentIds, isActive: !agent.isActive });
@@ -1565,8 +1574,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                                 <select value={providerId} onChange={e => { setProviderId(e.target.value); setModel(''); }}
                                     className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
                                     <option value="" disabled>Select Provider</option>
-                                    {providers.map(p => <option key={p.id} value={p.id}>{p.provider}</option>)}
+                                    {usableProviders.map(p => <option key={p.id} value={p.id}>{p.provider}</option>)}
                                 </select>
+                                {catalogueLoaded && usableProviders.length === 0 && (
+                                    <p className="text-[11px] text-amber-400 mt-1">
+                                        No provider has models enabled on your plan.
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground">Model</label>

@@ -105,7 +105,17 @@ export default function WhatsAppPage() {
                     // pairing completes, socket message or not.
                     setActiveQr(prev => (prev?.id === instanceId && prev.qrUrl === r.data.qr) ? prev : { id: instanceId, qrUrl: r.data.qr });
                 }
-            } catch { /* keep polling */ }
+            } catch (err: any) {
+                // 404 = the instance was deleted (or belongs to another
+                // workspace after a switch). Stop immediately — the old
+                // catch-all kept hammering the endpoint for the full
+                // 5 minutes and flooded the console with 404s.
+                if (err?.response?.status === 404 || err?.response?.status === 403) {
+                    setActiveQr(prev => prev?.id === instanceId ? null : prev);
+                    return;
+                }
+                /* transient error — keep polling */
+            }
             await new Promise(r => setTimeout(r, 1500));
         }
     };

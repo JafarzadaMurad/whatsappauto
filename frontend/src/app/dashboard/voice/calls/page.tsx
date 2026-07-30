@@ -10,6 +10,7 @@ import Link from "next/link";
 import {
     PhoneCall, Loader2, Coins, ArrowDownLeft, ArrowUpRight, Globe, X,
     CheckCircle2, XCircle, Voicemail, PhoneOff, AlertTriangle,
+    ExternalLink, RefreshCcw,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -32,6 +33,7 @@ type Call = {
     transcript: Array<{ role: 'user' | 'assistant'; text: string; at?: string }> | null;
     recordingUrl: string | null;
     errorLog: string | null;
+    twilioCallSid: string | null;
     startedAt: string;
     endedAt: string | null;
     voiceAssistant?: { id: string; name: string } | null;
@@ -249,15 +251,19 @@ function CallDrawer({ call, onClose }: { call: Call; onClose: () => void }) {
                     {call.errorLog && (
                         <div>
                             <h4 className="text-xs font-semibold flex items-center gap-1.5 mb-2 text-amber-400">
-                                <AlertTriangle className="w-3.5 h-3.5" /> Diagnostics
+                                <AlertTriangle className="w-3.5 h-3.5" /> Bridge diagnostics
                             </h4>
                             <p className="text-[10px] text-muted-foreground mb-1">
-                                Everything the bridge saw that wasn't happy audio — OpenAI Realtime errors, WebSocket drops, Twilio frame anomalies. If the call played "an application error has occurred", the reason is in here.
+                                Everything the bridge saw — OpenAI Realtime errors, WebSocket drops. If the call played "an application error has occurred", the reason is usually in here.
                             </p>
                             <pre className="bg-secondary/30 border border-border rounded-lg p-2.5 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
 {call.errorLog}
                             </pre>
                         </div>
+                    )}
+
+                    {call.twilioCallSid && (
+                        <TwilioEvents callSid={call.twilioCallSid} />
                     )}
 
                     {call.transcript && call.transcript.length > 0 && (
@@ -296,6 +302,153 @@ function CostRow({ label, usd }: { label: string; usd: number }) {
         <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{label}</span>
             <span className="font-mono">${(usd || 0).toFixed(4)}</span>
+        </div>
+    );
+}
+
+// ─── Twilio events (on-demand fetch) ───────────────────────────────
+type TwilioNotification = {
+    sid: string;
+    errorCode: string | number | null;
+    log: string | number | null; // "0" = error, "1" = warning
+    messageDate: string | null;
+    messageText: string | null;
+    moreInfo: string | null;
+};
+type TwilioBundle = {
+    call: {
+        sid: string; status: string; direction: string;
+        from: string | null; to: string | null;
+        duration: string | null; price: string | null; priceUnit: string | null;
+        errorCode: number | null; errorMessage: string | null;
+        startTime: string | null; endTime: string | null;
+    };
+    notifications: TwilioNotification[];
+    recordings: { sid: string; duration: string; status: string }[];
+    consoleUrl: string;
+};
+
+function TwilioEvents({ callSid }: { callSid: string }) {
+    const [data, setData] = useState<TwilioBundle | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchIt = async () => {
+        setLoading(true); setError(null);
+        try {
+            const r = await api.get(`/voice/calls/${callSid}/twilio-events`);
+            if (r.data?.success) setData({
+                call: r.data.call,
+                notifications: r.data.notifications || [],
+                recordings: r.data.recordings || [],
+                consoleUrl: r.data.consoleUrl,
+            });
+        } catch (err: any) {
+            setError(err.response?.data?.message || err.message);
+        } finally { setLoading(false); }
+    };
+
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold flex items-center gap-1.5">
+                    <PhoneCall className="w-3.5 h-3.5 text-primary" /> Twilio-side events
+                </h4>
+                {data ? (
+                    <button onClick={fetchIt} disabled={loading}
+                        title="Refresh"
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary/50 disabled:opacity-40">
+                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
+                    </button>
+                ) : (
+                    <button onClick={fetchIt} disabled={loading}
+                        className="text-[11px] bg-secondary/50 hover:bg-secondary border border-border rounded-lg px-2 py-1 flex items-center gap-1 disabled:opacity-60">
+                        {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />}
+                        Fetch from Twilio
+                    </button>
+                )}
+            </div>
+            <p className="text-[10px] text-muted-foreground mb-2">
+                CallSid: <span className="font-mono">{callSid}</span>
+            </p>
+
+            {error && (
+                <div className="text-[11px] bg-red-500/10 border border-red-500/25 text-red-400 rounded px-2 py-1.5 mb-2">
+                    {error}
+                </div>
+            )}
+
+            {data && (
+                <div className="space-y-2">
+                    {/* Twilio's summary */}
+                    <div className="bg-secondary/30 border border-border rounded-lg p-2.5 text-[11px] space-y-1">
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Twilio status</span>
+                            <span className="font-mono">{data.call.status}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Duration</span>
+                            <span className="font-mono">{data.call.duration ? `${data.call.duration}s` : '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Twilio price</span>
+                            <span className="font-mono">
+                                {data.call.price ? `${data.call.price} ${data.call.priceUnit || ''}` : '—'}
+                            </span>
+                        </div>
+                        {data.call.errorCode && (
+                            <div className="pt-1 border-t border-border/50 text-red-400">
+                                <span className="font-semibold">#{data.call.errorCode}</span> · {data.call.errorMessage || 'no message'}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Notifications — the meat */}
+                    {data.notifications.length === 0 ? (
+                        <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-2.5 py-1.5 text-[11px] text-emerald-400">
+                            Twilio recorded no warnings or errors for this call.
+                        </div>
+                    ) : (
+                        <div className="space-y-1.5">
+                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                Twilio notifications ({data.notifications.length})
+                            </div>
+                            {data.notifications.map(n => {
+                                const isError = String(n.log) === '0';
+                                return (
+                                    <div key={n.sid}
+                                        className={`border rounded-lg p-2 text-[11px] space-y-0.5 ${
+                                            isError ? 'bg-red-500/5 border-red-500/25' : 'bg-amber-500/5 border-amber-500/25'
+                                        }`}>
+                                        <div className={`font-semibold ${isError ? 'text-red-400' : 'text-amber-400'}`}>
+                                            {isError ? 'ERROR' : 'WARN'} · #{n.errorCode || '-'}
+                                        </div>
+                                        {n.messageText && (
+                                            <div className="text-muted-foreground whitespace-pre-wrap break-words">{n.messageText}</div>
+                                        )}
+                                        {n.moreInfo && (
+                                            <a href={n.moreInfo} target="_blank" rel="noreferrer"
+                                                className="text-primary hover:underline inline-flex items-center gap-0.5 text-[10px]">
+                                                Docs <ExternalLink className="w-2.5 h-2.5" />
+                                            </a>
+                                        )}
+                                        {n.messageDate && (
+                                            <div className="text-[10px] text-muted-foreground">
+                                                {new Date(n.messageDate).toLocaleString()}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    <a href={data.consoleUrl} target="_blank" rel="noreferrer"
+                        className="text-[11px] text-primary hover:underline inline-flex items-center gap-1">
+                        Open in Twilio Console <ExternalLink className="w-3 h-3" />
+                    </a>
+                </div>
+            )}
         </div>
     );
 }

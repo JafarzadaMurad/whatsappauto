@@ -40,7 +40,8 @@ export class MessagingService {
             const message = await sock.sendMessage(jid, { text });
             if (!message) throw new Error('WhatsApp accepted the request but returned no message id — likely a Business-account restriction. Try opening the chat on the phone once, then retry.');
 
-            // Log to DB
+            // Log to DB. PENDING + waMsgId so the ack handler and the
+            // delivery watchdog can prove whether it actually landed.
             if (message) {
                 await prisma.message.create({
                     data: {
@@ -49,10 +50,13 @@ export class MessagingService {
                         isFromMe: true,
                         messageType: 'text',
                         content: text,
-                        status: 'SENT',
+                        waMsgId: message?.key?.id || null,
+                        status: 'PENDING',
                         timestamp: new Date()
                     }
                 });
+                const { watchDelivery } = await import('../whatsapp/delivery-watchdog');
+                watchDelivery({ instanceId, waMsgId: message?.key?.id, remoteJid: jid, context: 'api' });
             }
 
             return message;
@@ -84,7 +88,7 @@ export class MessagingService {
 
             const message = await sock.sendMessage(jid, mediaMessage);
 
-            // Log to DB
+            // Log to DB — same PENDING + watchdog treatment as text.
             if (message) {
                 await prisma.message.create({
                     data: {
@@ -93,10 +97,13 @@ export class MessagingService {
                         isFromMe: true,
                         messageType: mediaType,
                         content: url + (caption ? `\nCaption: ${caption}` : ''),
-                        status: 'SENT',
+                        waMsgId: message?.key?.id || null,
+                        status: 'PENDING',
                         timestamp: new Date()
                     }
                 });
+                const { watchDelivery } = await import('../whatsapp/delivery-watchdog');
+                watchDelivery({ instanceId, waMsgId: message?.key?.id, remoteJid: jid, context: 'api-media' });
             }
 
             return message;

@@ -119,6 +119,16 @@ export default function AiAgentsPage() {
         return aiModels[selectedProvider] || [];
     };
 
+    // A provider with zero models on this plan is unusable — picking it
+    // leaves the Model dropdown empty and the form unsubmittable. Hide
+    // those so the list only shows what the workspace can actually run.
+    // (Before the catalogue loads we show everything rather than flash
+    // an empty list.)
+    const catalogueLoaded = Object.keys(aiModels).length > 0;
+    const usableProviders = catalogueLoaded
+        ? providers.filter(p => (aiModels[p.provider] || []).length > 0)
+        : providers;
+
     return (
         <div className="max-w-6xl mx-auto space-y-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -182,10 +192,15 @@ export default function AiAgentsPage() {
                                             className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                                         >
                                             <option value="" disabled>Select Provider</option>
-                                            {providers.map(p => (
+                                            {usableProviders.map(p => (
                                                 <option key={p.id} value={p.id}>{p.provider}</option>
                                             ))}
                                         </select>
+                                        {catalogueLoaded && usableProviders.length === 0 && (
+                                            <p className="text-[11px] text-amber-400 mt-1">
+                                                No provider has models enabled on your plan. Ask an admin to allow models under Admin → Plans → AI models.
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-muted-foreground">Model</label>

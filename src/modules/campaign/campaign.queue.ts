@@ -173,17 +173,23 @@ export const startCampaignWorker = () => {
             // SENT while the message never left the client.
             if (!sendResult) throw new Error('WhatsApp did not confirm the send — likely a Business-account restriction. Try opening the chat on the phone once, then retry.');
 
-            // Save to Message table (so incoming handler has history)
+            // Save to Message table (so incoming handler has history).
+            // waMsgId + PENDING let the messages.update ack handler and
+            // the delivery watchdog tell us whether it actually landed.
             await prisma.message.create({
                 data: {
                     instanceId: campaign.instanceId,
-                    remoteJid: recipient.remoteJid,
+                    remoteJid: jid,
                     isFromMe: true,
                     messageType: 'text',
+                    waMsgId: sendResult?.key?.id || null,
+                    status: 'PENDING',
                     content: text,
                     timestamp: new Date()
                 }
             });
+            const { watchDelivery } = await import('../whatsapp/delivery-watchdog');
+            watchDelivery({ instanceId: campaign.instanceId, waMsgId: sendResult?.key?.id, remoteJid: jid, context: 'campaign' });
 
             // Save conversation log (only for AI-composed sends —
             // fixed-template sends don't burn tokens, no log entry needed).

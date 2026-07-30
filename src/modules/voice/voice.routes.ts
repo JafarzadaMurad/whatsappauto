@@ -29,6 +29,7 @@ router.delete('/assistants/:id', assistants.remove.bind(assistants));
 router.post('/assistants/:id/test-session', assistants.testSession.bind(assistants));
 router.post('/assistants/:id/test-call', assistants.testCall.bind(assistants));
 router.get('/calls/:sid/status', assistants.callStatus.bind(assistants));
+router.get('/calls/:sid/twilio-events', assistants.twilioEvents.bind(assistants));
 
 router.get('/calls', assistants.listCalls.bind(assistants));
 

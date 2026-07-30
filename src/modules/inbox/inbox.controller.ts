@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { watchDelivery } from '../whatsapp/delivery-watchdog';
 
 // Older rows in DB still carry "[Media/Unsupported]" / "[Media]" as the
 // literal preview text from before message-content.ts started producing
@@ -668,11 +669,13 @@ export class InboxController {
                     mediaUrl: mediaUrl,
                     mediaMime: mimetype || null,
                     mediaName: body.fileName || null,
-                    status: 'SENT',
+                    // PENDING until WhatsApp acks — see delivery-watchdog.
+                    status: 'PENDING',
                     timestamp: new Date(),
                     waMsgId: sent?.key?.id || null,
                 },
             });
+            watchDelivery({ instanceId: body.accountId, waMsgId: sent?.key?.id, remoteJid: body.remoteJid, context: 'inbox-media' });
             // Mirror the shape the inbox /messages endpoint returns so
             // the frontend's MessageBubble (which keys off
             // userMessage/agentReply, not isFromMe) renders the bubble
@@ -749,18 +752,26 @@ export class InboxController {
             const { sessions } = await import('../whatsapp/instance.manager');
             const sock = sessions.get(accountId);
             if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+            let sentText: any;
             try {
-                const sent = await sock.sendMessage(remoteJid, { text });
-                if (!sent) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
+                sentText = await sock.sendMessage(remoteJid, { text });
+                if (!sentText) throw new Error('WhatsApp did not confirm the send — Business-account restriction? Open the chat on your phone once, then retry.');
             } catch (e: any) {
                 return res.status(502).json({ success: false, message: e.message || 'Send failed' });
             }
+            // Store waMsgId + start at PENDING so the messages.update
+            // ack handler can flip us to SENT/DELIVERED/READ. Without
+            // the id the ack never matched and every message looked
+            // delivered regardless of reality.
             const saved = await prisma.message.create({
                 data: {
                     instanceId: accountId, remoteJid, isFromMe: true,
                     messageType: 'text', content: text, timestamp: new Date(),
+                    waMsgId: sentText?.key?.id || null,
+                    status: 'PENDING',
                 }
             });
+            watchDelivery({ instanceId: accountId, waMsgId: sentText?.key?.id, remoteJid, context: 'inbox' });
             return res.json({ success: true, message: {
                 id: saved.id,
                 userMessage: '', agentReply: text,

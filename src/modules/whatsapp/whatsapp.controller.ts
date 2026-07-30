@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { InstanceManager, getLatestQr, sessions } from './instance.manager';
+import { InstanceManager, getLatestQr, sessions, deviceCaches } from './instance.manager';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
@@ -247,6 +247,22 @@ export class WhatsappController {
             } catch (err: any) {
                 logger.warn({ err: err.message, id, phone }, '[reset-contact] session clear failed');
             }
+
+            // Evict the cached device list too. Without this the next
+            // send reuses the stale list for up to 5 minutes and the
+            // reset appears to do nothing.
+            try {
+                const cache = deviceCaches.get(id);
+                if (cache) {
+                    for (const u of users) {
+                        if (cache.del(u)) cleared.push(`devices:${u}`);
+                    }
+                }
+            } catch (err: any) {
+                logger.warn({ err: err.message, id, phone }, '[reset-contact] device cache evict failed');
+            }
+
+            logger.info(`[reset-contact] ${id} phone=${phone} lid=${lidJid || 'none'} cleared=${cleared.length}`);
 
             return res.json({
                 success: true,

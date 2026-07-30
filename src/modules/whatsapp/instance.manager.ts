@@ -27,6 +27,46 @@ import { maybeRefreshProfilePicAsync } from './profile-pic';
 
 export const sessions = new Map<string, WASocket>();
 
+// ─── Per-contact device-list cache ─────────────────────────────────
+// Baileys keeps its own 5-minute NodeCache of each contact's device
+// list and doesn't expose it, so there's no way to force a refresh
+// after a contact changes devices. We hand it ours instead, keep the
+// reference here, and let `reset-contact` evict a single contact so
+// the next send re-enumerates immediately.
+type DeviceCache = {
+    get(key: string): any;
+    set(key: string, value: any): void;
+    mget(keys: string[]): Record<string, any>;
+    mset(pairs: { key: string; value: any }[]): void;
+    del(key: string): boolean;
+};
+
+const DEVICE_CACHE_TTL_MS = 5 * 60_000;
+
+function makeDeviceCache(): DeviceCache {
+    const store = new Map<string, { value: any; at: number }>();
+    const fresh = (e?: { value: any; at: number }) =>
+        e && Date.now() - e.at < DEVICE_CACHE_TTL_MS ? e.value : undefined;
+    return {
+        get: (key) => fresh(store.get(key)),
+        set: (key, value) => { store.set(key, { value, at: Date.now() }); },
+        mget: (keys) => {
+            const out: Record<string, any> = {};
+            for (const k of keys) {
+                const v = fresh(store.get(k));
+                if (v !== undefined) out[k] = v;
+            }
+            return out;
+        },
+        mset: (pairs) => {
+            for (const { key, value } of pairs) store.set(key, { value, at: Date.now() });
+        },
+        del: (key) => store.delete(key),
+    };
+}
+
+export const deviceCaches = new Map<string, DeviceCache>();
+
 import { setInstanceWorkspace, forgetInstanceWorkspace, emitToWorkspaceSync } from '../../lib/socket-rooms';
 
 // Latest QR per instance kept in memory for the REST poll endpoint.
@@ -118,8 +158,19 @@ export class InstanceManager {
             const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${instanceId}`);
             const { version } = await fetchLatestBaileysVersion();
 
+            // Baileys caches each contact's device list for 5 minutes in
+            // an internal NodeCache it doesn't expose. Supplying our own
+            // lets `reset-contact` evict a contact immediately instead of
+            // the operator waiting out the TTL — which matters when
+            // they're testing a fix and need the very next send to
+            // re-enumerate devices. Only the four methods Baileys calls
+            // are needed (mget / mset / get / set).
+            const deviceCache = makeDeviceCache();
+            deviceCaches.set(instanceId, deviceCache);
+
             const sock = makeWASocket({
                 version,
+                userDevicesCache: deviceCache as any,
                 printQRInTerminal: false,
                 auth: state,
                 // Baileys is chatty at debug/trace — session setup, device

@@ -55,9 +55,13 @@ export function watchDelivery(opts: {
             // carries the same waMsgId plus the JID we actually addressed
             // (requestedJid vs sentToJid). Grep for the waMsgId to see
             // whether the LID shim fired for this message.
-            logger.error({ instanceId, remoteJid, waMsgId, context, graceMs: GRACE_MS },
-                '[delivery] NO ACK from WhatsApp — message did not leave the socket. ' +
-                `Grep the same waMsgId (${waMsgId}) in [wa-send] / [lid-shim] lines to see which JID it went to.`);
+            // Single line so `grep` shows the whole story — pino-pretty
+            // renders structured fields on following lines which grep
+            // strips out.
+            logger.error(
+                `[delivery] NO-ACK ${instanceId} to=${remoteJid} waMsgId=${waMsgId} ctx=${context} ` +
+                `— never left the socket. Match waMsgId against the [wa-send] line to see the JID used.`
+            );
             emitToWorkspaceSync(instanceId, `message.status-${instanceId}`, {
                 waMsgId, status: 'UNDELIVERED', remoteJid,
             });

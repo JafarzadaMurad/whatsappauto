@@ -172,6 +172,7 @@ export class InstanceManager {
             const rawSendMessage = sock.sendMessage.bind(sock);
             (sock as any).sendMessage = async (jid: string, content: any, options?: any) => {
                 let target = jid;
+                let how = 'as-given';
                 // Groups, broadcasts and explicit LIDs are already right.
                 if (typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
                     try {
@@ -182,21 +183,22 @@ export class InstanceManager {
                         const lid = await (sock as any)?.signalRepository?.lidMapping?.getLIDForPN?.(jid);
                         if (lid) {
                             target = lid;
-                            logger.info({ instanceId, pn: jid, lid }, '[lid-shim] re-addressed PN → LID');
+                            how = 'pn→lid';
                         } else {
-                            logger.info({ instanceId, pn: jid }, '[lid-shim] no LID mapping — sending to phone JID');
+                            how = 'pn-no-mapping';
                         }
                     } catch (err: any) {
-                        logger.warn({ err: err.message, instanceId, jid }, '[lid-shim] LID lookup threw — sending to phone JID');
+                        how = `pn-lookup-threw(${err.message})`;
                     }
                 }
                 const result = await rawSendMessage(target, content, options);
-                logger.info({
-                    instanceId,
-                    requestedJid: jid,
-                    sentToJid: target,
-                    waMsgId: (result as any)?.key?.id || null,
-                }, '[wa-send] dispatched');
+                // Everything on ONE line — pino-pretty prints structured
+                // fields on following lines, which `grep` filters out, and
+                // this is the line operators will be grepping during a
+                // "message didn't arrive" investigation.
+                logger.info(
+                    `[wa-send] ${instanceId} requested=${jid} sentTo=${target} how=${how} waMsgId=${(result as any)?.key?.id || 'NONE'}`
+                );
                 return result;
             };
 

@@ -122,7 +122,16 @@ export class InstanceManager {
                 version,
                 printQRInTerminal: false,
                 auth: state,
-                logger: logger.child({ module: 'baileys' }) as any,
+                // Baileys is chatty at debug/trace — session setup, device
+                // enumeration, prekey fetches, encryption per recipient.
+                // That is exactly what you need when a message reports no
+                // ack, and pure noise otherwise. Gate it behind WA_DEBUG so
+                // an operator can flip it on for one reproduction and off
+                // again without a code change.
+                logger: logger.child(
+                    { module: 'baileys', instanceId },
+                    { level: process.env.WA_DEBUG === 'true' ? 'debug' : undefined as any },
+                ) as any,
                 browser: ['alChatBot', 'Chrome', '1.0.0'],
                 // When the user opted in, request the full chat history from
                 // the phone on the initial sync. Otherwise Baileys defaults

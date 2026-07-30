@@ -22,6 +22,25 @@ declare module 'express-serve-static-core' {
     }
 }
 
+// A credential stays bound to whichever workspace it was minted in (or
+// last switched to). Membership can be revoked after the fact, so we
+// re-check on every request rather than trusting the stored id — the
+// same rule the dashboard's auth middleware applies.
+async function assertWorkspaceAccess(userId: string, workspaceId: string): Promise<boolean> {
+    const member = await prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId } },
+        select: { id: true },
+    });
+    if (member) return true;
+    // Owners always have access even if the membership row is missing
+    // (older workspaces created before members were backfilled).
+    const owned = await prisma.workspace.findFirst({
+        where: { id: workspaceId, ownerId: userId },
+        select: { id: true },
+    });
+    return !!owned;
+}
+
 export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
     const header = String(req.headers.authorization || '');
     const token = header.replace(/^Bearer\s+/i, '').trim();
@@ -49,6 +68,15 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
             // to the user's personal workspace for keys minted before the
             // workspace migration.
             const wsId = apiKey.workspaceId || (await getOrCreatePersonalWorkspace(apiKey.userId));
+            const okWs = await assertWorkspaceAccess(apiKey.userId, wsId);
+            if (!okWs) {
+                return res.status(403).json({
+                    error: 'access_denied',
+                    error_description:
+                        'This credential points at a workspace you no longer have access to. ' +
+                        'Use switch_workspace to pick one you can reach.',
+                });
+            }
             req.mcpAuth = { userId: apiKey.userId, workspaceId: wsId, authKind: 'api_key', authRef: apiKey.id };
             return next();
         }
@@ -68,6 +96,15 @@ export async function mcpAuth(req: Request, res: Response, next: NextFunction) {
                 .json({ error: 'invalid_token', error_description: 'OAuth token expired' });
         }
         const oauthWs = oauth.workspaceId || (await getOrCreatePersonalWorkspace(oauth.userId));
+        const okOauthWs = await assertWorkspaceAccess(oauth.userId, oauthWs);
+        if (!okOauthWs) {
+            return res.status(403).json({
+                error: 'access_denied',
+                error_description:
+                    'This token points at a workspace you no longer have access to. ' +
+                    'Use switch_workspace to pick one you can reach.',
+            });
+        }
         req.mcpAuth = { userId: oauth.userId, workspaceId: oauthWs, authKind: 'oauth', authRef: oauth.id };
         return next();
     } catch (err: any) {

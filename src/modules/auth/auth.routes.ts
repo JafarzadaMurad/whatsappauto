@@ -12,6 +12,10 @@ router.post('/verify-email', authController.verifyEmail.bind(authController));
 router.post('/resend-verification', authMiddleware, authController.resendVerification.bind(authController));
 router.post('/forgot-password', authController.forgotPassword.bind(authController));
 router.post('/reset-password', authController.resetPassword.bind(authController));
+// Signed-in password management. Google-only accounts use the same
+// endpoint to set a password for the first time.
+router.get('/password-state', authMiddleware, authController.passwordState.bind(authController));
+router.post('/change-password', authMiddleware, authController.changePassword.bind(authController));
 router.get('/google/config', authController.googleConfig);
 router.post('/google', authController.googleLogin);
 

@@ -106,6 +106,37 @@ export class AuthController {
         }
     }
 
+    // GET /auth/password-state — drives the profile form: whether to
+    // show "Current password" (existing password) or "Set a password"
+    // (Google-only account).
+    async passwordState(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const state = await authService.getPasswordState(userId);
+            return res.json({ success: true, ...state });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async changePassword(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const { currentPassword, newPassword } = z.object({
+                currentPassword: z.string().optional(),
+                newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+            }).parse(req.body);
+            const result = await authService.changePassword(userId, newPassword, currentPassword);
+            return res.json({
+                success: true,
+                message: result.hadPassword ? 'Password updated' : 'Password set',
+            });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(400).json({ success: false, message: error.message });
+        }
+    }
+
     async googleLogin(req: Request, res: Response) {
         try {
             const schema = z.object({

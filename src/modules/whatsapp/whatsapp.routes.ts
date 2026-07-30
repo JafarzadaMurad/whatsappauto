@@ -19,6 +19,9 @@ router.get('/:id/qr', whatsappController.getQr);
 // "Why didn't my message arrive?" — reports whether a number is on
 // WhatsApp, the JID we'd address, and the cached LID mapping.
 router.get('/:id/check-number', whatsappController.checkNumber);
+// Drops cached Signal sessions for one contact so the next send
+// re-negotiates encryption — the fix when a contact's devices changed.
+router.post('/:id/reset-contact', requirePerm('whatsapp', 'update'), whatsappController.resetContact);
 router.post('/:id/restart', requirePerm('whatsapp', 'update'), whatsappController.restartInstance);
 router.post('/:id/logout', requirePerm('whatsapp', 'update'), whatsappController.logoutInstance);
 router.put('/:id', requirePerm('whatsapp', 'update'), whatsappController.updateInstance);

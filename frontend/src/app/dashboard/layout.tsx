@@ -383,10 +383,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="p-2 border-t border-border">
                     {!collapsed ? (
                         <>
-                            <div className="px-3 py-3 rounded-xl bg-secondary/30 mb-2">
+                            <Link href="/dashboard/profile"
+                                title="Profile & password"
+                                className="block px-3 py-3 rounded-xl bg-secondary/30 hover:bg-secondary/60 transition-colors mb-2">
                                 <p className="text-sm font-medium text-foreground truncate">{user?.name || 'User'}</p>
                                 <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-                            </div>
+                            </Link>
                             <button
                                 onClick={handleLogout}
                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-destructive hover:bg-destructive/10 transition-colors font-medium"

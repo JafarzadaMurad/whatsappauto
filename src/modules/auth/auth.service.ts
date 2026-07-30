@@ -200,6 +200,53 @@ export class AuthService {
         });
     }
 
+    // Signed-in password change. Google-only accounts have
+    // `password === null` — they set a password for the first time here
+    // (so the profile can be handed to a colleague who logs in with
+    // email + password), and for them `currentPassword` isn't required
+    // because there is nothing to verify against.
+    async changePassword(userId: string, newPassword: string, currentPassword?: string) {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, password: true },
+        });
+        if (!user) throw new Error('User not found');
+
+        const hasPassword = !!user.password;
+        if (hasPassword) {
+            if (!currentPassword) throw new Error('Current password is required');
+            const okPassword = await bcrypt.compare(currentPassword, user.password!);
+            if (!okPassword) throw new Error('Current password is incorrect');
+            const same = await bcrypt.compare(newPassword, user.password!);
+            if (same) throw new Error('New password must be different from the current one');
+        }
+
+        const hashed = await bcrypt.hash(newPassword, 10);
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                password: hashed,
+                // Any outstanding reset link is void once the password
+                // changes from inside the app.
+                passwordResetToken: null,
+                passwordResetExpires: null,
+            },
+        });
+        return { hadPassword: hasPassword };
+    }
+
+    // Tells the profile UI whether to ask for the current password.
+    async getPasswordState(userId: string) {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { password: true, googleId: true },
+        });
+        return {
+            hasPassword: !!user?.password,
+            isGoogleAccount: !!user?.googleId,
+        };
+    }
+
     private generateToken(userId: string) {
         return jwt.sign({ id: userId }, config.JWT_SECRET, {
             expiresIn: config.JWT_EXPIRES_IN as any,

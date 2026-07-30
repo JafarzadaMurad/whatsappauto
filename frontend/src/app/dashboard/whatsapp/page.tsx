@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch } from "lucide-react";
+import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch, Stethoscope, CheckCircle2, AlertCircle, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import type { Socket } from "socket.io-client";
@@ -25,6 +25,7 @@ export default function WhatsAppPage() {
     const [creating, setCreating] = useState(false);
     const [newInstanceName, setNewInstanceName] = useState("");
     const [activeQr, setActiveQr] = useState<{ id: string; qrUrl: string } | null>(null);
+    const [diagnoseId, setDiagnoseId] = useState<string | null>(null);
     const [agents, setAgents] = useState<any[]>([]);
     const [updatingAgent, setUpdatingAgent] = useState<string | null>(null);
     const socketRef = useRef<Socket | null>(null);
@@ -367,10 +368,17 @@ export default function WhatsAppPage() {
                                     })()}
 
                                     {inst.status === 'CONNECTED' ? (
-                                        <Link href={`/dashboard/instances/${inst.id}`}
-                                            className="px-3 py-1.5 text-primary hover:bg-primary/10 rounded-xl text-sm font-medium transition-colors">
-                                            Chat
-                                        </Link>
+                                        <>
+                                            <Link href={`/dashboard/instances/${inst.id}`}
+                                                className="px-3 py-1.5 text-primary hover:bg-primary/10 rounded-xl text-sm font-medium transition-colors">
+                                                Chat
+                                            </Link>
+                                            <button onClick={() => setDiagnoseId(inst.id)}
+                                                title="Check why a message didn't arrive"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-xl text-sm font-medium transition-colors">
+                                                <Stethoscope className="w-4 h-4" /> Diagnose
+                                            </button>
+                                        </>
                                     ) : (
                                         <button onClick={() => handleLink(inst.id)}
                                             className="flex items-center gap-1.5 px-3 py-1.5 text-primary hover:bg-primary/10 rounded-xl text-sm font-medium transition-colors">
@@ -388,6 +396,148 @@ export default function WhatsAppPage() {
                     )}
                 </div>
             </div>
+
+            {diagnoseId && (
+                <DiagnoseModal instanceId={diagnoseId} onClose={() => setDiagnoseId(null)} />
+            )}
+        </div>
+    );
+}
+
+// ─── Number diagnostics ────────────────────────────────────────────
+// Answers "I sent a message and it never arrived". Reports whether the
+// number is on WhatsApp, which JID we'd address it by, and offers a
+// session reset for the case where the contact's devices changed and
+// our cached encryption state went stale.
+type DiagReport = {
+    input: string;
+    digits: string;
+    pnJid: string;
+    registered: boolean | null;
+    lid: string | null;
+    wouldSendTo: string;
+    onWhatsApp?: any;
+    onWhatsAppError?: string;
+    lidError?: string;
+};
+
+function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: () => void }) {
+    const [phone, setPhone] = useState('');
+    const [checking, setChecking] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [report, setReport] = useState<DiagReport | null>(null);
+    const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+    const check = async () => {
+        if (!phone.trim()) return;
+        setChecking(true); setNote(null); setReport(null);
+        try {
+            const r = await api.get(`/instances/${instanceId}/check-number`, { params: { phone: phone.trim() } });
+            if (r.data?.success) setReport(r.data.report);
+        } catch (err: any) {
+            setNote({ ok: false, text: err.response?.data?.message || err.message });
+        } finally { setChecking(false); }
+    };
+
+    const resetContact = async () => {
+        if (!report) return;
+        if (!confirm(`Drop cached encryption sessions for ${report.digits}?\n\nHarmless — the next message simply re-negotiates. Use this when a contact reinstalled WhatsApp, switched to the Business app, or changed linked devices.`)) return;
+        setResetting(true); setNote(null);
+        try {
+            const r = await api.post(`/instances/${instanceId}/reset-contact`, { phone: report.digits });
+            setNote({ ok: true, text: r.data?.message || 'Sessions cleared.' });
+        } catch (err: any) {
+            setNote({ ok: false, text: err.response?.data?.message || err.message });
+        } finally { setResetting(false); }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-5 space-y-4" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h3 className="font-semibold flex items-center gap-2">
+                            <Stethoscope className="w-4 h-4 text-primary" /> Diagnose a number
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Check why a message to a specific number didn't arrive.
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+
+                <div className="flex gap-2">
+                    <input value={phone} onChange={e => setPhone(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && check()}
+                        placeholder="994551234567"
+                        className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-2 text-sm font-mono" />
+                    <button onClick={check} disabled={checking || !phone.trim()}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 text-sm font-medium flex items-center gap-2 disabled:opacity-60">
+                        {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Stethoscope className="w-4 h-4" />}
+                        Check
+                    </button>
+                </div>
+
+                {note && (
+                    <div className={`text-xs rounded-lg px-3 py-2 flex items-start gap-2 ${
+                        note.ok
+                            ? 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-400'
+                            : 'bg-red-500/10 border border-red-500/25 text-red-400'
+                    }`}>
+                        {note.ok ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />}
+                        <span>{note.text}</span>
+                    </div>
+                )}
+
+                {report && (
+                    <div className="space-y-3">
+                        <div className={`rounded-lg px-3 py-2.5 text-sm flex items-start gap-2 ${
+                            report.registered === false
+                                ? 'bg-red-500/10 border border-red-500/25 text-red-400'
+                                : report.registered
+                                    ? 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-400'
+                                    : 'bg-amber-500/10 border border-amber-500/25 text-amber-400'
+                        }`}>
+                            {report.registered === false
+                                ? <><AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /><span>Not registered on WhatsApp. Check the country code and that there's no leading zero.</span></>
+                                : report.registered
+                                    ? <><CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" /><span>Registered on WhatsApp.</span></>
+                                    : <><AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /><span>Couldn't verify — {report.onWhatsAppError || 'lookup failed'}.</span></>}
+                        </div>
+
+                        <div className="bg-secondary/30 border border-border rounded-lg p-3 space-y-1.5 text-xs">
+                            <Row label="Phone JID" value={report.pnJid} />
+                            <Row label="LID mapping" value={report.lid || '— none cached —'} />
+                            <Row label="Would send to" value={report.wouldSendTo} strong />
+                        </div>
+
+                        <div className="bg-secondary/20 border border-border rounded-lg p-3 space-y-2">
+                            <p className="text-[11px] text-muted-foreground">
+                                If the number is registered but messages still don't arrive, the cached
+                                encryption session is likely stale — that happens when the contact
+                                reinstalls WhatsApp, moves to the Business app, or changes linked
+                                devices. Clearing it forces a fresh key exchange on the next message.
+                            </p>
+                            <button onClick={resetContact} disabled={resetting}
+                                className="w-full bg-secondary/60 hover:bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 disabled:opacity-60">
+                                {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                                Reset encryption session for this contact
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+    return (
+        <div className="flex items-start justify-between gap-3">
+            <span className="text-muted-foreground flex-shrink-0">{label}</span>
+            <span className={`font-mono text-right break-all ${strong ? 'text-foreground font-semibold' : ''}`}>{value}</span>
         </div>
     );
 }

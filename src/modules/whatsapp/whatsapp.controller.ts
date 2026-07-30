@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 import { getWorkspaceId } from '../../lib/workspace-context';
+import { logger } from '../../utils/logger';
 
 const createInstanceSchema = z.object({
     name: z.string().min(1),
@@ -187,6 +188,76 @@ export class WhatsappController {
             const { inspectWhatsAppNumber } = await import('../messaging/messaging.service');
             const report = await inspectWhatsAppNumber(sock, phone);
             return res.json({ success: true, report });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Contact session reset ──────────────────────────────────────
+    // When a contact's Signal session or cached device list goes stale
+    // — they reinstalled WhatsApp, switched to the Business app, or
+    // added/removed a linked device — Baileys keeps encrypting for
+    // devices that no longer exist. The send succeeds locally and is
+    // written to the socket, but nobody can decrypt it, so no ack ever
+    // comes back. Exactly the "message shows a tick but never arrives"
+    // failure. Dropping the cached keys forces a fresh device fetch and
+    // prekey exchange on the next send.
+    async resetContact(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const phone = String((req.body?.phone ?? '')).replace(/[^0-9]/g, '');
+            if (!phone) return res.status(400).json({ success: false, message: 'phone is required' });
+
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId }, select: { id: true } });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            const sock: any = sessions.get(id);
+            if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+
+            const pnJid = `${phone}@s.whatsapp.net`;
+            const cleared: string[] = [];
+
+            // Resolve the LID too — sessions are keyed per addressing form
+            // and per device, so both need clearing.
+            let lidJid: string | null = null;
+            try {
+                lidJid = await sock?.signalRepository?.lidMapping?.getLIDForPN?.(pnJid) ?? null;
+            } catch { /* best-effort */ }
+
+            // Signal sessions are stored per `<user>.<device>` address. We
+            // don't know which devices exist, so clear a reasonable range
+            // (0-9 covers phone + linked devices comfortably).
+            const users = [phone, ...(lidJid ? [lidJid.split('@')[0]] : [])];
+            const sessionIds: string[] = [];
+            for (const u of users) {
+                for (let device = 0; device < 10; device++) {
+                    sessionIds.push(`${u}.${device}`);
+                }
+            }
+            try {
+                const existing = await sock.authState.keys.get('session', sessionIds);
+                const nulls: Record<string, null> = {};
+                for (const key of Object.keys(existing || {})) {
+                    if (existing[key]) { nulls[key] = null; cleared.push(`session:${key}`); }
+                }
+                if (Object.keys(nulls).length > 0) {
+                    await sock.authState.keys.set({ session: nulls });
+                }
+            } catch (err: any) {
+                logger.warn({ err: err.message, id, phone }, '[reset-contact] session clear failed');
+            }
+
+            return res.json({
+                success: true,
+                phone,
+                pnJid,
+                lidJid,
+                cleared,
+                message: cleared.length
+                    ? 'Cached sessions dropped. The next message re-negotiates encryption with the contact.'
+                    : 'No cached sessions found for this contact — nothing to clear.',
+            });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

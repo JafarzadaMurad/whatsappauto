@@ -175,16 +175,29 @@ export class InstanceManager {
                 // Groups, broadcasts and explicit LIDs are already right.
                 if (typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
                     try {
+                        // getLIDForPN checks its in-memory cache, then the
+                        // auth key store, then falls back to a USync query
+                        // against the server — so this resolves even for
+                        // contacts we've never received a message from.
                         const lid = await (sock as any)?.signalRepository?.lidMapping?.getLIDForPN?.(jid);
                         if (lid) {
                             target = lid;
-                            logger.debug({ instanceId, from: jid, to: lid }, '[lid-shim] re-addressed to LID');
+                            logger.info({ instanceId, pn: jid, lid }, '[lid-shim] re-addressed PN → LID');
+                        } else {
+                            logger.info({ instanceId, pn: jid }, '[lid-shim] no LID mapping — sending to phone JID');
                         }
                     } catch (err: any) {
-                        logger.warn({ err: err.message, instanceId, jid }, '[lid-shim] LID lookup failed — sending to phone JID');
+                        logger.warn({ err: err.message, instanceId, jid }, '[lid-shim] LID lookup threw — sending to phone JID');
                     }
                 }
-                return rawSendMessage(target, content, options);
+                const result = await rawSendMessage(target, content, options);
+                logger.info({
+                    instanceId,
+                    requestedJid: jid,
+                    sentToJid: target,
+                    waMsgId: (result as any)?.key?.id || null,
+                }, '[wa-send] dispatched');
+                return result;
             };
 
             sessions.set(instanceId, sock);

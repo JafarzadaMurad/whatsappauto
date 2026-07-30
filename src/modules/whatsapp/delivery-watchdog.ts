@@ -51,10 +51,13 @@ export function watchDelivery(opts: {
                 where: { id: row.id },
                 data: { status: 'UNDELIVERED' },
             });
+            // Cross-reference: the [wa-send] line logged at dispatch time
+            // carries the same waMsgId plus the JID we actually addressed
+            // (requestedJid vs sentToJid). Grep for the waMsgId to see
+            // whether the LID shim fired for this message.
             logger.error({ instanceId, remoteJid, waMsgId, context, graceMs: GRACE_MS },
                 '[delivery] NO ACK from WhatsApp — message did not leave the socket. ' +
-                'Common causes: WhatsApp Business App link restrictions, the chat was never ' +
-                'opened on the phone, or the recipient JID is wrong (LID vs s.whatsapp.net).');
+                `Grep the same waMsgId (${waMsgId}) in [wa-send] / [lid-shim] lines to see which JID it went to.`);
             emitToWorkspaceSync(instanceId, `message.status-${instanceId}`, {
                 waMsgId, status: 'UNDELIVERED', remoteJid,
             });

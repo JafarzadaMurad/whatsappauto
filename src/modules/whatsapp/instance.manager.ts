@@ -107,6 +107,16 @@ export function rememberOutgoing(waMsgId: string, message: any) {
     }
 }
 
+// One re-send per message id — a resend that also fails must not loop.
+const refanned = new Set<string>();
+export function hasRefanned(waMsgId: string) { return refanned.has(waMsgId); }
+export function markRefanned(waMsgId: string) {
+    refanned.add(waMsgId);
+    if (refanned.size > 1000) {
+        for (const k of Array.from(refanned).slice(0, 500)) refanned.delete(k);
+    }
+}
+
 export function getOutgoingPayload(waMsgId: string): any | undefined {
     const e = outgoingPayloads.get(waMsgId);
     if (!e) return undefined;
@@ -1132,6 +1142,44 @@ export class InstanceManager {
                     }
                     if (waId && typeof u?.update?.status === 'number') {
                         recordAck(waId, u.update.status);
+                    }
+
+                    // ─── Fan-out rejection recovery ─────────────────
+                    // status 0 with a numeric stub parameter is WhatsApp
+                    // refusing the message at the protocol level. 463 and
+                    // 475 mean one of the recipient's linked devices
+                    // couldn't take it, and the server drops the whole
+                    // message rather than just that device — so a contact
+                    // carrying one dead linked device becomes permanently
+                    // unreachable while every other contact is fine.
+                    //
+                    // The documented remedy (see the commented-out block
+                    // in Baileys' messages-recv.js) is to resend without
+                    // device fan-out, addressing only the primary device.
+                    // We can do that because the send shim keeps the
+                    // original proto for retry receipts.
+                    const stub = u?.update?.messageStubParameters?.[0];
+                    if (u?.update?.status === 0 && (stub === '463' || stub === '475')) {
+                        const jid = u?.key?.remoteJid;
+                        if (waId && jid && !hasRefanned(waId)) {
+                            markRefanned(waId);
+                            const payload = getOutgoingPayload(waId);
+                            if (!payload) {
+                                logger.warn(`[wa-refan] ${instanceId} ${waId} error=${stub} but original content is gone — cannot resend`);
+                            } else {
+                                logger.info(`[wa-refan] ${instanceId} ${waId} error=${stub} from=${jid} — resending without device fan-out`);
+                                try {
+                                    await (sock as any).relayMessage(jid, payload, {
+                                        messageId: waId,
+                                        useUserDevicesCache: false,
+                                        additionalAttributes: { device_fanout: 'false' },
+                                    });
+                                    logger.info(`[wa-refan] ${instanceId} ${waId} resend dispatched`);
+                                } catch (err: any) {
+                                    logger.error(`[wa-refan] ${instanceId} ${waId} resend failed: ${err?.message}`);
+                                }
+                            }
+                        }
                     }
                     // Poll vote ingest. Baileys delivers vote updates
                     // here with `pollUpdates`. We look up the original

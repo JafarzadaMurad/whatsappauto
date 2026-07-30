@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch, Stethoscope, CheckCircle2, AlertCircle, RotateCcw } from "lucide-react";
+import { Plus, Router as RouterIcon, Trash2, Smartphone, Loader2, QrCode, Bot, X, GitBranch, Stethoscope, CheckCircle2, AlertCircle, RotateCcw, Send } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import type { Socket } from "socket.io-client";
@@ -427,6 +427,31 @@ function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: (
     const [resetting, setResetting] = useState(false);
     const [report, setReport] = useState<DiagReport | null>(null);
     const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+    const [sending, setSending] = useState<string | null>(null);
+    const [verdicts, setVerdicts] = useState<{ addressing: string; verdict: string; sentTo: string }[]>([]);
+
+    // Sends a real message with the addressing form pinned, then waits
+    // for the server's verdict. The backend blocks until WhatsApp acks
+    // or ~12 s elapse, so a "no-ack" result here is conclusive.
+    const testSend = async (addressing: 'auto' | 'pn' | 'lid') => {
+        if (!report) return;
+        setSending(addressing); setNote(null);
+        try {
+            const r = await api.post(`/instances/${instanceId}/test-send`, {
+                phone: report.digits,
+                addressing,
+                text: `Test (${addressing}) ${new Date().toLocaleTimeString()}`,
+            });
+            const d = r.data || {};
+            setVerdicts(v => [
+                { addressing, verdict: d.verdict || (d.success ? 'sent' : 'failed'), sentTo: d.sentTo || '?' },
+                ...v,
+            ].slice(0, 6));
+            if (d.message) setNote({ ok: d.verdict !== 'no-ack', text: d.message });
+        } catch (err: any) {
+            setNote({ ok: false, text: err.response?.data?.message || err.message });
+        } finally { setSending(null); }
+    };
 
     const check = async () => {
         if (!phone.trim()) return;
@@ -515,11 +540,39 @@ function DiagnoseModal({ instanceId, onClose }: { instanceId: string; onClose: (
 
                         <div className="bg-secondary/20 border border-border rounded-lg p-3 space-y-2">
                             <p className="text-[11px] text-muted-foreground">
-                                If the number is registered but messages still don't arrive, the cached
-                                encryption session is likely stale — that happens when the contact
-                                reinstalls WhatsApp, moves to the Business app, or changes linked
-                                devices. Clearing it forces a fresh key exchange on the next message.
+                                Send a real test message and wait for WhatsApp's verdict. Some
+                                contacts silently accept LID-addressed messages and never
+                                acknowledge them, while the same text sent to the phone JID is
+                                delivered normally — compare the two here.
                             </p>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(['auto', 'pn', 'lid'] as const).map(mode => (
+                                    <button key={mode} onClick={() => testSend(mode)} disabled={!!sending}
+                                        className="bg-secondary/60 hover:bg-secondary border border-border rounded-lg px-2 py-2 text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-60">
+                                        {sending === mode
+                                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            : <Send className="w-3.5 h-3.5" />}
+                                        {mode === 'auto' ? 'Auto' : mode === 'pn' ? 'Phone JID' : 'LID'}
+                                    </button>
+                                ))}
+                            </div>
+                            {verdicts.length > 0 && (
+                                <div className="space-y-1 pt-1">
+                                    {verdicts.map((v, i) => (
+                                        <div key={i}
+                                            className={`text-[11px] rounded-md px-2 py-1.5 border ${
+                                                v.verdict === 'no-ack'
+                                                    ? 'bg-red-500/10 border-red-500/25 text-red-400'
+                                                    : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                                            }`}>
+                                            <span className="font-semibold uppercase">{v.addressing}</span>
+                                            {' → '}
+                                            <span className="font-semibold">{v.verdict}</span>
+                                            <div className="text-muted-foreground font-mono break-all">{v.sentTo}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             <button onClick={resetContact} disabled={resetting}
                                 className="w-full bg-secondary/60 hover:bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 disabled:opacity-60">
                                 {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}

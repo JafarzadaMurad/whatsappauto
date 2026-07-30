@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { InstanceManager, getLatestQr, sessions, deviceCaches } from './instance.manager';
+import { InstanceManager, getLatestQr, sessions, deviceCaches, waitForAck, setAddressingOverride, type Addressing } from './instance.manager';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
@@ -273,6 +273,76 @@ export class WhatsappController {
                 message: cleared.length
                     ? 'Cached sessions dropped. The next message re-negotiates encryption with the contact.'
                     : 'No cached sessions found for this contact — nothing to clear.',
+            });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Addressed test send ────────────────────────────────────────
+    // Sends one message and *waits* for WhatsApp's verdict instead of
+    // leaving the operator to grep logs. `addressing` pins the JID form
+    // so the two can be compared directly for the same contact: some
+    // contacts accept LID-addressed messages and never acknowledge
+    // them, while the same text to the phone JID gets acked normally.
+    async testSend(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const phone = String(req.body?.phone ?? '').replace(/[^0-9]/g, '');
+            const text = String(req.body?.text ?? '').trim() || 'Test message';
+            const addressing = (['auto', 'pn', 'lid'] as const)
+                .includes(req.body?.addressing) ? req.body.addressing as Addressing : 'auto';
+            if (!phone) return res.status(400).json({ success: false, message: 'phone is required' });
+
+            const instance = await prisma.instance.findFirst({ where: { id, workspaceId }, select: { id: true } });
+            if (!instance) return res.status(404).json({ success: false, message: 'Instance not found' });
+
+            const sock: any = sessions.get(id);
+            if (!sock) return res.status(502).json({ success: false, message: 'Instance is not connected' });
+
+            const pnJid = `${phone}@s.whatsapp.net`;
+            let jid = pnJid;
+            if (addressing === 'lid') {
+                const lid = await sock?.signalRepository?.lidMapping?.getLIDForPN?.(pnJid).catch(() => null);
+                if (!lid) return res.status(400).json({ success: false, message: 'No LID mapping known for this contact — try "auto" or "phone".' });
+                jid = lid;
+            }
+
+            // 'pn' pins the socket shim off for the duration of this send
+            // so it can't rewrite the phone JID back to a LID.
+            if (addressing === 'pn') setAddressingOverride(id, 'pn');
+            let result: any;
+            try {
+                result = await sock.sendMessage(jid, { text });
+            } finally {
+                if (addressing === 'pn') setAddressingOverride(id, null);
+            }
+
+            const waMsgId = result?.key?.id;
+            if (!waMsgId) {
+                return res.json({
+                    success: false,
+                    addressing, sentTo: result?.key?.remoteJid ?? jid,
+                    message: 'WhatsApp returned no message id — nothing was queued.',
+                });
+            }
+
+            const status = await waitForAck(waMsgId, 12_000);
+            const label = status === null || status < 2
+                ? 'no-ack'
+                : status >= 4 ? 'read' : status === 3 ? 'delivered' : 'sent';
+
+            return res.json({
+                success: true,
+                addressing,
+                sentTo: result?.key?.remoteJid ?? jid,
+                waMsgId,
+                status,
+                verdict: label,
+                message: label === 'no-ack'
+                    ? 'WhatsApp never acknowledged this message — it did not reach the server.'
+                    : `WhatsApp acknowledged the message (${label}).`,
             });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });

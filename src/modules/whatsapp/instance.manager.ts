@@ -111,6 +111,48 @@ export function isTraced(waMsgId?: string | null): boolean {
     return !!e && Date.now() - e.at < TRACE_TTL_MS;
 }
 
+// Highest numeric status WhatsApp has reported per message id.
+// 1 PENDING · 2 SENT (server ack) · 3 DELIVERED · 4 READ · 5 PLAYED.
+// Lets a caller await the verdict instead of sending and hoping.
+const ackStatus = new Map<string, number>();
+
+export function recordAck(waMsgId: string, status: number) {
+    const prev = ackStatus.get(waMsgId) ?? 0;
+    if (status > prev) ackStatus.set(waMsgId, status);
+    if (ackStatus.size > 1000) {
+        // Cheap bound — drop the oldest half by insertion order.
+        const keys = Array.from(ackStatus.keys()).slice(0, 500);
+        for (const k of keys) ackStatus.delete(k);
+    }
+}
+
+/**
+ * Waits for WhatsApp to acknowledge a message. Resolves with the
+ * highest status seen, or null if the server stayed silent — which is
+ * the failure we've been chasing: the send resolves, an id comes back,
+ * and nothing is ever heard about it again.
+ */
+export async function waitForAck(waMsgId: string, timeoutMs = 12_000): Promise<number | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const s = ackStatus.get(waMsgId);
+        if (s && s >= 2) return s;
+        await new Promise(r => setTimeout(r, 300));
+    }
+    return ackStatus.get(waMsgId) ?? null;
+}
+
+// Addressing override for one send. `sendMessage` normally rewrites a
+// phone JID to the contact's LID; a caller can pin the form to compare
+// the two — the decisive test when a contact accepts LID-addressed
+// messages without ever acknowledging them.
+export type Addressing = 'auto' | 'pn' | 'lid';
+const addressingOverride = new Map<string, Addressing>();
+export function setAddressingOverride(instanceId: string, mode: Addressing | null) {
+    if (mode) addressingOverride.set(instanceId, mode);
+    else addressingOverride.delete(instanceId);
+}
+
 import { setInstanceWorkspace, forgetInstanceWorkspace, emitToWorkspaceSync } from '../../lib/socket-rooms';
 
 // Latest QR per instance kept in memory for the REST poll endpoint.
@@ -277,8 +319,21 @@ export class InstanceManager {
             (sock as any).sendMessage = async (jid: string, content: any, options?: any) => {
                 let target = jid;
                 let how = 'as-given';
+                const override = addressingOverride.get(instanceId);
+
+                // Explicit override wins — used by the diagnose tool to
+                // compare the two addressing forms for one contact.
+                if (override === 'pn' && typeof jid === 'string' && jid.endsWith('@lid')) {
+                    try {
+                        const pn = await (sock as any)?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+                        if (pn) { target = pn; how = 'forced-lid→pn'; }
+                    } catch { /* fall through to as-given */ }
+                }
+                if (override === 'pn' && target.endsWith('@s.whatsapp.net')) {
+                    how = how === 'as-given' ? 'forced-pn' : how;
+                }
                 // Groups, broadcasts and explicit LIDs are already right.
-                if (typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')) {
+                else if (typeof jid === 'string' && jid.endsWith('@s.whatsapp.net') && override !== 'pn') {
                     try {
                         // getLIDForPN checks its in-memory cache, then the
                         // auth key store, then falls back to a USync query
@@ -1015,6 +1070,9 @@ export class InstanceManager {
                         try {
                             logger.info(`[wa-update] ${instanceId} ${waId} ${JSON.stringify(u.update ?? u)}`);
                         } catch { /* ignore */ }
+                    }
+                    if (waId && typeof u?.update?.status === 'number') {
+                        recordAck(waId, u.update.status);
                     }
                     // Poll vote ingest. Baileys delivers vote updates
                     // here with `pollUpdates`. We look up the original

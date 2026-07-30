@@ -22,6 +22,9 @@ router.get('/:id/check-number', whatsappController.checkNumber);
 // Drops cached Signal sessions for one contact so the next send
 // re-negotiates encryption — the fix when a contact's devices changed.
 router.post('/:id/reset-contact', requirePerm('whatsapp', 'update'), whatsappController.resetContact);
+// Sends one message with a pinned addressing form and waits for the
+// server verdict — compares phone-JID vs LID delivery for a contact.
+router.post('/:id/test-send', requirePerm('whatsapp', 'update'), whatsappController.testSend);
 router.post('/:id/restart', requirePerm('whatsapp', 'update'), whatsappController.restartInstance);
 router.post('/:id/logout', requirePerm('whatsapp', 'update'), whatsappController.logoutInstance);
 router.put('/:id', requirePerm('whatsapp', 'update'), whatsappController.updateInstance);

@@ -92,6 +92,19 @@ type Catalog = {
     presets: Preset[];
 };
 
+// Provider dollars → credits (1 credit = $0.0001). Everything the
+// operator sees is priced in credits, since that's the balance they
+// hold. Guards against null/NaN so a missing catalogue entry renders
+// "0" instead of "$NaN".
+const cr = (usd: number | null | undefined): string => {
+    const n = Number(usd);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    const credits = n * 10_000;
+    // Sub-credit rates would all collapse to 0 — keep two decimals so
+    // the difference between models is still visible.
+    return credits < 10 ? credits.toFixed(2) : Math.round(credits).toLocaleString();
+};
+
 const tierColor = (tier?: string) => {
     if (tier === 'Best' || tier === 'Excellent') return 'text-emerald-400';
     if (tier === 'Great') return 'text-primary';
@@ -382,9 +395,13 @@ export default function VoiceAssistantEditorPage() {
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                             <span className="flex items-center gap-1.5"><DollarSign className="w-3 h-3" /> Cost</span>
                         </div>
+                        {/* Credits, not dollars — that's the unit the
+                            workspace holds a balance of and is charged in. */}
                         <div className="mt-1 flex items-baseline gap-2">
-                            <span className="text-2xl font-bold text-primary">~${estimate.totalUsd.toFixed(2)}</span>
-                            <span className="text-xs text-muted-foreground">/min</span>
+                            <span className="text-2xl font-bold text-primary">
+                                ~{Math.round((Number(estimate.totalUsd) || 0) * 10_000).toLocaleString()}
+                            </span>
+                            <span className="text-xs text-muted-foreground">credits/min</span>
                         </div>
                         <div className="mt-1.5 h-2 bg-secondary/60 rounded-full overflow-hidden">
                             <div className="h-full bg-gradient-to-r from-emerald-400 via-amber-400 to-red-500 rounded-full"
@@ -418,7 +435,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('transcriber')}
                         metrics={[
                             { label: 'Latency', value: `${currentTranscriber?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `$${(currentTranscriber?.costPerMin ?? 0).toFixed(4)}/min` },
+                            { label: 'Cost', value: `${cr(currentTranscriber?.costPerMin)} cr/min` },
                             { label: 'Accuracy', value: currentTranscriber?.accuracy || '—', color: tierColor(currentTranscriber?.accuracy) },
                         ]}
                     />
@@ -432,7 +449,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('llm')}
                         metrics={[
                             { label: 'Latency', value: `${currentLlm?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `$${((currentLlm?.inCostPer1M ?? 0) / 1000).toFixed(4)}/1K in` },
+                            { label: 'Cost', value: `${cr((currentLlm?.inCostPer1M ?? 0) / 1000)} cr/1K in` },
                             { label: 'Intelligence', value: currentLlm?.intelligence || '—', color: tierColor(currentLlm?.intelligence) },
                         ]}
                     />
@@ -446,7 +463,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('tts')}
                         metrics={[
                             { label: 'Latency', value: `${currentVoice?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `$${((currentVoice?.costPer1MChars ?? 0) / 1000).toFixed(4)}/1K ch` },
+                            { label: 'Cost', value: `${cr((currentVoice?.costPer1MChars ?? 0) / 1000)} cr/1K ch` },
                             { label: 'Humanness', value: currentVoice?.humanness || '—', color: tierColor(currentVoice?.humanness) },
                         ]}
                     />
@@ -698,13 +715,13 @@ function TranscriberSettings({ catalog, assistant, onPatch }: {
                     className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                     {modelsForProvider.map(t => (
                         <option key={t.model} value={t.model} className="bg-card">
-                            {t.label} · {t.latencyMs}ms · ${t.costPerMin.toFixed(4)}/min · {t.accuracy}
+                            {t.label} · {t.latencyMs}ms · {cr(t.costPerMin)} cr/min · {t.accuracy}
                         </option>
                     ))}
                 </select>
                 {current && (
                     <p className="text-[10px] text-muted-foreground mt-1">
-                        {current.label} · ~{current.latencyMs}ms · ${current.costPerMin.toFixed(4)}/min
+                        {current.label} · ~{current.latencyMs}ms · {cr(current.costPerMin)} cr/min
                     </p>
                 )}
             </div>
@@ -792,7 +809,7 @@ function ModelSettings({ catalog, assistant, onPatch }: {
                     className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                     {modelsForProvider.map(l => (
                         <option key={l.model} value={l.model} className="bg-card">
-                            {l.label} · {l.latencyMs}ms · ${l.inCostPer1M}/M in / ${l.outCostPer1M}/M out{l.combinesSttTts ? ' · speech-to-speech' : ''}
+                            {l.label} · {l.latencyMs}ms · {cr(l.inCostPer1M / 1000)} cr/1K in{l.combinesSttTts ? ' · speech-to-speech' : ''}
                         </option>
                     ))}
                 </select>
@@ -879,7 +896,7 @@ function VoiceSettings({ catalog, assistant, onPatch }: {
                         className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                         {voiceModelsForProvider.map(m => (
                             <option key={m.id} value={m.id} className="bg-card">
-                                {m.label}{m.costPer1MChars ? ` · $${m.costPer1MChars}/M chars` : ''}
+                                {m.label}{m.costPer1MChars ? ` · ${cr(m.costPer1MChars / 1000)} cr/1K ch` : ''}
                             </option>
                         ))}
                     </select>
@@ -1065,7 +1082,7 @@ function LogsTab({ assistantId }: { assistantId: string }) {
                                 <td className="px-4 py-3 text-right font-mono text-xs">
                                     {c.durationSec != null ? `${Math.floor(c.durationSec / 60)}:${String(c.durationSec % 60).padStart(2, '0')}` : '—'}
                                 </td>
-                                <td className="px-4 py-3 text-right font-mono text-xs">${(c.totalCostUsd || 0).toFixed(4)}</td>
+                                <td className="px-4 py-3 text-right font-mono text-xs text-amber-400">{Math.round(Number(c.creditsUsed) || 0).toLocaleString()}</td>
                             </tr>
                         ))}
                     </tbody>

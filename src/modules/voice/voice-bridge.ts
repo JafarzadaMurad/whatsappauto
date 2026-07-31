@@ -201,6 +201,11 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     // Diagnostic log — every OpenAI/Twilio error we see gets appended
     // here and written to PhoneCall.errorLog on shutdown so the
     // operator can see WHY the assistant hung up.
+    // Set when the assistant decides the call is over — either through
+    // the end_call tool or a configured closing phrase. We finish
+    // speaking before tearing the socket down.
+    let pendingHangup = false;
+    let hangupReason = 'assistant_ended';
     const diag: string[] = [];
     const logDiag = (line: string) => {
         const stamped = `[${new Date().toISOString()}] ${line}`;
@@ -345,6 +350,30 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 max_output_tokens: (asst.llmMaxTokens && asst.llmMaxTokens > 250)
                     ? asst.llmMaxTokens
                     : 'inf',
+                // Let the assistant hang up. Without this it says goodbye
+                // and then both sides sit in silence until the caller
+                // gives up or the duration cap fires — the call reads as
+                // broken even though the conversation went fine.
+                tools: [{
+                    type: 'function',
+                    name: 'end_call',
+                    description:
+                        'Hang up the phone. Call this once the conversation has genuinely finished — ' +
+                        'after saying goodbye, when the caller says they are done, or when there is ' +
+                        'nothing further to help with. Say your closing line first; the call ends ' +
+                        'after you finish speaking.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            reason: {
+                                type: 'string',
+                                description: 'Short note on why the call ended, for the call log.',
+                            },
+                        },
+                        required: [],
+                    },
+                }],
+                tool_choice: 'auto',
             },
         }));
 
@@ -391,9 +420,48 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 const line = `OpenAI error · ${err.type || 'error'} · ${err.code || '-'} · ${err.message || 'no message'}${err.param ? ` · param=${err.param}` : ''}`;
                 logger.error({ err }, '[voice-bridge] ' + line);
                 logDiag(line);
+            } else if (ev.type === 'response.function_call_arguments.done' && ev.name === 'end_call') {
+                // The assistant asked to hang up. Acknowledge the call so
+                // the model can deliver a closing line, then end once it
+                // stops speaking — cutting the audio here would clip the
+                // goodbye mid-word.
+                let reason = 'assistant_ended';
+                try {
+                    const args = ev.arguments ? JSON.parse(ev.arguments) : {};
+                    if (args?.reason) reason = String(args.reason).slice(0, 120);
+                } catch { /* arguments are advisory */ }
+                logDiag(`assistant requested end_call · reason=${reason}`);
+                hangupReason = reason;
+                pendingHangup = true;
+                oaiWs.send(JSON.stringify({
+                    type: 'conversation.item.create',
+                    item: {
+                        type: 'function_call_output',
+                        call_id: ev.call_id,
+                        output: JSON.stringify({ ok: true }),
+                    },
+                }));
+                oaiWs.send(JSON.stringify({ type: 'response.create' }));
+            } else if (ev.type === 'response.done' && pendingHangup) {
+                // Closing line delivered — let the last audio frames reach
+                // the caller before tearing the socket down.
+                setTimeout(() => void shutdown(hangupReason), 1200).unref?.();
             } else if (isTranscriptDone) {
                 const text = String(ev.transcript || '').trim();
-                if (text) transcript.push({ role: 'assistant', text, at: Date.now() });
+                if (text) {
+                    transcript.push({ role: 'assistant', text, at: Date.now() });
+                    // Fallback for assistants configured with end-call
+                    // phrases instead of relying on the tool.
+                    if (!pendingHangup && asst.endCallPhrases?.length) {
+                        const lower = text.toLowerCase();
+                        if (asst.endCallPhrases.some(p => p && lower.includes(p.toLowerCase()))) {
+                            logDiag(`end-call phrase matched in assistant reply`);
+                            pendingHangup = true;
+                            hangupReason = 'end_call_phrase';
+                            setTimeout(() => void shutdown(hangupReason), 1500).unref?.();
+                        }
+                    }
+                }
             } else if (ev.type === 'conversation.item.input_audio_transcription.completed') {
                 const text = String(ev.transcript || '').trim();
                 if (text) transcript.push({ role: 'user', text, at: Date.now() });

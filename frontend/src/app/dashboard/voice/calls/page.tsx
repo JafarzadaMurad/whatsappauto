@@ -142,7 +142,6 @@ export default function CallHistoryPage() {
                                 <th className="px-4 py-3 text-left">Assistant</th>
                                 <th className="px-4 py-3 text-left">Status</th>
                                 <th className="px-4 py-3 text-right">Duration</th>
-                                <th className="px-4 py-3 text-right">Cost</th>
                                 <th className="px-4 py-3 text-right">Credits</th>
                             </tr>
                         </thead>
@@ -179,8 +178,7 @@ export default function CallHistoryPage() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-right font-mono text-xs">{fmtDuration(c.durationSec)}</td>
-                                        <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">${(c.totalCostUsd || 0).toFixed(3)}</td>
-                                        <td className="px-4 py-3 text-right font-mono text-xs text-amber-400">{(c.creditsUsed || 0).toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-right font-mono text-xs text-amber-400">{toCredits(c.creditsUsed)}</td>
                                     </tr>
                                 );
                             })}
@@ -238,18 +236,21 @@ function CallDrawer({ call, onClose }: { call: Call; onClose: () => void }) {
                                 line as audio tokens.
                             </p>
                         )}
+                        {/* Everything is shown in credits — that's the unit
+                            customers are billed in and hold a balance of.
+                            Raw provider dollars are our cost, not theirs,
+                            and putting both on screen only invites the
+                            question of why they differ. */}
                         <div className="space-y-1.5 text-xs">
                             <CostRow label="Transcriber" usd={call.transcriberCostUsd} />
                             <CostRow label="LLM" usd={call.llmCostUsd} />
                             <CostRow label="TTS" usd={call.ttsCostUsd} />
                             <CostRow label="Telephony" usd={call.telephonyCostUsd} />
                             <div className="border-t border-border/50 pt-1.5 flex items-center justify-between">
-                                <span className="font-semibold">Total</span>
-                                <span className="font-mono font-bold">${call.totalCostUsd.toFixed(4)}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground">Credits charged</span>
-                                <span className="font-mono text-amber-400 font-semibold">{call.creditsUsed.toLocaleString()}</span>
+                                <span className="font-semibold">Total charged</span>
+                                <span className="font-mono font-bold text-amber-400">
+                                    {toCredits(call.creditsUsed)} credits
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -310,11 +311,25 @@ function Stat({ label, value, mono }: { label: string; value: string; mono?: boo
     );
 }
 
-function CostRow({ label, usd }: { label: string; usd: number }) {
+// 1 credit = $0.0001. Guards against null/undefined/NaN so a row that
+// hasn't been tallied yet renders "0" rather than "$NaN".
+function toCredits(value: number | null | undefined): string {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    return Math.round(n).toLocaleString();
+}
+
+function usdToCredits(usd: number | null | undefined): string {
+    const n = Number(usd);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    return Math.round(n * 10_000).toLocaleString();
+}
+
+function CostRow({ label, usd }: { label: string; usd: number | null | undefined }) {
     return (
         <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{label}</span>
-            <span className="font-mono">${(usd || 0).toFixed(4)}</span>
+            <span className="font-mono">{usdToCredits(usd)}</span>
         </div>
     );
 }

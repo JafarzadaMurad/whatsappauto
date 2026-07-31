@@ -81,8 +81,13 @@ export const LLMS: LlmEntry[] = [
     { provider: 'openai', model: 'gpt-5.6-sol',   label: 'GPT-5.6 Sol',   inCostPer1M: 5,    outCostPer1M: 30,  latencyMs: 700, intelligence: 'Best' },
     { provider: 'openai', model: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', inCostPer1M: 2.5,  outCostPer1M: 15,  latencyMs: 500, intelligence: 'Excellent' },
     { provider: 'openai', model: 'gpt-5.6-luna',  label: 'GPT-5.6 Luna',  inCostPer1M: 1,    outCostPer1M: 6,   latencyMs: 350, intelligence: 'Great' },
+    { provider: 'openai', model: 'gpt-5.5',       label: 'GPT-5.5',       inCostPer1M: 3,    outCostPer1M: 18,  latencyMs: 650, intelligence: 'Excellent' },
+    { provider: 'openai', model: 'gpt-5.5-pro',   label: 'GPT-5.5 Pro',   inCostPer1M: 8,    outCostPer1M: 40,  latencyMs: 900, intelligence: 'Best' },
+    { provider: 'openai', model: 'gpt-5.4',       label: 'GPT-5.4',       inCostPer1M: 1.5,  outCostPer1M: 9,   latencyMs: 450, intelligence: 'Great' },
     { provider: 'openai', model: 'gpt-5.4-mini',  label: 'GPT-5.4 Mini',  inCostPer1M: 0.75, outCostPer1M: 4.5, latencyMs: 300, intelligence: 'Good' },
     { provider: 'openai', model: 'gpt-5.4-nano',  label: 'GPT-5.4 Nano',  inCostPer1M: 0.2,  outCostPer1M: 1.25, latencyMs: 250, intelligence: 'Good' },
+    { provider: 'openai', model: 'gpt-4o',        label: 'GPT-4o',        inCostPer1M: 2.5,  outCostPer1M: 10,  latencyMs: 500, intelligence: 'Great' },
+    { provider: 'openai', model: 'gpt-4o-mini',   label: 'GPT-4o Mini',   inCostPer1M: 0.15, outCostPer1M: 0.6, latencyMs: 300, intelligence: 'Good' },
     // Anthropic
     { provider: 'anthropic', model: 'claude-opus-4-8',           label: 'Claude Opus 4.8',   inCostPer1M: 5, outCostPer1M: 25, latencyMs: 800, intelligence: 'Best' },
     { provider: 'anthropic', model: 'claude-sonnet-5',           label: 'Claude Sonnet 5',   inCostPer1M: 2, outCostPer1M: 10, latencyMs: 500, intelligence: 'Excellent' },

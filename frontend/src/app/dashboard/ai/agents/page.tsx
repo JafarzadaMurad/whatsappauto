@@ -149,15 +149,10 @@ export default function AiAgentsPage() {
         }
     };
 
-    const pasteAgent = async () => {
-        let raw = '';
-        try {
-            raw = await navigator.clipboard.readText();
-        } catch {
-            // Firefox and Safari don't grant clipboard read without a
-            // gesture-scoped permission — fall back to asking.
-            raw = window.prompt('Paste the copied agent config here:') || '';
-        }
+    // Shared by the Paste button and the Ctrl/Cmd+V handler. `raw` comes
+    // straight from the paste event when available — that path needs no
+    // clipboard permission at all.
+    const importFromText = async (raw: string) => {
         if (!raw.trim()) return;
         let parsed: any;
         try {
@@ -179,6 +174,37 @@ export default function AiAgentsPage() {
         } finally { setPasting(false); }
     };
 
+    const pasteAgent = async () => {
+        let raw = '';
+        try {
+            raw = await navigator.clipboard.readText();
+        } catch {
+            // Firefox and Safari don't grant clipboard read without a
+            // gesture-scoped permission — fall back to asking.
+            raw = window.prompt('Paste the copied agent config here:') || '';
+        }
+        await importFromText(raw);
+    };
+
+    // Ctrl/Cmd+V anywhere on the page imports an agent, so copying from
+    // one account and pasting into another needs no button hunting. We
+    // stay out of the way when the user is typing in a field, and only
+    // act on text that actually looks like an exported agent — otherwise
+    // an ordinary paste would trigger an error dialog.
+    useEffect(() => {
+        const onPaste = (e: ClipboardEvent) => {
+            if (formOpen || pasting) return;
+            const el = document.activeElement as HTMLElement | null;
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+            const text = e.clipboardData?.getData('text') ?? '';
+            if (!text.includes('alchatbot.agent')) return;
+            e.preventDefault();
+            importFromText(text);
+        };
+        window.addEventListener('paste', onPaste);
+        return () => window.removeEventListener('paste', onPaste);
+    }, [formOpen, pasting]);
+
     return (
         <div className="max-w-6xl mx-auto space-y-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -186,22 +212,26 @@ export default function AiAgentsPage() {
                     <h1 className="text-3xl font-bold text-foreground">AI Agents</h1>
                     <p className="text-muted-foreground mt-1">Design autonomous AI assistants and link them to WhatsApp</p>
                 </div>
-                <button
-                    onClick={pasteAgent}
-                    disabled={pasting}
-                    title="Paste an agent copied from any workspace or account"
-                    className="border border-border px-4 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-secondary transition-all disabled:opacity-60"
-                >
-                    {pasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <ClipboardPaste className="w-5 h-5" />}
-                    Paste
-                </button>
+                {/* Split control: Create is the primary action, Paste
+                    hangs off it so the two live together. Ctrl/Cmd+V
+                    does the same thing without touching either. */}
+                <div className="flex items-stretch rounded-xl overflow-hidden border border-primary/30">
                 <button
                     onClick={openCreate}
-                    className="bg-primary text-primary-foreground px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all active:scale-[0.98]"
+                    className="bg-primary text-primary-foreground px-5 py-2.5 font-medium flex items-center gap-2 hover:bg-primary/90 transition-all active:scale-[0.98]"
                 >
                     <Plus className="w-5 h-5" />
                     Create Agent
                 </button>
+                <button
+                    onClick={pasteAgent}
+                    disabled={pasting}
+                    title="Paste an agent copied from any workspace or account (Ctrl+V works too)"
+                    className="bg-primary/80 text-primary-foreground px-3 border-l border-primary-foreground/20 flex items-center hover:bg-primary transition-all disabled:opacity-60"
+                >
+                    {pasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <ClipboardPaste className="w-5 h-5" />}
+                </button>
+                </div>
             </div>
 
             {/* Create / Edit Modal */}

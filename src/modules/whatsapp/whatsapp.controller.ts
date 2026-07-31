@@ -36,7 +36,7 @@ export class WhatsappController {
                 select: { unlimitedInstances: true },
             });
             if (!user?.unlimitedInstances) {
-                await checkPlanLimit(userId, 'whatsapp');
+                await checkPlanLimit(workspaceId, 'whatsapp');
             }
 
             const instance = await prisma.instance.create({

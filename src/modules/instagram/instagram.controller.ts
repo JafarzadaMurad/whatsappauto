@@ -225,7 +225,7 @@ export class InstagramController {
 
             // Enforce plan limit only for NEW connections (re-saving an existing account is fine)
             const exists = await prisma.instagramAccount.findUnique({ where: { igUserId } });
-            if (!exists) await checkPlanLimit(userId, 'instagram');
+            if (!exists) await checkPlanLimit(workspaceId, 'instagram');
 
             const account = await prisma.instagramAccount.upsert({
                 where: { igUserId },

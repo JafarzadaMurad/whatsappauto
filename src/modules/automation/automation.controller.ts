@@ -59,7 +59,7 @@ export class AutomationController {
             const userId = (req as any).user.id;
             const workspaceId = getWorkspaceId(req);
             const data = upsertSchema.parse(req.body);
-            await checkPlanLimit(userId, 'automation');
+            await checkPlanLimit(workspaceId, 'automation');
             const automation = await prisma.automation.create({
                 data: {
                     userId,

@@ -104,7 +104,7 @@ export class AgentController {
             const workspaceId = getWorkspaceId(req);
             const data = createAgentSchema.parse(req.body);
 
-            await checkPlanLimit(userId, 'agent');
+            await checkPlanLimit(workspaceId, 'agent');
 
             // Verify provider belongs to workspace
             const provider = await prisma.aiProvider.findFirst({ where: { id: data.providerId, workspaceId } });
@@ -236,7 +236,7 @@ export class AgentController {
             });
             const data = schema.parse(req.body);
 
-            await checkPlanLimit(userId, 'agent');
+            await checkPlanLimit(workspaceId, 'agent');
 
             // Bind a provider in *this* workspace: explicit id wins, then
             // the exported label, then whatever is available.

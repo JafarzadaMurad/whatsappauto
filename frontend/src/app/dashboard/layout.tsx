@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import VerifyEmailBanner from "@/components/VerifyEmailBanner";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import AnnouncementBell from "@/components/AnnouncementBell";
+import AnnouncementModal from "@/components/AnnouncementModal";
 import Copilot from "@/components/copilot/Copilot";
 import api from "@/lib/api";
 
@@ -428,6 +429,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </main>
             </div>
             <Copilot />
+            <AnnouncementModal />
         </div>
     );
 }

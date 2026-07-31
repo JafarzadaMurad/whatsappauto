@@ -17,6 +17,7 @@ const upsertSchema = z.object({
     linkUrl: z.string().max(500).nullable().optional(),
     linkLabel: z.string().max(60).nullable().optional(),
     isPublished: z.boolean().optional(),
+    showAsModal: z.boolean().optional(),
 });
 
 export class AnnouncementController {
@@ -42,6 +43,7 @@ export class AnnouncementController {
                 kind: a.kind,
                 linkUrl: a.linkUrl,
                 linkLabel: a.linkLabel,
+                showAsModal: a.showAsModal,
                 publishedAt: a.publishedAt,
                 read: a.reads.length > 0,
             }));
@@ -113,6 +115,7 @@ export class AnnouncementController {
                     linkUrl: data.linkUrl || null,
                     linkLabel: data.linkLabel || null,
                     isPublished: data.isPublished ?? false,
+                    showAsModal: data.showAsModal ?? false,
                     // Stamped on first publish so "newest first" ordering
                     // reflects when users could actually see it.
                     publishedAt: data.isPublished ? new Date() : null,

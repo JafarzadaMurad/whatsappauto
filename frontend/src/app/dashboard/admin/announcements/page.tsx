@@ -19,6 +19,7 @@ type Announcement = {
     linkUrl: string | null;
     linkLabel: string | null;
     isPublished: boolean;
+    showAsModal: boolean;
     publishedAt: string | null;
     createdAt: string;
     _count?: { reads: number };
@@ -39,11 +40,12 @@ type Draft = {
     linkUrl: string;
     linkLabel: string;
     isPublished: boolean;
+    showAsModal: boolean;
 };
 
 const empty = (): Draft => ({
     title: '', body: '', kind: 'feature',
-    linkUrl: '', linkLabel: '', isPublished: true,
+    linkUrl: '', linkLabel: '', isPublished: true, showAsModal: false,
 });
 
 export default function AdminAnnouncementsPage() {
@@ -73,6 +75,7 @@ export default function AdminAnnouncementsPage() {
                 linkUrl: editing.linkUrl.trim() || null,
                 linkLabel: editing.linkLabel.trim() || null,
                 isPublished: editing.isPublished,
+                showAsModal: editing.showAsModal,
             };
             if (editing.id) await api.put(`/announcements/admin/${editing.id}`, payload);
             else await api.post('/announcements/admin', payload);
@@ -141,6 +144,12 @@ export default function AdminAnnouncementsPage() {
                                             }`}>
                                                 {a.isPublished ? 'Published' : 'Draft'}
                                             </span>
+                                            {a.showAsModal && (
+                                                <span title="Interrupts users with a popup"
+                                                    className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/15 text-primary">
+                                                    Popup
+                                                </span>
+                                            )}
                                         </div>
                                         <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap break-words">{a.body}</p>
                                         <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
@@ -162,6 +171,7 @@ export default function AdminAnnouncementsPage() {
                                                 kind: a.kind as Kind,
                                                 linkUrl: a.linkUrl || '', linkLabel: a.linkLabel || '',
                                                 isPublished: a.isPublished,
+                                                showAsModal: a.showAsModal,
                                             });
                                             setError(null);
                                         }}
@@ -244,6 +254,20 @@ export default function AdminAnnouncementsPage() {
                                 onChange={e => setEditing({ ...editing, isPublished: e.target.checked })}
                                 className="w-4 h-4 accent-primary" />
                             <span className="text-sm">Publish now — everyone sees it immediately</span>
+                        </label>
+
+                        <label className="flex items-start gap-2 p-3 rounded-xl border border-border cursor-pointer hover:bg-secondary/40">
+                            <input type="checkbox" checked={editing.showAsModal}
+                                onChange={e => setEditing({ ...editing, showAsModal: e.target.checked })}
+                                className="w-4 h-4 accent-primary mt-0.5" />
+                            <div>
+                                <div className="text-sm font-medium">Also interrupt with a popup</div>
+                                <div className="text-[11px] text-muted-foreground">
+                                    Shows once, centre-screen, on each user's next page load. Save it for things
+                                    people need to know today — a popup on every notice teaches them to dismiss
+                                    without reading.
+                                </div>
+                            </div>
                         </label>
 
                         <div className="flex justify-end gap-2 pt-1">

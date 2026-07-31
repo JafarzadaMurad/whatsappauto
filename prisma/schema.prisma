@@ -194,6 +194,13 @@ model Announcement {
   isPublished Boolean   @default(false)
   publishedAt DateTime?
 
+  // Interrupt the user with a centre-screen dialog on their next page
+  // load, instead of only sitting in the bell. Off by default on
+  // purpose — a popup that fires for every notice trains people to
+  // dismiss without reading, which costs more than it gains. Reserve
+  // it for changes someone genuinely needs to know about today.
+  showAsModal Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -48,7 +48,14 @@ export default function AnnouncementBell() {
     useEffect(() => {
         load();
         const t = setInterval(load, 5 * 60_000);
-        return () => clearInterval(t);
+        // The spotlight dialog marks things read too; refresh the badge
+        // when it does so the count doesn't sit stale until the next poll.
+        const onChanged = () => load();
+        window.addEventListener('announcements:changed', onChanged);
+        return () => {
+            clearInterval(t);
+            window.removeEventListener('announcements:changed', onChanged);
+        };
     }, []);
 
     // Close on outside click / Escape.

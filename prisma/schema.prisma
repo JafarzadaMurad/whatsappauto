@@ -1840,7 +1840,12 @@ model VoiceAssistant {
   llmProvider    String @default("openai")
   llmModel       String @default("gpt-5.6-luna")
   llmTemperature Float? @default(0.5)
-  llmMaxTokens   Int?   @default(250)  // Keep spoken replies short
+  // Hard cap on a single spoken reply. Leave null — brevity belongs in
+  // the system prompt, where the model can plan a short answer and
+  // finish it. A token cap gives it no warning: it speaks until the
+  // budget runs out and stops mid-word. (This defaulted to 250, which
+  // is why replies were cut off part-way through a sentence.)
+  llmMaxTokens   Int?
 
   // ── Voice (TTS) ──
   ttsProvider String  @default("openai")

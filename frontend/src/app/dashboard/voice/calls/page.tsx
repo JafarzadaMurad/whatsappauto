@@ -225,6 +225,19 @@ function CallDrawer({ call, onClose }: { call: Call; onClose: () => void }) {
                         <h4 className="text-xs font-semibold flex items-center gap-2 mb-2">
                             <Coins className="w-3.5 h-3.5 text-amber-400" /> Cost breakdown
                         </h4>
+                        {/* A speech-to-speech model (OpenAI Realtime) hears
+                            and speaks itself, so there is no separate
+                            transcription or TTS step to bill — both are
+                            inside the LLM's audio tokens. Zeros there are
+                            correct, but they look like a bug without a word
+                            of explanation. */}
+                        {call.transcriberCostUsd === 0 && call.ttsCostUsd === 0 && call.llmCostUsd > 0 && (
+                            <p className="text-[10px] text-muted-foreground mb-2 pb-2 border-b border-border/50">
+                                This assistant uses a speech-to-speech model: it listens and speaks directly,
+                                with no separate transcription or voice step. Both are billed inside the LLM
+                                line as audio tokens.
+                            </p>
+                        )}
                         <div className="space-y-1.5 text-xs">
                             <CostRow label="Transcriber" usd={call.transcriberCostUsd} />
                             <CostRow label="LLM" usd={call.llmCostUsd} />

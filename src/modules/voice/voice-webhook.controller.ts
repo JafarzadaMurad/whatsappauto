@@ -17,6 +17,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
+import { getTwilioForPhoneNumber } from '../../lib/twilio';
 
 function wsBase(): string {
     // Same host as FRONTEND_URL but wss:// scheme. Twilio media streams
@@ -145,11 +146,13 @@ export class VoiceWebhookController {
             const callStatus = String(req.body?.CallStatus || '');
             const callDuration = Number(req.body?.CallDuration || 0);
 
-            const call = await prisma.phoneCall.findFirst({
+            // Prefer the exact row by CallSid; fall back to the fuzzy
+            // match for rows created before that column existed.
+            const call = (callSid && await prisma.phoneCall.findFirst({
+                where: { twilioCallSid: callSid },
+            })) || await prisma.phoneCall.findFirst({
                 where: {
                     startedAt: { gte: new Date(Date.now() - 1000 * 60 * 60 * 12) },
-                    // Match by phoneNumberId + fromNumber to isolate to
-                    // the right row (Twilio doesn't send our internal id).
                     fromNumber: String(req.body?.From || ''),
                     toNumber: String(req.body?.To || ''),
                     status: { in: ['ringing', 'in-progress'] },
@@ -163,9 +166,25 @@ export class VoiceWebhookController {
                 return;
             }
 
-            // Telephony cost — Twilio bills per minute rounded up.
+            // Telephony cost. Ask Twilio what it actually charged rather
+            // than guessing — the rate varies enormously by destination
+            // (a US call and a call to Azerbaijan are not close), so a
+            // flat per-minute constant was wrong for nearly everyone.
+            // Twilio populates `price` a moment after the call ends, so
+            // fall back to a rough estimate when it isn't there yet.
             const durationMin = Math.max(1, Math.ceil(callDuration / 60));
-            const telephonyCostUsd = durationMin * 0.009; // rough US inbound rate; overridden by Twilio invoice reality
+            let telephonyCostUsd = durationMin * 0.009;
+            try {
+                const client = await getTwilioForPhoneNumber(String(req.body?.From || ''));
+                if (client && callSid) {
+                    const twCall = await client.calls(callSid).fetch();
+                    // Twilio reports charges as a negative string.
+                    const price = twCall.price ? Math.abs(Number(twCall.price)) : null;
+                    if (price !== null && !Number.isNaN(price)) telephonyCostUsd = price;
+                }
+            } catch (err: any) {
+                logger.warn({ err: err.message, callSid }, '[voice] could not read Twilio price — keeping estimate');
+            }
 
             await prisma.phoneCall.update({
                 where: { id: call.id },

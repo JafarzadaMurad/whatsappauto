@@ -335,7 +335,16 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                         speed: asst.ttsSpeed ?? 1.0,
                     },
                 },
-                max_output_tokens: asst.llmMaxTokens || 250,
+                // Uncapped by default. A token limit doesn't produce a
+                // shorter answer — the model plans a full one and is cut
+                // off mid-word when the budget runs out, which is what
+                // made replies trail off ("Bu ev dənizin q"). Keeping
+                // answers short is the system prompt's job. 250 was the
+                // old default nobody chose, so treat it as uncapped too;
+                // anything an operator deliberately raised is honoured.
+                max_output_tokens: (asst.llmMaxTokens && asst.llmMaxTokens > 250)
+                    ? asst.llmMaxTokens
+                    : 'inf',
             },
         }));
 

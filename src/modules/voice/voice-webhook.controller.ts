@@ -101,17 +101,18 @@ export class VoiceWebhookController {
                 }).catch(err => logger.error({ err: err.message, callSid }, '[voice] create call row failed'));
             }
 
-            // Store the assistantId in the stream URL as a custom
-            // parameter (Twilio forwards it to us on WS connect). Prefer
-            // path-based routing so the WS server can dispatch fast
-            // without parsing query strings.
-            //
-            // CRITICAL: `&` inside an XML attribute is illegal; it must
-            // be escaped as `&amp;` or Twilio's TwiML parser bombs
-            // with error 12100 "Document parse failure" and speaks
-            // "an application error has occurred". Been there.
-            const rawStreamUrl = `${wsBase()}/api/voice/stream?assistantId=${numberRow.voiceAssistant.id}&callSid=${encodeURIComponent(callSid)}`;
-            const streamUrl = rawStreamUrl.replaceAll('&', '&amp;');
+            // Identify the call through the URL *path*, not a query
+            // string. A query string needs `&` between parameters, `&`
+            // is illegal raw inside an XML attribute, and escaping it as
+            // `&amp;` leaves how Twilio decodes it before opening the
+            // socket outside our control — which is exactly what broke
+            // here: the TwiML was right, Twilio connected, and the
+            // bridge couldn't read the assistant id back out. A path
+            // carries no ampersand at all, so nothing has to be escaped
+            // and nothing can be mangled.
+            const rawStreamUrl =
+                `${wsBase()}/api/voice/stream/${numberRow.voiceAssistant.id}/${encodeURIComponent(callSid)}`;
+            const streamUrl = rawStreamUrl;
 
             // <Connect><Stream> pipes bi-directional linear16 μ-law audio
             // over the WebSocket. `track="inbound_track"` alone streams

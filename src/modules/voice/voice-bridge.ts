@@ -96,23 +96,22 @@ export function attachVoiceBridge(httpServer: HttpServer) {
 
     httpServer.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url || '', `http://${req.headers.host}`);
-        // Accept both /voice/stream and /api/voice/stream. Caddy is
-        // usually configured to proxy /api/* → backend and everything
-        // else → Next.js frontend, so the /api-prefixed path is the
-        // safe one for Twilio. Both work locally.
-        if (url.pathname !== '/voice/stream' && url.pathname !== '/api/voice/stream') return;
-        logger.info({
-            pathname: url.pathname,
-            assistantId: url.searchParams.get('assistantId'),
-            callSid: url.searchParams.get('callSid'),
-            remote: (socket as any).remoteAddress,
-            userAgent: req.headers['user-agent'],
-        }, '[voice-bridge] upgrade received — accepting');
+        // Accept both /voice/stream and /api/voice/stream, with or
+        // without the /<assistantId>/<callSid> suffix. Caddy proxies
+        // /api/* to the backend and everything else to Next.js, so the
+        // /api-prefixed form is the one Twilio must use; the bare form
+        // stays for local development.
+        const isStreamPath = /^\/(api\/)?voice\/stream(\/|$)/.test(url.pathname);
+        if (!isStreamPath) return;
+        // Log the raw URL — the identifiers live in the path now, and
+        // when this goes wrong the only useful question is what Twilio
+        // actually sent us.
+        logger.info(`[voice-bridge] upgrade received — accepting · url="${req.url}"`);
         wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     });
 
     wss.on('connection', (twilioWs, req) => {
-        logger.info({ url: req.url }, '[voice-bridge] WSS connection open');
+        logger.info(`[voice-bridge] WSS connection open · url="${req.url}"`);
         handleConnection(twilioWs, req).catch(err => {
             logger.error({ err: err.message, stack: err.stack }, '[voice-bridge] connection handler crashed');
             try { twilioWs.close(); } catch { /* ignore */ }
@@ -124,15 +123,32 @@ export function attachVoiceBridge(httpServer: HttpServer) {
 
 async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const assistantId = url.searchParams.get('assistantId') || '';
-    const callSid = url.searchParams.get('callSid') || '';
+
+    // Path form: /api/voice/stream/<assistantId>/<callSid>
+    // Query form is still accepted so a call placed before this change
+    // (or a local test) keeps working.
+    const segments = url.pathname.split('/').filter(Boolean);
+    const streamIdx = segments.indexOf('stream');
+    const assistantId = (streamIdx >= 0 ? segments[streamIdx + 1] : '')
+        || url.searchParams.get('assistantId')
+        || '';
+    const callSid = decodeURIComponent(
+        (streamIdx >= 0 ? segments[streamIdx + 2] : '') || url.searchParams.get('callSid') || ''
+    );
 
     const asst = await loadAssistant(assistantId);
     if (!asst) {
-        logger.warn({ assistantId, callSid }, '[voice-bridge] unknown assistant on connect');
+        // Single line, with the raw URL — when this fires the question
+        // is always "what did we actually receive", and the structured
+        // fields end up on lines a grep drops.
+        logger.warn(
+            `[voice-bridge] unknown assistant on connect · assistantId="${assistantId}" ` +
+            `callSid="${callSid}" url="${req.url}"`
+        );
         twilioWs.close();
         return;
     }
+    logger.info(`[voice-bridge] session starting · assistant=${assistantId} callSid=${callSid}`);
 
     const openaiKey = await resolvePlatformKey('OPENAI');
     if (!openaiKey) {

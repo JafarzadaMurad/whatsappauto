@@ -61,10 +61,20 @@ export class VoiceWebhookController {
                 if (numberRow) isOutbound = true;
             }
 
+            // One greppable line per webhook hit. A call that ends the
+            // instant it's answered gives Twilio nothing to report, so
+            // the only way to tell "we served a Stream" apart from "we
+            // served a Hangup" is to record which branch ran.
+            logger.info(
+                `[voice-webhook] callSid=${callSid} dir=${direction} to=${to} from=${from} ` +
+                `matched=${numberRow ? (isOutbound ? 'from(outbound)' : 'to(inbound)') : 'NONE'} ` +
+                `number=${numberRow?.number ?? '-'} assistant=${numberRow?.voiceAssistant?.id ?? 'NONE'}`
+            );
+
             // No assistant → play a short "not available" message and
             // hang up so Twilio doesn't leave the caller hanging.
             if (!numberRow || !numberRow.voiceAssistant) {
-                logger.warn({ to, from, callSid, direction }, '[voice] call to unassigned number');
+                logger.warn({ to, from, callSid, direction }, '[voice] call to unassigned number → serving Say+Hangup');
                 res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">This number is not currently assigned to an assistant.</Say>
@@ -107,12 +117,18 @@ export class VoiceWebhookController {
             // over the WebSocket. `track="inbound_track"` alone streams
             // the caller's audio only; unspecified streams both, which
             // is what our bridge expects.
-            res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+            const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="${streamUrl}"/>
   </Connect>
-</Response>`);
+</Response>`;
+            // Log the exact document Twilio receives. The stream URL is
+            // built from FRONTEND_URL, so a wrong value there sends the
+            // media stream somewhere that never answers and the call
+            // dies a second after pickup with nothing in Twilio's log.
+            logger.info(`[voice-webhook] callSid=${callSid} serving Stream → ${rawStreamUrl}`);
+            res.type('text/xml').send(twiml);
         } catch (error: any) {
             logger.error({ err: error.message, stack: error.stack }, '[voice] webhook error');
             res.type('text/xml').status(500).send(`<?xml version="1.0" encoding="UTF-8"?>

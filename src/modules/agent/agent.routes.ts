@@ -14,6 +14,10 @@ router.use(requirePerm('agents', 'view'));
 router.get('/', controller.getAgents.bind(controller));
 router.get('/:id', controller.getAgent.bind(controller));
 router.post('/', requirePerm('agents', 'create'), controller.createAgent.bind(controller));
+// Portable agent config — copy from one workspace, paste into another
+// (works across accounts; ids are deliberately excluded).
+router.get('/:id/export', controller.exportAgent.bind(controller));
+router.post('/import', requirePerm('agents', 'create'), controller.importAgent.bind(controller));
 router.put('/:id', requirePerm('agents', 'update'), controller.updateAgent.bind(controller));
 router.delete('/:id', requirePerm('agents', 'delete'), controller.deleteAgent.bind(controller));
 router.get('/:id/conversations', controller.getConversations.bind(controller));

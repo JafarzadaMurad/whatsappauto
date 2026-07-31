@@ -174,6 +174,49 @@ model WorkspaceRole {
   @@index([workspaceId])
 }
 
+// Product announcements — "what's new" notices written by an admin and
+// shown to every user until they dismiss them. Shipping a feature that
+// nobody discovers is the same as not shipping it; this is the channel
+// that closes that gap without a marketing email.
+model Announcement {
+  id      String @id @default(uuid())
+  title   String
+  body    String @db.Text
+  // 'feature' | 'fix' | 'notice' — drives the icon and accent colour.
+  kind    String @default("feature")
+  // Optional deep link, e.g. /dashboard/ai/agents for a feature that
+  // lives on a specific page.
+  linkUrl   String?
+  linkLabel String?
+
+  // Draft announcements are invisible to users; publishing stamps
+  // publishedAt so "new since your last visit" can be computed.
+  isPublished Boolean   @default(false)
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reads AnnouncementRead[]
+
+  @@index([isPublished, publishedAt(sort: Desc)])
+}
+
+// One row per user per announcement they've dismissed. Absence means
+// unread, so a newly published announcement is unread for everyone
+// without backfilling anything.
+model AnnouncementRead {
+  id             String @id @default(uuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime @default(now())
+
+  @@unique([announcementId, userId])
+  @@index([userId])
+}
+
 // Subscription plans (managed by admins)
 model Plan {
   id          String  @id @default(uuid())
@@ -294,6 +337,7 @@ model User {
   stripeCustomerId     String?
   stripeSubscriptionId String?
 
+  announcementReads AnnouncementRead[]
   instances Instance[]
   webhooks  WebhookConfig[]
   apiKeys   ApiKey[]
@@ -1199,8 +1243,13 @@ model UserField {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, key])
-  @@index([userId, order])
+  // Custom fields belong to a workspace, not a person — every member
+  // works with the same set. Keying uniqueness on userId meant a key
+  // already used in one of the owner's workspaces couldn't be created
+  // in another, so fields silently went missing for colleagues while
+  // appearing fine for the owner. userId is still recorded for audit.
+  @@unique([workspaceId, key])
+  @@index([workspaceId, order])
 }
 
 // -----------------------------------------

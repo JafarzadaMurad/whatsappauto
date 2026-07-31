@@ -5,7 +5,7 @@ import { buildTemplateExecutor, sanitizeName, type HttpToolTemplate, AiService }
 import { sendIgMessage } from '../instagram/instagram.ai.service';
 import { checkPlanLimit, PlanLimitError } from '../../lib/plan-limits';
 import { getWorkspaceId } from '../../lib/workspace-context';
-import { isModelAllowed, loadAllowedModels } from '../../lib/model-access';
+import { isModelAllowed, loadAllowedModels, normaliseProvider } from '../../lib/model-access';
 
 const valueSpecSchema = z.union([
     z.object({ mode: z.literal('fixed'), value: z.string() }),
@@ -153,6 +153,172 @@ export class AgentController {
         } catch (error: any) {
             if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // ─── Portable agent config ──────────────────────────────────────
+    // Export produces a self-contained JSON blob the operator can copy
+    // and paste into any other workspace — including one on a different
+    // account. It deliberately carries no ids: providerId, allowed
+    // tables and routable agents are all workspace-local and would be
+    // meaningless (or worse, point at someone else's rows) elsewhere.
+    // The provider is recorded by *label* so import can re-bind it.
+    async exportAgent(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            const agent = await prisma.agent.findFirst({
+                where: { id, workspaceId },
+                include: { provider: { select: { provider: true } } },
+            });
+            if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+            return res.json({
+                success: true,
+                export: {
+                    _format: 'alchatbot.agent',
+                    _version: 1,
+                    name: agent.name,
+                    provider: agent.provider?.provider ?? null,
+                    model: agent.model,
+                    systemPrompt: agent.systemPrompt,
+                    skills: agent.skills,
+                    skillPrompts: agent.skillPrompts,
+                    httpTools: agent.httpTools,
+                    allowedUrls: agent.allowedUrls,
+                    audioEnabled: agent.audioEnabled,
+                    visionEnabled: agent.visionEnabled,
+                    historyDepth: agent.historyDepth,
+                    reminderHours: agent.reminderHours,
+                    whisperLanguage: agent.whisperLanguage,
+                    whisperModel: agent.whisperModel,
+                    timezone: agent.timezone,
+                    isRouter: agent.isRouter,
+                    routerDescription: agent.routerDescription,
+                },
+            });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    // Import rebuilds the agent in the caller's workspace. The provider
+    // is matched by label; if the source used one this workspace doesn't
+    // have, we say so plainly rather than silently substituting. Tables
+    // and routing targets are dropped — they're workspace-local, and the
+    // operator re-picks them after import.
+    async importAgent(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user.id;
+            const workspaceId = getWorkspaceId(req);
+
+            const schema = z.object({
+                _format: z.literal('alchatbot.agent').optional(),
+                name: z.string().min(1).max(120),
+                provider: z.string().nullable().optional(),
+                providerId: z.string().uuid().optional(),
+                model: z.string().min(1),
+                systemPrompt: z.string().optional(),
+                skills: z.array(z.string()).optional(),
+                skillPrompts: z.record(z.string(), z.any()).optional(),
+                httpTools: z.array(z.any()).optional(),
+                allowedUrls: z.array(z.string()).optional(),
+                audioEnabled: z.boolean().optional(),
+                visionEnabled: z.boolean().optional(),
+                historyDepth: z.number().int().min(0).max(100).optional(),
+                reminderHours: z.number().int().min(0).max(720).optional(),
+                whisperLanguage: z.string().nullable().optional(),
+                whisperModel: z.string().optional(),
+                timezone: z.string().optional(),
+                isRouter: z.boolean().optional(),
+                routerDescription: z.string().nullable().optional(),
+            });
+            const data = schema.parse(req.body);
+
+            await checkPlanLimit(userId, 'agent');
+
+            // Bind a provider in *this* workspace: explicit id wins, then
+            // the exported label, then whatever is available.
+            let provider = data.providerId
+                ? await prisma.aiProvider.findFirst({ where: { id: data.providerId, workspaceId } })
+                : null;
+            if (!provider && data.provider) {
+                provider = await prisma.aiProvider.findFirst({ where: { workspaceId, provider: data.provider } });
+            }
+            if (!provider) {
+                provider = await prisma.aiProvider.findFirst({ where: { workspaceId } });
+            }
+            if (!provider) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'no_provider',
+                    message: 'This workspace has no AI provider configured yet. Open the agents page once so providers are provisioned, then import again.',
+                });
+            }
+
+            // The exported model may not be on this plan — fall back to
+            // the first allowed one rather than refusing the whole import,
+            // and tell the caller what we changed.
+            const allowed = await loadAllowedModels(workspaceId);
+            let model = data.model;
+            let modelChanged = false;
+            if (!isModelAllowed(allowed, provider.provider, model)) {
+                const catalogue = allowed
+                    .filter(m => m.startsWith(`${normaliseProvider(provider.provider)}:`))
+                    .map(m => m.split(':').slice(1).join(':'));
+                if (catalogue.length === 0) {
+                    return res.status(403).json({
+                        success: false,
+                        code: 'model_not_allowed',
+                        message: `Your plan doesn't include ${provider.provider}/${model}, and no other ${provider.provider} model is available. Ask an admin to allow one.`,
+                    });
+                }
+                model = catalogue[0];
+                modelChanged = true;
+            }
+
+            const agent = await prisma.agent.create({
+                data: {
+                    userId,
+                    workspaceId,
+                    name: data.name,
+                    providerId: provider.id,
+                    model,
+                    systemPrompt: data.systemPrompt || '',
+                    skills: data.skills || [],
+                    skillPrompts: (data.skillPrompts || {}) as any,
+                    httpTools: (data.httpTools || []) as any,
+                    allowedUrls: data.allowedUrls || [],
+                    // Workspace-local references intentionally not carried
+                    // over — they'd point at rows that don't exist here.
+                    allowedTableIds: [],
+                    routableAgentIds: [],
+                    ...(data.audioEnabled !== undefined ? { audioEnabled: data.audioEnabled } : {}),
+                    ...(data.visionEnabled !== undefined ? { visionEnabled: data.visionEnabled } : {}),
+                    ...(data.historyDepth !== undefined ? { historyDepth: data.historyDepth } : {}),
+                    ...(data.reminderHours !== undefined ? { reminderHours: data.reminderHours } : {}),
+                    ...(data.whisperLanguage !== undefined ? { whisperLanguage: data.whisperLanguage } : {}),
+                    ...(data.whisperModel !== undefined ? { whisperModel: data.whisperModel } : {}),
+                    ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
+                    ...(data.isRouter !== undefined ? { isRouter: data.isRouter } : {}),
+                    ...(data.routerDescription !== undefined ? { routerDescription: data.routerDescription } : {}),
+                },
+            });
+
+            const notes: string[] = [];
+            if (modelChanged) notes.push(`Model changed to ${model} — the exported one isn't available on this plan.`);
+            if (data.provider && provider.provider !== data.provider) {
+                notes.push(`Provider ${data.provider} isn't set up here; bound to ${provider.provider} instead.`);
+            }
+            notes.push('Allowed tables and routing targets were not copied — they are workspace-specific.');
+
+            return res.status(201).json({ success: true, agent, notes });
+        } catch (error: any) {
+            if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
+            if (error instanceof z.ZodError) {
+                return res.status(400).json({ success: false, message: 'That doesn\'t look like an exported agent.', errors: error.issues });
+            }
             return res.status(500).json({ success: false, message: error.message });
         }
     }

@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import VerifyEmailBanner from "@/components/VerifyEmailBanner";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import AnnouncementBell from "@/components/AnnouncementBell";
 import Copilot from "@/components/copilot/Copilot";
 import api from "@/lib/api";
 
@@ -157,6 +158,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { name: 'AI Models', href: '/dashboard/admin/ai-models', icon: Bot },
                 { name: 'AI Pricing', href: '/dashboard/admin/ai-pricing', icon: Coins },
                 { name: 'Platform Keys', href: '/dashboard/admin/platform-keys', icon: KeyRound },
+                { name: 'Announcements', href: '/dashboard/admin/announcements', icon: Megaphone },
                 { name: 'Copilot', href: '/dashboard/admin/copilot', icon: Bot },
                 { name: 'Sign-in', href: '/dashboard/admin/auth', icon: LogIn },
                 { name: 'Email', href: '/dashboard/admin/email', icon: Mail },
@@ -416,7 +418,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden min-w-0">
                 <VerifyEmailBanner />
-                <main className="flex-1 overflow-y-auto p-4 md:p-8">
+                {/* Slim top bar — currently just the what's-new bell, so
+                    shipped features get noticed instead of sitting unused. */}
+                <div className="flex items-center justify-end px-4 md:px-8 pt-3">
+                    <AnnouncementBell />
+                </div>
+                <main className="flex-1 overflow-y-auto px-4 md:px-8 pb-8 pt-2">
                     {children}
                 </main>
             </div>

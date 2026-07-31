@@ -14,6 +14,26 @@ const agentCommonFields = {
     httpTools: z.array(z.any()).optional(),
     skillPrompts: z.record(z.string(), z.string()).optional(),
     isActive: z.boolean().optional(),
+
+    // Behaviour tunables. These were editable in the dashboard but not
+    // through MCP, so an assistant configuring an agent end-to-end had
+    // to stop and ask the operator to finish by hand.
+    historyDepth: z.number().int().min(0).max(100).optional()
+        .describe('How many past messages are replayed to the model. 0 disables history.'),
+    reminderHours: z.number().int().min(0).max(720).optional()
+        .describe('Hours of silence before the agent nudges the contact. 0 turns reminders off.'),
+    audioEnabled: z.boolean().optional()
+        .describe('Transcribe incoming voice notes (needs an OpenAI key in the workspace).'),
+    visionEnabled: z.boolean().optional()
+        .describe('Let the agent read incoming images (needs a vision-capable model).'),
+    whisperLanguage: z.string().max(10).nullable().optional()
+        .describe('ISO code forced for transcription, or null to auto-detect.'),
+    whisperModel: z.string().max(60).optional(),
+    timezone: z.string().max(60).optional()
+        .describe('IANA timezone used to render date/time placeholders in the prompt.'),
+    isRouter: z.boolean().optional()
+        .describe('Mark this agent as a dispatcher that hands conversations to other agents.'),
+    routerDescription: z.string().max(2000).nullable().optional(),
 };
 
 export function registerAgentTools(reg: RegisterToolFn) {
@@ -114,6 +134,15 @@ export function registerAgentTools(reg: RegisterToolFn) {
                     ...(patch.httpTools !== undefined ? { httpTools: patch.httpTools as any } : {}),
                     ...(patch.skillPrompts !== undefined ? { skillPrompts: patch.skillPrompts as any } : {}),
                     ...(patch.isActive !== undefined ? { isActive: patch.isActive } : {}),
+                    ...(patch.historyDepth !== undefined ? { historyDepth: patch.historyDepth } : {}),
+                    ...(patch.reminderHours !== undefined ? { reminderHours: patch.reminderHours } : {}),
+                    ...(patch.audioEnabled !== undefined ? { audioEnabled: patch.audioEnabled } : {}),
+                    ...(patch.visionEnabled !== undefined ? { visionEnabled: patch.visionEnabled } : {}),
+                    ...(patch.whisperLanguage !== undefined ? { whisperLanguage: patch.whisperLanguage } : {}),
+                    ...(patch.whisperModel !== undefined ? { whisperModel: patch.whisperModel } : {}),
+                    ...(patch.timezone !== undefined ? { timezone: patch.timezone } : {}),
+                    ...(patch.isRouter !== undefined ? { isRouter: patch.isRouter } : {}),
+                    ...(patch.routerDescription !== undefined ? { routerDescription: patch.routerDescription } : {}),
                 },
             });
             return ok(row);

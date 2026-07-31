@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Plus, Loader2, Trash2, Database, ShieldCheck, X, Wifi, WifiOff, MessageSquare } from "lucide-react";
+import { Bot, Plus, Loader2, Trash2, Database, ShieldCheck, X, Wifi, WifiOff, MessageSquare, Copy, ClipboardPaste, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,6 +18,8 @@ export default function AiAgentsPage() {
     const [formOpen, setFormOpen] = useState(false);
     const [editingAgent, setEditingAgent] = useState<any>(null);
     const [submitting, setSubmitting] = useState(false);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [pasting, setPasting] = useState(false);
 
     // Form fields
     const [name, setName] = useState("");
@@ -129,6 +131,54 @@ export default function AiAgentsPage() {
         ? providers.filter(p => (aiModels[p.provider] || []).length > 0)
         : providers;
 
+    // ─── Copy / paste an agent ─────────────────────────────────────
+    // Copy puts a self-contained JSON config on the clipboard; Paste
+    // rebuilds it here. Because it travels as text it works between
+    // accounts, not just workspaces. Ids are excluded server-side, so
+    // the provider is re-bound and workspace-local references (tables,
+    // routing targets) are left for the operator to re-pick.
+    const copyAgent = async (agentId: string, agentName: string) => {
+        try {
+            const r = await api.get(`/agents/${agentId}/export`);
+            if (!r.data?.success) throw new Error(r.data?.message || 'Export failed');
+            await navigator.clipboard.writeText(JSON.stringify(r.data.export, null, 2));
+            setCopiedId(agentId);
+            setTimeout(() => setCopiedId(null), 2000);
+        } catch (err: any) {
+            alert(err.response?.data?.message || err.message || `Couldn't copy ${agentName}`);
+        }
+    };
+
+    const pasteAgent = async () => {
+        let raw = '';
+        try {
+            raw = await navigator.clipboard.readText();
+        } catch {
+            // Firefox and Safari don't grant clipboard read without a
+            // gesture-scoped permission — fall back to asking.
+            raw = window.prompt('Paste the copied agent config here:') || '';
+        }
+        if (!raw.trim()) return;
+        let parsed: any;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            alert("That isn't a valid agent config — copy one with the Copy button first.");
+            return;
+        }
+        setPasting(true);
+        try {
+            const r = await api.post('/agents/import', parsed);
+            if (r.data?.success) {
+                const notes: string[] = r.data.notes || [];
+                await loadData();
+                if (notes.length) alert(`Agent imported.\n\n${notes.join('\n')}`);
+            }
+        } catch (err: any) {
+            alert(err.response?.data?.message || err.message);
+        } finally { setPasting(false); }
+    };
+
     return (
         <div className="max-w-6xl mx-auto space-y-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -136,6 +186,15 @@ export default function AiAgentsPage() {
                     <h1 className="text-3xl font-bold text-foreground">AI Agents</h1>
                     <p className="text-muted-foreground mt-1">Design autonomous AI assistants and link them to WhatsApp</p>
                 </div>
+                <button
+                    onClick={pasteAgent}
+                    disabled={pasting}
+                    title="Paste an agent copied from any workspace or account"
+                    className="border border-border px-4 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-secondary transition-all disabled:opacity-60"
+                >
+                    {pasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <ClipboardPaste className="w-5 h-5" />}
+                    Paste
+                </button>
                 <button
                     onClick={openCreate}
                     className="bg-primary text-primary-foreground px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all active:scale-[0.98]"
@@ -314,12 +373,23 @@ export default function AiAgentsPage() {
                                         </span>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); handleDelete(agent.id); }}
-                                    className="p-2 text-destructive hover:bg-destructive/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); copyAgent(agent.id, agent.name); }}
+                                        title="Copy this agent's config — paste it into any workspace or account"
+                                        className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg"
+                                    >
+                                        {copiedId === agent.id
+                                            ? <Check className="w-4 h-4 text-emerald-400" />
+                                            : <Copy className="w-4 h-4" />}
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleDelete(agent.id); }}
+                                        className="p-2 text-destructive hover:bg-destructive/10 rounded-lg"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="mt-4 p-3 bg-secondary/30 rounded-xl text-sm text-foreground/80 border border-border/50 h-20 overflow-y-auto">

@@ -314,7 +314,13 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 instructions,
                 audio: {
                     input: {
-                        format: 'g711_ulaw',
+                        // GA takes a format *object*; the old string form
+                        // ("g711_ulaw") is rejected outright. `audio/pcmu`
+                        // is G.711 μ-law, which is what Twilio Media
+                        // Streams carry — matching it on both sides keeps
+                        // the audio a straight pass-through with no
+                        // resampling in either direction.
+                        format: { type: 'audio/pcmu' },
                         transcription: { model: 'gpt-4o-mini-transcribe' },
                         turn_detection: {
                             type: 'server_vad',
@@ -324,7 +330,7 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                         },
                     },
                     output: {
-                        format: 'g711_ulaw',
+                        format: { type: 'audio/pcmu' },
                         voice,
                         speed: asst.ttsSpeed ?? 1.0,
                     },

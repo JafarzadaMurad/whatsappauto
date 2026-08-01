@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Bot, Loader2, Save, RotateCcw, Cpu } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 type TextModelRow = { provider: "CLAUDE" | "OPENAI"; model: string };
 
@@ -28,6 +29,14 @@ export default function AdminCopilotPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    // Only the editable fields are compared — the catalogues that come
+    // down with the config never change locally, and folding them in
+    // would make the bar appear on load.
+    const [baseline, setBaseline] = useState<string>('');
+    const fingerprint = (c: Settings | null) => c ? JSON.stringify({
+        systemPrompt: c.systemPrompt, provider: c.provider, model: c.model, voiceModel: c.voiceModel,
+    }) : '';
+    const dirty = !!cfg && fingerprint(cfg) !== baseline;
 
     const load = async () => {
         try {
@@ -41,6 +50,12 @@ export default function AdminCopilotPage() {
                 textModels: res.data.textModels || [],
                 voiceModels: res.data.voiceModels || [],
             });
+            if (res.data.success) setBaseline(fingerprint({
+                systemPrompt: res.data.systemPrompt,
+                provider: res.data.provider,
+                model: res.data.model,
+                voiceModel: res.data.voiceModel,
+            } as Settings));
         } finally { setLoading(false); }
     };
     useEffect(() => { load(); }, []);
@@ -61,6 +76,7 @@ export default function AdminCopilotPage() {
                 model: cfg.model,
                 voiceModel: cfg.voiceModel,
             });
+            setBaseline(fingerprint(cfg));
             setSaved(true);
         } catch (err: any) {
             alert(err.response?.data?.message || err.message);
@@ -159,6 +175,13 @@ export default function AdminCopilotPage() {
                     Save
                 </button>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                label="Unsaved copilot settings"
+            />
         </div>
     );
 }

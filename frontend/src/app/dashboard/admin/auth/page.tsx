@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LogIn, Loader2, Save, ExternalLink } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 type Provider = {
     id: string;
@@ -53,6 +54,10 @@ export default function AdminAuthPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    // Mirrors what is stored, so the floating save bar only appears
+    // once a field genuinely differs from the server.
+    const [baseline, setBaseline] = useState<Record<string, string>>({});
+    const dirty = ALL_KEYS.some(k => (values[k.key] || '') !== (baseline[k.key] || ''));
 
     const load = async () => {
         try {
@@ -66,6 +71,7 @@ export default function AdminAuthPage() {
                     u[k.key] = cfg[k.key]?.updatedAt || '';
                 }
                 setValues(v);
+                setBaseline(v);
                 setUpdatedAt(u);
             }
         } catch (err) { console.error(err); }
@@ -144,6 +150,14 @@ export default function AdminAuthPage() {
                     Save
                 </button>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={() => setValues(baseline)}
+                label="Unsaved sign-in settings"
+            />
         </div>
     );
 }

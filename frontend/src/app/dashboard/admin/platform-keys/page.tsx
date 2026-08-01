@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2, Save, MessageSquare, Phone } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 // Grouped so the admin sees text-LLM keys separately from the Voice
 // provider fleet (which is much longer). Every entry with a set value
@@ -69,6 +70,10 @@ export default function AdminPlatformKeysPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    // What's currently stored, so the save bar only appears when a key
+    // was actually edited — not merely because the page loaded.
+    const [baseline, setBaseline] = useState<Record<string, string>>({});
+    const dirty = PLATFORM_KEYS.some(k => (values[k.key] || '') !== (baseline[k.key] || ''));
 
     const load = async () => {
         try {
@@ -82,6 +87,7 @@ export default function AdminPlatformKeysPage() {
                     u[k.key] = cfg[k.key]?.updatedAt || '';
                 }
                 setValues(v);
+                setBaseline(v);
                 setUpdatedAt(u);
             }
         } catch (err) { console.error(err); }
@@ -181,6 +187,14 @@ export default function AdminPlatformKeysPage() {
                     <li>Rotating: paste a new value, click Save. All backend workers pick up the new key within ~60s without a restart.</li>
                 </ul>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={() => setValues(baseline)}
+                label="Unsaved API keys"
+            />
         </div>
     );
 }

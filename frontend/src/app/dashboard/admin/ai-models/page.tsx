@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Bot, Loader2, Plus, Trash2, Save, RotateCcw } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 type ProviderKey = "OPENAI" | "CLAUDE" | "GEMINI" | "GLM";
 type ModelMap = Record<ProviderKey, string[]>;
@@ -142,6 +143,14 @@ export default function AdminAiModelsPage() {
                         onRemove={v => removeModel(p.key, v)} />
                 ))}
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={reset}
+                label="Unsaved catalogue changes"
+            />
         </div>
     );
 }

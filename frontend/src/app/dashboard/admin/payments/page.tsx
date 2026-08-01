@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CreditCard, Loader2, Save, ExternalLink } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 const STRIPE_KEYS = [
     { key: 'STRIPE_SECRET_KEY', label: 'Stripe Secret Key', placeholder: 'sk_live_... or sk_test_...', isSecret: true,
@@ -21,6 +22,10 @@ export default function AdminPaymentsPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    // Mirrors what is stored, so the floating save bar only appears
+    // once a field genuinely differs from the server.
+    const [baseline, setBaseline] = useState<Record<string, string>>({});
+    const dirty = ALL_KEYS.some(k => (values[k.key] || '') !== (baseline[k.key] || ''));
 
     const load = async () => {
         try {
@@ -34,6 +39,7 @@ export default function AdminPaymentsPage() {
                     u[k.key] = cfg[k.key]?.updatedAt || '';
                 }
                 setValues(v);
+                setBaseline(v);
                 setUpdatedAt(u);
             }
         } catch (err) { console.error(err); }
@@ -111,6 +117,14 @@ export default function AdminPaymentsPage() {
                     <li>Save. The next phase will wire actual Stripe Checkout into the user Billing page.</li>
                 </ol>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={() => setValues(baseline)}
+                label="Unsaved payment settings"
+            />
         </div>
     );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Mail, Loader2, Save } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 const SMTP_KEYS = [
     { key: 'SMTP_HOST', label: 'SMTP Host', placeholder: 'smtp.gmail.com / smtp.resend.com / ...', isSecret: false,
@@ -25,6 +26,10 @@ export default function AdminEmailPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    // Mirrors what is stored, so the floating save bar only appears
+    // once a field genuinely differs from the server.
+    const [baseline, setBaseline] = useState<Record<string, string>>({});
+    const dirty = SMTP_KEYS.some(k => (values[k.key] || '') !== (baseline[k.key] || ''));
 
     const load = async () => {
         try {
@@ -38,6 +43,7 @@ export default function AdminEmailPage() {
                     u[k.key] = cfg[k.key]?.updatedAt || '';
                 }
                 setValues(v);
+                setBaseline(v);
                 setUpdatedAt(u);
             }
         } catch (err) { console.error(err); }
@@ -111,6 +117,14 @@ export default function AdminEmailPage() {
                     <li><span className="text-foreground">Postmark:</span> host <code className="bg-secondary px-1 rounded">smtp.postmarkapp.com</code>, port <code className="bg-secondary px-1 rounded">587</code>, user = server token, password = same token.</li>
                 </ul>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={() => setValues(baseline)}
+                label="Unsaved SMTP settings"
+            />
         </div>
     );
 }

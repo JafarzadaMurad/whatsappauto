@@ -12,6 +12,7 @@ import {
     ChevronLeft, Loader2, CheckCircle2, Save, AlertCircle, Star,
 } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 export type Plan = {
     id?: string;
@@ -86,6 +87,18 @@ export function PlanEditor({ initial }: { initial: Plan }) {
     const [savedAt, setSavedAt] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // Snapshot of what's on the server, so "dirty" means genuinely
+    // different rather than merely touched — clicking a toggle twice
+    // shouldn't leave the save bar hanging around.
+    const [baseline, setBaseline] = useState(() => JSON.stringify({
+        ...emptyPlan(), ...initial,
+        allowedModels: initial.allowedModels || [],
+        allowedVoiceTranscribers: initial.allowedVoiceTranscribers || [],
+        allowedVoiceLlms: initial.allowedVoiceLlms || [],
+        allowedVoiceVoices: initial.allowedVoiceVoices || [],
+    }));
+    const dirty = JSON.stringify(plan) !== baseline;
+
     const [aiCatalog, setAiCatalog] = useState<ModelEntry[]>([]);
     const [voiceCatalog, setVoiceCatalog] = useState<VoiceCatalog>({ transcribers: [], llms: [], voices: [], installedProviders: [] });
 
@@ -121,10 +134,17 @@ export function PlanEditor({ initial }: { initial: Plan }) {
                     router.replace(`/dashboard/admin/plans/${res.data.plan.id}/edit`);
                 }
             }
+            setBaseline(JSON.stringify(plan));
             setSavedAt(Date.now());
         } catch (err: any) {
             setError(err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message);
         } finally { setSaving(false); }
+    };
+
+    const discard = () => {
+        if (!confirm('Discard your unsaved changes to this plan?')) return;
+        setPlan(JSON.parse(baseline));
+        setError(null);
     };
 
     return (
@@ -154,8 +174,12 @@ export function PlanEditor({ initial }: { initial: Plan }) {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    {savedAt && <span className="text-xs text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>}
-                    <button onClick={save} disabled={saving || !plan.name.trim()}
+                    {savedAt && !dirty && (
+                        <span className="text-xs text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Saved
+                        </span>
+                    )}
+                    <button onClick={save} disabled={saving || !plan.name.trim() || !dirty}
                         className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl px-5 py-2.5 flex items-center gap-2 text-sm transition-all disabled:opacity-60">
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         Save
@@ -197,6 +221,15 @@ export function PlanEditor({ initial }: { initial: Plan }) {
                     {section === 'voice' && <VoiceSection plan={plan} set={setPlan} catalog={voiceCatalog} />}
                 </div>
             </div>
+
+            <UnsavedChangesBar
+                dirty={dirty}
+                saving={saving}
+                onSave={save}
+                onDiscard={discard}
+                disabled={!plan.name.trim()}
+                disabledReason={!plan.name.trim() ? 'Name is required' : undefined}
+            />
         </div>
     );
 }

@@ -27,7 +27,7 @@ import { URL } from 'url';
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
-import { findLlm } from '../../lib/voice-catalog';
+import { findLlm, loadLlmPricing, applyLlmPricing } from '../../lib/voice-catalog';
 
 // Rough audio-token conversion: OpenAI bills Realtime by tokens; ~1
 // audio second ≈ 100 audio tokens per direction on g711_ulaw. Used to
@@ -229,7 +229,12 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
 
         // Realtime pricing lives in AiPricing — reuse ai-pricing seed's
         // gpt-realtime row. Cost = tokens * per-1M.
-        const llmForCost = findLlm('openai-realtime', realtimeModel) || findLlm('openai-realtime', 'gpt-realtime');
+        // Bill at the admin-managed rate when one is set, so an edit
+        // under Admin → AI Pricing changes what customers are charged
+        // rather than only what the editor advertises.
+        const livePricing = await loadLlmPricing().catch(() => undefined);
+        const llmBaseForCost = findLlm('openai-realtime', realtimeModel) || findLlm('openai-realtime', 'gpt-realtime');
+        const llmForCost = llmBaseForCost ? applyLlmPricing(llmBaseForCost, livePricing) : null;
         const llmCostUsd = llmForCost
             ? (inTokens / 1_000_000) * llmForCost.inCostPer1M + (outTokens / 1_000_000) * llmForCost.outCostPer1M
             : 0;

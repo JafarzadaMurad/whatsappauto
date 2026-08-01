@@ -10,7 +10,7 @@ import { getWorkspaceId } from '../../lib/workspace-context';
 import { logger } from '../../utils/logger';
 import {
     TRANSCRIBERS, LLMS, VOICES, VOICE_MODELS, LANGUAGES, PRESETS,
-    estimateCostPerMinute,
+    estimateCostPerMinute, loadLlmPricing, applyLlmPricing,
     findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
 import { loadAllowedVoice } from '../../lib/model-access';
@@ -143,14 +143,17 @@ export class VoiceAssistantController {
             const gateVoiceModel = (m: { provider: string; id: string }) => providerInstalled(m.provider);
 
             const transcribers = TRANSCRIBERS.filter(gateTranscriber);
-            const llms = LLMS.filter(gateLlm);
+            // Overlay admin-managed rates so the picker quotes what the
+            // workspace is actually charged, not the shipped default.
+            const llmPricing = await loadLlmPricing();
+            const llms = LLMS.filter(gateLlm).map(l => applyLlmPricing(l, llmPricing));
             const voices = VOICES.filter(gateVoice);
             const voiceModels = VOICE_MODELS.filter(gateVoiceModel);
 
             const presetsWithCost = PRESETS
                 .map(p => ({
                     ...p,
-                    estimate: estimateCostPerMinute({ transcriber: p.transcriber, llm: p.llm, tts: p.tts }),
+                    estimate: estimateCostPerMinute({ transcriber: p.transcriber, llm: p.llm, tts: p.tts, llmPricing }),
                 }))
                 // Drop presets whose LLM / transcriber / voice the plan
                 // doesn't cover — no point letting the user pick a
@@ -191,7 +194,8 @@ export class VoiceAssistantController {
                 llm: z.string(),
                 tts: z.string(),
             }).parse(req.body);
-            return res.json({ success: true, estimate: estimateCostPerMinute({ transcriber, llm, tts }) });
+            const llmPricing = await loadLlmPricing();
+            return res.json({ success: true, estimate: estimateCostPerMinute({ transcriber, llm, tts, llmPricing }) });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
@@ -232,6 +236,7 @@ export class VoiceAssistantController {
                 transcriber: `${row.transcriberProvider}:${row.transcriberModel}`,
                 llm: `${row.llmProvider}:${row.llmModel}`,
                 tts: `${row.ttsProvider}:${row.ttsVoiceId}`,
+                llmPricing: await loadLlmPricing(),
             });
             return res.json({ success: true, assistant: row, estimate });
         } catch (error: any) {

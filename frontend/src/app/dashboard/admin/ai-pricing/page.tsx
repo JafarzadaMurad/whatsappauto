@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { Coins, Loader2, Plus, Trash2, Save, X, DollarSign, RefreshCw } from "lucide-react";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
 type Row = {
     id?: string;
@@ -38,30 +39,51 @@ const previewCredits = (r: Row, tokens: number) => {
 export default function AdminAiPricingPage() {
     const [rows, setRows] = useState<Row[]>([]);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState<string | null>(null);
     const [editing, setEditing] = useState<Row | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Editing rates is deliberate work — saving on blur meant a stray
+    // keystroke changed what customers are billed with no confirmation
+    // and no way back. Edits stay local until saved.
+    const [baseline, setBaseline] = useState<Row[]>([]);
+    const [savingAll, setSavingAll] = useState(false);
+    const changedRows = rows.filter(r => {
+        const b = baseline.find(x => x.id === r.id);
+        if (!b) return false;
+        return b.inputCostPer1M !== r.inputCostPer1M
+            || b.outputCostPer1M !== r.outputCostPer1M
+            || b.cachedCostPer1M !== r.cachedCostPer1M
+            || b.marginMultiplier !== r.marginMultiplier
+            || b.isActive !== r.isActive;
+    });
 
     const load = async () => {
         try {
             const res = await api.get('/admin/ai-pricing');
-            if (res.data.success) setRows(res.data.rows);
+            if (res.data.success) { setRows(res.data.rows); setBaseline(res.data.rows); }
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
     useEffect(() => { load(); }, []);
 
-    const patch = async (row: Row, patch: Partial<Row>) => {
-        if (!row.id) return;
-        setSaving(row.id);
+    const saveAll = async () => {
+        if (changedRows.length === 0) return;
+        setSavingAll(true);
+        setError(null);
         try {
-            const res = await api.put(`/admin/ai-pricing/${row.id}`, patch);
-            if (res.data.success) {
-                setRows(rows.map(r => r.id === row.id ? res.data.row : r));
+            for (const r of changedRows) {
+                if (!r.id) continue;
+                await api.put(`/admin/ai-pricing/${r.id}`, {
+                    inputCostPer1M: r.inputCostPer1M,
+                    outputCostPer1M: r.outputCostPer1M,
+                    cachedCostPer1M: r.cachedCostPer1M,
+                    marginMultiplier: r.marginMultiplier,
+                    isActive: r.isActive,
+                });
             }
+            await load();
         } catch (err: any) {
-            alert(err.response?.data?.message || err.message);
-        } finally { setSaving(null); }
+            setError(err.response?.data?.message || err.message);
+        } finally { setSavingAll(false); }
     };
 
     const create = async () => {
@@ -101,7 +123,7 @@ export default function AdminAiPricingPage() {
                         AI Pricing
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Real provider $/1M-token cost × margin multiplier = credits charged. Edits go live immediately, no restart needed.
+                        Real provider $/1M-token cost × margin multiplier = credits charged. Edit the rates, then save — changes apply to both billing and the voice pipeline's quoted prices, no restart needed.
                         <span className="ml-2 text-primary/80">1 credit = $0.0001</span>
                     </p>
                 </div>
@@ -158,39 +180,33 @@ export default function AdminAiPricingPage() {
                                     <td className="px-4 py-2 text-right">
                                         <input type="number" step="0.001" value={r.inputCostPer1M}
                                             onChange={e => setRows(rows.map(x => x.id === r.id ? { ...x, inputCostPer1M: Number(e.target.value) } : x))}
-                                            onBlur={() => patch(r, { inputCostPer1M: r.inputCostPer1M })}
                                             className="w-24 bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono" />
                                     </td>
                                     <td className="px-4 py-2 text-right">
                                         <input type="number" step="0.001" value={r.outputCostPer1M}
                                             onChange={e => setRows(rows.map(x => x.id === r.id ? { ...x, outputCostPer1M: Number(e.target.value) } : x))}
-                                            onBlur={() => patch(r, { outputCostPer1M: r.outputCostPer1M })}
                                             className="w-24 bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono" />
                                     </td>
                                     <td className="px-4 py-2 text-right">
                                         <input type="number" step="0.001" value={r.cachedCostPer1M}
                                             onChange={e => setRows(rows.map(x => x.id === r.id ? { ...x, cachedCostPer1M: Number(e.target.value) } : x))}
-                                            onBlur={() => patch(r, { cachedCostPer1M: r.cachedCostPer1M })}
                                             className="w-24 bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono" />
                                     </td>
                                     <td className="px-4 py-2 text-right">
                                         <input type="number" step="0.1" value={r.marginMultiplier}
                                             onChange={e => setRows(rows.map(x => x.id === r.id ? { ...x, marginMultiplier: Number(e.target.value) } : x))}
-                                            onBlur={() => patch(r, { marginMultiplier: r.marginMultiplier })}
                                             className="w-20 bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono" />
                                     </td>
                                     <td className="px-4 py-2 text-right text-xs text-primary font-mono">{previewCredits(r, 1000)}</td>
                                     <td className="px-4 py-2 text-center">
                                         <input type="checkbox" checked={r.isActive}
-                                            onChange={e => patch(r, { isActive: e.target.checked })}
+                                            onChange={e => setRows(rows.map(x => x.id === r.id ? { ...x, isActive: e.target.checked } : x))}
                                             className="w-4 h-4 accent-primary" />
                                     </td>
                                     <td className="px-4 py-2 text-right">
-                                        {saving === r.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : (
-                                            <button onClick={() => remove(r)} className="p-1 rounded text-muted-foreground hover:text-red-400">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        )}
+                                        <button onClick={() => remove(r)} className="p-1 rounded text-muted-foreground hover:text-red-400">
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
@@ -278,6 +294,14 @@ export default function AdminAiPricingPage() {
                     </div>
                 </div>
             )}
+
+            <UnsavedChangesBar
+                dirty={changedRows.length > 0}
+                saving={savingAll}
+                onSave={saveAll}
+                onDiscard={() => setRows(baseline)}
+                label={`${changedRows.length} model${changedRows.length === 1 ? '' : 's'} edited`}
+            />
         </div>
     );
 }

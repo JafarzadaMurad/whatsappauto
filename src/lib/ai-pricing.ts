@@ -146,6 +146,8 @@ const PLATFORM_KEY_MAP: Record<string, string> = {
     GEMINI: 'PLATFORM_GOOGLE_KEY',
     GOOGLE: 'PLATFORM_GOOGLE_KEY',
     GROQ: 'PLATFORM_GROQ_KEY',
+    GLM: 'PLATFORM_ZAI_KEY',
+    ZAI: 'PLATFORM_ZAI_KEY',
     DEEPGRAM: 'PLATFORM_DEEPGRAM_KEY',
     ELEVENLABS: 'PLATFORM_ELEVENLABS_KEY',
     CARTESIA: 'PLATFORM_CARTESIA_KEY',
@@ -156,6 +158,11 @@ const PLATFORM_KEY_MAP: Record<string, string> = {
     PLAYHT: 'PLATFORM_PLAYHT_KEY',
     AZURE: 'PLATFORM_AZURE_SPEECH_KEY',
 };
+
+/** Which SystemConfig key holds this provider's platform API key. */
+export function PLATFORM_KEY_FOR(provider: string): string | null {
+    return PLATFORM_KEY_MAP[provider.toUpperCase()] ?? null;
+}
 
 const platformKeyCache = new Map<string, { key: string; at: number }>();
 const PLATFORM_KEY_TTL_MS = 60_000;

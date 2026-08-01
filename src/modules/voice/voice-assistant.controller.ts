@@ -13,7 +13,7 @@ import {
     estimateCostPerMinute,
     findTranscriber, findLlm, findVoice, findVoiceModel,
 } from '../../lib/voice-catalog';
-import { loadAllowedModels, loadAllowedVoice, normaliseProvider } from '../../lib/model-access';
+import { loadAllowedVoice } from '../../lib/model-access';
 import { listConfiguredProviders } from '../../lib/ai-pricing';
 
 // Shared editor payload — every field is optional on PATCH, required
@@ -96,13 +96,11 @@ export class VoiceAssistantController {
     async catalog(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);
-            // Plan-scoped allow-list: same rule as text agents (empty
-            // array = anything allowed). Only the LLM list is gated —
-            // transcriber and TTS providers are not on the plan
-            // pricing catalogue, they're voice-only capabilities the
-            // admin already provisions via Platform Keys, and Vapi
-            // treats them the same way.
-            const allowed = workspaceId ? await loadAllowedModels(workspaceId) : [];
+            // Plan-scoped allow-lists for the voice pipeline. Each keeps
+            // the "empty array = unrestricted" sentinel, so a plan an
+            // admin hasn't opened yet still shows the full catalogue.
+            // These are the *only* lists that gate voice — the text
+            // AI-models list governs agents, not calls.
             const voice = workspaceId ? await loadAllowedVoice(workspaceId) : { transcribers: [], llms: [], voices: [] };
 
             // Only show providers whose platform API key is actually
@@ -132,18 +130,15 @@ export class VoiceAssistantController {
             };
             const gateLlm = (l: { provider: string; model: string }) => {
                 if (!providerInstalled(l.provider)) return false;
-                // Two gates stacked: legacy text-model list (uppercase
-                // provider) AND the new voice-LLM list (raw provider).
-                // Both must accept the model. Whichever is empty is
-                // treated as unrestricted for that dimension.
-                if (allowed.length > 0) {
-                    const p = normaliseProvider(l.provider === 'openai-realtime' ? 'OPENAI' : l.provider);
-                    if (!allowed.includes(`${p}:${l.model}`)) return false;
-                }
-                if (voice.llms.length > 0) {
-                    if (!voice.llms.includes(`${l.provider}:${l.model}`)) return false;
-                }
-                return true;
+                // Voice has its own allow-list. It used to also be gated
+                // by the plan's text-model list, which meant an admin
+                // could tick Claude under Voice pipeline and watch it
+                // never appear — because the separate AI-models list
+                // didn't happen to include the same model. Two lists
+                // for one choice, one of them invisible from where the
+                // choice is made. Only the voice list applies here.
+                if (voice.llms.length === 0) return true;
+                return voice.llms.includes(`${l.provider}:${l.model}`);
             };
             const gateVoiceModel = (m: { provider: string; id: string }) => providerInstalled(m.provider);
 
@@ -169,8 +164,7 @@ export class VoiceAssistantController {
                         && gateVoice({ provider: vProv, voiceId: vId });
                 });
 
-            const planRestricted = allowed.length > 0
-                || voice.transcribers.length > 0
+            const planRestricted = voice.transcribers.length > 0
                 || voice.llms.length > 0
                 || voice.voices.length > 0;
 

@@ -835,10 +835,22 @@ function ModelSettings({ catalog, assistant, onPatch }: {
             </div>
             <div>
                 <label className="text-xs font-medium text-muted-foreground">Max Tokens</label>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Max tokens the assistant can generate per turn. Keep replies short so they finish in a natural pause.</p>
-                <input type="number" min={1} max={4000} value={assistant.llmMaxTokens || 250}
-                    onChange={e => onPatch({ llmMaxTokens: Number(e.target.value) })}
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Hard ceiling on one spoken reply. Leave empty — a cap doesn't shorten the answer,
+                    it cuts the assistant off mid-word when the budget runs out. Ask for brevity in the
+                    system prompt instead.
+                </p>
+                <input type="number" min={1} max={4000}
+                    value={assistant.llmMaxTokens ?? ''}
+                    placeholder="No limit"
+                    onChange={e => onPatch({ llmMaxTokens: e.target.value === '' ? null : Number(e.target.value) })}
                     className="mt-2 w-full bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm" />
+                {assistant.llmMaxTokens != null && assistant.llmMaxTokens <= 250 && (
+                    <p className="text-[10px] text-amber-400 mt-1">
+                        At this value replies get truncated part-way through a sentence. Clear the field
+                        unless you specifically need a ceiling.
+                    </p>
+                )}
             </div>
         </div>
     );

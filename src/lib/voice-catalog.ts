@@ -11,6 +11,8 @@ export type Tier = 'Good' | 'Great' | 'Excellent' | 'Best';
 
 export type TranscriberEntry = {
     provider: string;
+    /** Margin from this model's AiPricing row; set by applySttPricing. */
+    marginMultiplier?: number;
     model: string;
     label: string;
     // USD per minute of audio transcribed. Streaming providers.
@@ -23,6 +25,8 @@ export type TranscriberEntry = {
 };
 
 export type LlmEntry = {
+    /** Margin from this model's AiPricing row; set by applyLlmPricing. */
+    marginMultiplier?: number;
     provider: string;       // 'openai' | 'anthropic' | 'google' | 'groq' | 'openai-realtime'
     model: string;
     label: string;
@@ -39,6 +43,8 @@ export type LlmEntry = {
 
 export type TtsEntry = {
     provider: string;
+    /** Margin from this voice's AiPricing row; set by applyTtsPricing. */
+    marginMultiplier?: number;
     voiceId: string;
     label: string;
     // USD per 1M output characters — the industry billing unit for TTS.
@@ -242,7 +248,13 @@ export const TELEPHONY_COST_PER_MIN = 0.009;
 // with no way to tell which was real. Everything that shows or charges
 // a voice price now goes through this overlay.
 
-export type LlmPricingMap = Map<string, { inCostPer1M: number; outCostPer1M: number }>;
+// Rates carry their margin with them. A voice call is billed the same
+// way a text completion is — raw provider cost × the row's margin — so
+// anything that quotes or charges a price needs both numbers together.
+// Missing margin means "no AiPricing row", which is also the case where
+// billing falls back to raw cost, so 1 is the honest default.
+export type LlmPricingMap = Map<string, { inCostPer1M: number; outCostPer1M: number; margin: number }>;
+export type UnitPricingMap = Map<string, { unitUsd: number; margin: number }>;
 
 /** A catalogue entry expressed as an AiPricing row. */
 export type CatalogPricingRow = {
@@ -320,34 +332,35 @@ export function voiceCatalogPricingRows(): CatalogPricingRow[] {
  */
 export type VoicePricing = {
     llms: LlmPricingMap;
-    /** provider:model → USD per minute of audio. */
-    stt: Map<string, number>;
-    /** provider:voiceId → USD per 1M characters. */
-    tts: Map<string, number>;
+    /** provider:model → USD per minute of audio, plus its margin. */
+    stt: UnitPricingMap;
+    /** provider:voiceId → USD per 1M characters, plus its margin. */
+    tts: UnitPricingMap;
 };
 
 export async function loadVoicePricing(): Promise<VoicePricing> {
     const llms: LlmPricingMap = new Map();
-    const stt = new Map<string, number>();
-    const tts = new Map<string, number>();
+    const stt: UnitPricingMap = new Map();
+    const tts: UnitPricingMap = new Map();
     try {
         const { prisma } = await import('./prisma');
         const rows = await prisma.aiPricing.findMany({
             where: { isActive: true },
             select: {
-                provider: true, model: true, kind: true,
+                provider: true, model: true, kind: true, marginMultiplier: true,
                 inputCostPer1M: true, outputCostPer1M: true, unitCostUsd: true,
             },
         });
         for (const r of rows) {
             const provider = r.provider.toLowerCase();
             const key = `${provider}:${r.model}`;
+            const margin = r.marginMultiplier > 0 ? r.marginMultiplier : 1;
             if (r.kind === 'stt_minute') {
-                stt.set(key, r.unitCostUsd);
+                stt.set(key, { unitUsd: r.unitCostUsd, margin });
             } else if (r.kind === 'tts_chars') {
-                tts.set(key, r.unitCostUsd);
+                tts.set(key, { unitUsd: r.unitCostUsd, margin });
             } else {
-                const price = { inCostPer1M: r.inputCostPer1M, outCostPer1M: r.outputCostPer1M };
+                const price = { inCostPer1M: r.inputCostPer1M, outCostPer1M: r.outputCostPer1M, margin };
                 llms.set(key, price);
                 // A Realtime model is filed under 'openai' in AiPricing
                 // but asked for as 'openai-realtime' by the catalogue.
@@ -366,21 +379,25 @@ export async function loadLlmPricing(): Promise<LlmPricingMap> {
     return (await loadVoicePricing()).llms;
 }
 
-/** Returns the entry with admin-managed rates applied when present. */
+// The apply* helpers overlay the admin-managed RAW provider rate and
+// attach the row's margin. They deliberately don't fold the margin into
+// the cost: the bridge records raw cost on the call row and charges
+// separately, and conflating the two would make a call look more
+// expensive to run than it was.
 export function applyLlmPricing(llm: LlmEntry, pricing?: LlmPricingMap): LlmEntry {
     const hit = pricing?.get(`${llm.provider}:${llm.model}`);
     if (!hit) return llm;
-    return { ...llm, inCostPer1M: hit.inCostPer1M, outCostPer1M: hit.outCostPer1M };
+    return { ...llm, inCostPer1M: hit.inCostPer1M, outCostPer1M: hit.outCostPer1M, marginMultiplier: hit.margin };
 }
 
 export function applySttPricing(t: TranscriberEntry, pricing?: VoicePricing): TranscriberEntry {
     const hit = pricing?.stt.get(`${t.provider}:${t.model}`);
-    return hit === undefined ? t : { ...t, costPerMin: hit };
+    return hit === undefined ? t : { ...t, costPerMin: hit.unitUsd, marginMultiplier: hit.margin };
 }
 
 export function applyTtsPricing(v: TtsEntry, pricing?: VoicePricing): TtsEntry {
     const hit = pricing?.tts.get(`${v.provider}:${v.voiceId}`);
-    return hit === undefined ? v : { ...v, costPer1MChars: hit };
+    return hit === undefined ? v : { ...v, costPer1MChars: hit.unitUsd, marginMultiplier: hit.margin };
 }
 
 /**
@@ -426,14 +443,25 @@ export function estimateCostPerMinute(input: {
     // A minute of user audio in + agent audio out at typical density:
     // input ~1500 tokens (mostly system + user), output ~1500 tokens.
     // Use a conservative 2 500 in / 2 500 out per minute of active chat.
-    const llmUsd = llm
+    // Each leg is quoted at what the workspace is charged — raw provider
+    // cost times that model's margin — because this figure is shown to
+    // the operator next to their credit balance. Quoting raw cost here
+    // made the editor disagree with both the admin table and the actual
+    // deduction, by exactly the margin.
+    const llmRawUsd = llm
         ? combined
             ? (2500 / 1_000_000) * llm.inCostPer1M + (2500 / 1_000_000) * llm.outCostPer1M
             : (200 / 1_000_000) * llm.inCostPer1M + (160 / 1_000_000) * llm.outCostPer1M
         : 0;
+    const llmUsd = llmRawUsd * (llm?.marginMultiplier ?? 1);
 
-    const transcriberUsd = trans && !combined ? trans.costPerMin : 0;
-    const ttsUsd = voice && !combined ? (800 / 1_000_000) * voice.costPer1MChars : 0;
+    const transcriberUsd = trans && !combined ? trans.costPerMin * (trans.marginMultiplier ?? 1) : 0;
+    const ttsUsd = voice && !combined
+        ? (800 / 1_000_000) * voice.costPer1MChars * (voice.marginMultiplier ?? 1)
+        : 0;
+    // Telephony is passed through at cost — on Pro and above it lands on
+    // the workspace's own Twilio account, so marking it up would bill
+    // twice for the same minute.
     const telephonyUsd = TELEPHONY_COST_PER_MIN;
 
     const totalUsd = transcriberUsd + llmUsd + ttsUsd + telephonyUsd;

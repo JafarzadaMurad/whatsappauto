@@ -257,7 +257,16 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
             });
             if (row) {
                 const totalCost = (row.telephonyCostUsd || 0) + llmCostUsd;
-                const credits = Math.ceil(totalCost * 10_000);
+                // Charge the way every other LLM call is charged: raw
+                // cost × the model's margin. This used to bill the raw
+                // cost, so voice calls ran at zero margin while text
+                // completions on the same workspace carried the full
+                // multiplier. Telephony passes through at cost — on
+                // Pro and above the minute is already on the customer's
+                // own Twilio account.
+                const margin = llmForCost?.marginMultiplier ?? 1;
+                const chargedUsd = (row.telephonyCostUsd || 0) + llmCostUsd * margin;
+                const credits = Math.ceil(chargedUsd * 10_000);
                 // If we never sent a single audio delta AND we saw at
                 // least one diagnostic entry, this was a broken bridge
                 // (usually OpenAI rejecting our session config). Mark

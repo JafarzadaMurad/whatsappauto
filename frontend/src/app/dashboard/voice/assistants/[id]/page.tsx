@@ -31,9 +31,9 @@ type Estimate = {
     latencyMs: number;
 };
 
-type Transcriber = { provider: string; model: string; label: string; costPerMin: number; latencyMs: number; accuracy: string; languages?: string[] };
-type Llm = { provider: string; model: string; label: string; inCostPer1M: number; outCostPer1M: number; latencyMs: number; intelligence: string; combinesSttTts?: boolean };
-type Voice = { provider: string; voiceId: string; label: string; costPer1MChars: number; latencyMs: number; humanness: string; languages?: string[] };
+type Transcriber = { provider: string; model: string; label: string; costPerMin: number; marginMultiplier?: number; latencyMs: number; accuracy: string; languages?: string[] };
+type Llm = { provider: string; model: string; label: string; inCostPer1M: number; outCostPer1M: number; marginMultiplier?: number; latencyMs: number; intelligence: string; combinesSttTts?: boolean };
+type Voice = { provider: string; voiceId: string; label: string; costPer1MChars: number; marginMultiplier?: number; latencyMs: number; humanness: string; languages?: string[] };
 type VoiceModel = { provider: string; id: string; label: string; costPer1MChars?: number; isDefault?: boolean };
 type Language = { code: string; label: string; nativeName: string };
 type Preset = { key: string; label: string; hint: string; transcriber: string; llm: string; tts: string; estimate: Estimate };
@@ -96,8 +96,13 @@ type Catalog = {
 // operator sees is priced in credits, since that's the balance they
 // hold. Guards against null/NaN so a missing catalogue entry renders
 // "0" instead of "$NaN".
-const cr = (usd: number | null | undefined): string => {
-    const n = Number(usd);
+// Every price here is what the workspace is CHARGED, not what the
+// provider bills us — raw cost times that model's margin, which the
+// catalogue endpoint attaches as `marginMultiplier`. Showing raw cost
+// made this page quote a number the operator never actually pays, and
+// disagree with Admin → Providers & Pricing by exactly the margin.
+const cr = (usd: number | null | undefined, margin: number = 1): string => {
+    const n = Number(usd) * (Number(margin) > 0 ? Number(margin) : 1);
     if (!Number.isFinite(n) || n <= 0) return '0';
     const credits = n * 10_000;
     // Sub-credit rates would all collapse to 0 — keep two decimals so
@@ -435,7 +440,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('transcriber')}
                         metrics={[
                             { label: 'Latency', value: `${currentTranscriber?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `${cr(currentTranscriber?.costPerMin)} cr/min` },
+                            { label: 'Cost', value: `${cr(currentTranscriber?.costPerMin, currentTranscriber?.marginMultiplier)} cai/min` },
                             { label: 'Accuracy', value: currentTranscriber?.accuracy || '—', color: tierColor(currentTranscriber?.accuracy) },
                         ]}
                     />
@@ -449,7 +454,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('llm')}
                         metrics={[
                             { label: 'Latency', value: `${currentLlm?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `${cr((currentLlm?.inCostPer1M ?? 0) / 1000)} cr/1K in` },
+                            { label: 'Cost', value: `${cr((currentLlm?.inCostPer1M ?? 0) / 1000, currentLlm?.marginMultiplier)} / ${cr((currentLlm?.outCostPer1M ?? 0) / 1000, currentLlm?.marginMultiplier)} cai per 1K in/out` },
                             { label: 'Intelligence', value: currentLlm?.intelligence || '—', color: tierColor(currentLlm?.intelligence) },
                         ]}
                     />
@@ -463,7 +468,7 @@ export default function VoiceAssistantEditorPage() {
                         onClick={() => setOpenDrawer('tts')}
                         metrics={[
                             { label: 'Latency', value: `${currentVoice?.latencyMs ?? '?'}ms` },
-                            { label: 'Cost', value: `${cr((currentVoice?.costPer1MChars ?? 0) / 1000)} cr/1K ch` },
+                            { label: 'Cost', value: `${cr((currentVoice?.costPer1MChars ?? 0) / 1000, currentVoice?.marginMultiplier)} cai/1K ch` },
                             { label: 'Humanness', value: currentVoice?.humanness || '—', color: tierColor(currentVoice?.humanness) },
                         ]}
                     />
@@ -715,13 +720,13 @@ function TranscriberSettings({ catalog, assistant, onPatch }: {
                     className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                     {modelsForProvider.map(t => (
                         <option key={t.model} value={t.model} className="bg-card">
-                            {t.label} · {t.latencyMs}ms · {cr(t.costPerMin)} cr/min · {t.accuracy}
+                            {t.label} · {t.latencyMs}ms · {cr(t.costPerMin, t.marginMultiplier)} cai/min · {t.accuracy}
                         </option>
                     ))}
                 </select>
                 {current && (
                     <p className="text-[10px] text-muted-foreground mt-1">
-                        {current.label} · ~{current.latencyMs}ms · {cr(current.costPerMin)} cr/min
+                        {current.label} · ~{current.latencyMs}ms · {cr(current.costPerMin, current.marginMultiplier)} cai/min
                     </p>
                 )}
             </div>
@@ -809,7 +814,7 @@ function ModelSettings({ catalog, assistant, onPatch }: {
                     className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                     {modelsForProvider.map(l => (
                         <option key={l.model} value={l.model} className="bg-card">
-                            {l.label} · {l.latencyMs}ms · {cr(l.inCostPer1M / 1000)} cr/1K in{l.combinesSttTts ? ' · speech-to-speech' : ''}
+                            {l.label} · {l.latencyMs}ms · {cr(l.inCostPer1M / 1000, l.marginMultiplier)}/{cr(l.outCostPer1M / 1000, l.marginMultiplier)} cai per 1K{l.combinesSttTts ? ' · speech-to-speech' : ''}
                         </option>
                     ))}
                 </select>
@@ -908,7 +913,7 @@ function VoiceSettings({ catalog, assistant, onPatch }: {
                         className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm font-mono">
                         {voiceModelsForProvider.map(m => (
                             <option key={m.id} value={m.id} className="bg-card">
-                                {m.label}{m.costPer1MChars ? ` · ${cr(m.costPer1MChars / 1000)} cr/1K ch` : ''}
+                                {m.label}{m.costPer1MChars ? ` · ${cr(m.costPer1MChars / 1000)} cai/1K ch` : ''}
                             </option>
                         ))}
                     </select>

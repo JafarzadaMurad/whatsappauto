@@ -244,6 +244,72 @@ export const TELEPHONY_COST_PER_MIN = 0.009;
 
 export type LlmPricingMap = Map<string, { inCostPer1M: number; outCostPer1M: number }>;
 
+/** A catalogue entry expressed as an AiPricing row. */
+export type CatalogPricingRow = {
+    provider: string;
+    model: string;
+    kind: 'token' | 'stt_minute' | 'tts_chars';
+    inputCostPer1M: number;
+    outputCostPer1M: number;
+    unitCostUsd: number;
+};
+
+/**
+ * Every voice-catalogue entry as a pricing row.
+ *
+ * The seed walks this on boot, so adding a transcriber, LLM or voice to
+ * the arrays above is all it takes for it to show up in Admin → AI
+ * Pricing and become editable. Previously voice rates lived only in
+ * this file, which meant they simply couldn't be changed without a
+ * deploy — and the admin table quietly disagreed with what was charged.
+ *
+ * LLMs are filed under 'openai' rather than 'openai-realtime' to match
+ * how the token-pricing rows are already keyed; the lookup indexes both
+ * spellings.
+ */
+export function voiceCatalogPricingRows(): CatalogPricingRow[] {
+    const rows: CatalogPricingRow[] = [];
+
+    for (const t of TRANSCRIBERS) {
+        rows.push({
+            provider: t.provider, model: t.model, kind: 'stt_minute',
+            inputCostPer1M: 0, outputCostPer1M: 0, unitCostUsd: t.costPerMin,
+        });
+    }
+    for (const l of LLMS) {
+        rows.push({
+            provider: l.provider === 'openai-realtime' ? 'openai' : l.provider,
+            model: l.model, kind: 'token',
+            inputCostPer1M: l.inCostPer1M, outputCostPer1M: l.outCostPer1M, unitCostUsd: 0,
+        });
+    }
+    for (const v of VOICES) {
+        rows.push({
+            provider: v.provider, model: v.voiceId, kind: 'tts_chars',
+            inputCostPer1M: 0, outputCostPer1M: 0, unitCostUsd: v.costPer1MChars,
+        });
+    }
+    for (const m of VOICE_MODELS) {
+        rows.push({
+            provider: m.provider, model: m.id, kind: 'tts_chars',
+            // costPer1MChars is optional on a voice model — it only
+            // overrides the voice's own rate when the provider prices
+            // its models differently.
+            inputCostPer1M: 0, outputCostPer1M: 0, unitCostUsd: m.costPer1MChars ?? 0,
+        });
+    }
+
+    // A voice id can repeat across the voice and voice-model lists;
+    // first definition wins so the seed never fights itself.
+    const seen = new Set<string>();
+    return rows.filter(r => {
+        const key = `${r.provider}:${r.model}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 /**
  * Load admin-managed prices for every model in the voice catalogue.
  *
@@ -252,27 +318,52 @@ export type LlmPricingMap = Map<string, { inCostPer1M: number; outCostPer1M: num
  * can group speech-to-speech separately. We index both spellings so a
  * lookup succeeds whichever the caller holds.
  */
-export async function loadLlmPricing(): Promise<LlmPricingMap> {
-    const map: LlmPricingMap = new Map();
+export type VoicePricing = {
+    llms: LlmPricingMap;
+    /** provider:model → USD per minute of audio. */
+    stt: Map<string, number>;
+    /** provider:voiceId → USD per 1M characters. */
+    tts: Map<string, number>;
+};
+
+export async function loadVoicePricing(): Promise<VoicePricing> {
+    const llms: LlmPricingMap = new Map();
+    const stt = new Map<string, number>();
+    const tts = new Map<string, number>();
     try {
         const { prisma } = await import('./prisma');
         const rows = await prisma.aiPricing.findMany({
             where: { isActive: true },
-            select: { provider: true, model: true, inputCostPer1M: true, outputCostPer1M: true },
+            select: {
+                provider: true, model: true, kind: true,
+                inputCostPer1M: true, outputCostPer1M: true, unitCostUsd: true,
+            },
         });
         for (const r of rows) {
-            const price = { inCostPer1M: r.inputCostPer1M, outCostPer1M: r.outputCostPer1M };
             const provider = r.provider.toLowerCase();
-            map.set(`${provider}:${r.model}`, price);
-            // A Realtime model is filed under 'openai' in AiPricing but
-            // asked for as 'openai-realtime' by the voice catalogue.
-            if (provider === 'openai') map.set(`openai-realtime:${r.model}`, price);
+            const key = `${provider}:${r.model}`;
+            if (r.kind === 'stt_minute') {
+                stt.set(key, r.unitCostUsd);
+            } else if (r.kind === 'tts_chars') {
+                tts.set(key, r.unitCostUsd);
+            } else {
+                const price = { inCostPer1M: r.inputCostPer1M, outCostPer1M: r.outputCostPer1M };
+                llms.set(key, price);
+                // A Realtime model is filed under 'openai' in AiPricing
+                // but asked for as 'openai-realtime' by the catalogue.
+                if (provider === 'openai') llms.set(`openai-realtime:${r.model}`, price);
+            }
         }
     } catch {
         // Pricing is an overlay, never a dependency — fall back to the
         // catalogue defaults rather than failing the whole request.
     }
-    return map;
+    return { llms, stt, tts };
+}
+
+/** Back-compat shim for callers that only need LLM rates. */
+export async function loadLlmPricing(): Promise<LlmPricingMap> {
+    return (await loadVoicePricing()).llms;
 }
 
 /** Returns the entry with admin-managed rates applied when present. */
@@ -280,6 +371,16 @@ export function applyLlmPricing(llm: LlmEntry, pricing?: LlmPricingMap): LlmEntr
     const hit = pricing?.get(`${llm.provider}:${llm.model}`);
     if (!hit) return llm;
     return { ...llm, inCostPer1M: hit.inCostPer1M, outCostPer1M: hit.outCostPer1M };
+}
+
+export function applySttPricing(t: TranscriberEntry, pricing?: VoicePricing): TranscriberEntry {
+    const hit = pricing?.stt.get(`${t.provider}:${t.model}`);
+    return hit === undefined ? t : { ...t, costPerMin: hit };
+}
+
+export function applyTtsPricing(v: TtsEntry, pricing?: VoicePricing): TtsEntry {
+    const hit = pricing?.tts.get(`${v.provider}:${v.voiceId}`);
+    return hit === undefined ? v : { ...v, costPer1MChars: hit };
 }
 
 /**
@@ -293,8 +394,8 @@ export function estimateCostPerMinute(input: {
     transcriber: string;   // "provider:model"
     llm: string;
     tts: string;           // "provider:voiceId"
-    /** Live per-model prices from AiPricing, keyed "provider:model". */
-    llmPricing?: LlmPricingMap;
+    /** Admin-managed rates from AiPricing for every component. */
+    pricing?: VoicePricing;
 }): {
     transcriberUsd: number;
     llmUsd: number;
@@ -307,15 +408,17 @@ export function estimateCostPerMinute(input: {
     const [lProv, lModel] = input.llm.split(':');
     const [vProv, vVoice] = input.tts.split(':');
 
-    const trans = findTranscriber(tProv, tModel);
+    const transBase = findTranscriber(tProv, tModel);
+    const trans = transBase ? applySttPricing(transBase, input.pricing) : null;
     const llmBase = findLlm(lProv, lModel);
-    const voice = findVoice(vProv, vVoice);
+    const voiceBase = findVoice(vProv, vVoice);
+    const voice = voiceBase ? applyTtsPricing(voiceBase, input.pricing) : null;
 
     // Prefer the admin-managed price when one exists, so editing a rate
     // under Admin → AI Pricing is reflected here rather than only in
     // billing. Without this the editor quotes the hardcoded catalogue
     // figure forever and the two disagree.
-    const llm = llmBase ? applyLlmPricing(llmBase, input.llmPricing) : null;
+    const llm = llmBase ? applyLlmPricing(llmBase, input.pricing?.llms) : null;
 
     const combined = !!llm?.combinesSttTts;
 

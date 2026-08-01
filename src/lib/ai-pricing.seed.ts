@@ -14,6 +14,7 @@
 import { prisma } from './prisma';
 import { logger } from '../utils/logger';
 import { invalidatePriceCache } from './ai-pricing';
+import { voiceCatalogPricingRows } from './voice-catalog';
 
 type Row = {
     provider: 'anthropic' | 'openai' | 'google';
@@ -116,8 +117,33 @@ const DEFAULT_ROWS_FREE: { provider: string; model: string; inputCostPer1M: numb
 
 const DEFAULT_MARGIN = 3.0;
 
-function allRows() {
-    return [...DEFAULT_ROWS, ...DEFAULT_ROWS_GLM, ...DEFAULT_ROWS_FREE];
+type SeedRow = {
+    provider: string; model: string;
+    inputCostPer1M: number; outputCostPer1M: number; cachedCostPer1M?: number;
+    kind?: 'token' | 'stt_minute' | 'tts_chars';
+    unitCostUsd?: number;
+};
+
+// Text models are listed above; the voice pipeline contributes its own
+// transcribers, speech models and TTS voices. Folding them in here is
+// what makes "every model an operator can pick has a price row" true,
+// and what makes adding one to the voice catalogue enough for it to
+// appear under Admin -> AI Pricing without any further work.
+function allRows(): SeedRow[] {
+    const text: SeedRow[] = [...DEFAULT_ROWS, ...DEFAULT_ROWS_GLM, ...DEFAULT_ROWS_FREE];
+    const voice: SeedRow[] = voiceCatalogPricingRows().map(r => ({
+        provider: r.provider,
+        model: r.model,
+        inputCostPer1M: r.inputCostPer1M,
+        outputCostPer1M: r.outputCostPer1M,
+        cachedCostPer1M: 0,
+        kind: r.kind,
+        unitCostUsd: r.unitCostUsd,
+    }));
+    // Text definitions win on collision, so a model present in both
+    // lists (the Realtime rows, say) keeps its curated token pricing.
+    const seen = new Set(text.map(r => r.provider + ':' + r.model));
+    return [...text, ...voice.filter(r => !seen.has(r.provider + ':' + r.model))];
 }
 
 /**
@@ -175,6 +201,8 @@ export async function refreshAiPricing(): Promise<{ updated: number; inserted: n
                     inputCostPer1M: r.inputCostPer1M,
                     outputCostPer1M: r.outputCostPer1M,
                     cachedCostPer1M: r.cachedCostPer1M ?? 0,
+                    kind: r.kind ?? 'token',
+                    unitCostUsd: r.unitCostUsd ?? 0,
                     marginMultiplier: DEFAULT_MARGIN,
                     isActive: true,
                 },
@@ -185,7 +213,9 @@ export async function refreshAiPricing(): Promise<{ updated: number; inserted: n
         const same =
             existing.inputCostPer1M === r.inputCostPer1M &&
             existing.outputCostPer1M === r.outputCostPer1M &&
-            existing.cachedCostPer1M === (r.cachedCostPer1M ?? 0);
+            existing.cachedCostPer1M === (r.cachedCostPer1M ?? 0) &&
+            existing.kind === (r.kind ?? 'token') &&
+            existing.unitCostUsd === (r.unitCostUsd ?? 0);
         if (same) { unchanged++; continue; }
         await prisma.aiPricing.update({
             where: { id: existing.id },
@@ -193,6 +223,8 @@ export async function refreshAiPricing(): Promise<{ updated: number; inserted: n
                 inputCostPer1M: r.inputCostPer1M,
                 outputCostPer1M: r.outputCostPer1M,
                 cachedCostPer1M: r.cachedCostPer1M ?? 0,
+                kind: r.kind ?? 'token',
+                unitCostUsd: r.unitCostUsd ?? 0,
             },
         });
         updated++;

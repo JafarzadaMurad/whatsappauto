@@ -63,10 +63,18 @@ export class CreditsController {
 
 // ─── Admin AI Pricing ──────────────────────────────────────────────
 const pricingRowSchema = z.object({
-    provider: z.enum(['anthropic', 'openai', 'google']),
+    // Deliberately a free string, not an enum: the table now also
+    // carries the voice pipeline's providers (deepgram, elevenlabs,
+    // cartesia, …) and an enum here would reject every one of them
+    // the moment the catalogue grows.
+    provider: z.string().min(1).max(60),
     model: z.string().min(1),
-    inputCostPer1M: z.number().nonnegative(),
-    outputCostPer1M: z.number().nonnegative(),
+    // 'token' rows bill per 1M tokens (the three cost columns);
+    // 'stt_minute' and 'tts_chars' bill off unitCostUsd instead.
+    kind: z.enum(['token', 'stt_minute', 'tts_chars']).default('token'),
+    unitCostUsd: z.number().nonnegative().default(0),
+    inputCostPer1M: z.number().nonnegative().default(0),
+    outputCostPer1M: z.number().nonnegative().default(0),
     cachedCostPer1M: z.number().nonnegative().default(0),
     marginMultiplier: z.number().positive().default(3.0),
     isActive: z.boolean().default(true),

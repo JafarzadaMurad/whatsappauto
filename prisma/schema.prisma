@@ -1682,6 +1682,18 @@ model AiPricing {
   id                String   @id @default(uuid())
   provider          String   // 'anthropic' | 'openai' | 'google'
   model             String   // provider-specific model id (e.g. 'claude-opus-4-8')
+  // How this row's rate is expressed. Text and speech-to-speech models
+  // bill per token; a transcriber bills per minute of audio; a TTS
+  // voice bills per million characters spoken. Keeping them in one
+  // table means every model an operator can pick has exactly one place
+  // its price is set — the alternative was voice rates living in code
+  // where nobody could change them.
+  //   'token'      → inputCostPer1M + outputCostPer1M (+ cached)
+  //   'stt_minute' → unitCostUsd is USD per minute of audio
+  //   'tts_chars'  → unitCostUsd is USD per 1M characters
+  kind              String   @default("token")
+  unitCostUsd       Float    @default(0)
+
   inputCostPer1M    Float    // provider's real USD cost per 1M input tokens
   outputCostPer1M   Float    // same for output tokens
   cachedCostPer1M   Float    @default(0) // Anthropic prompt-cache read cost (usually 10% of input)

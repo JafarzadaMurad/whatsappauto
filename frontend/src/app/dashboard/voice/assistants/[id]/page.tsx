@@ -81,6 +81,12 @@ type Assistant = {
     backgroundDenoise: boolean;
     linkedAgentId: string | null;
     mcpToolNames: string[];
+    // Tools the assistant owns — no text agent involved.
+    skills: string[];
+    allowedTableIds: string[];
+    httpTools: any[];
+    skillPrompts: Record<string, string>;
+    updatedAt?: string;
 };
 
 type Catalog = {
@@ -1113,32 +1119,41 @@ function ToolsTab({ assistant, patch }: {
     assistant: Assistant;
     patch: (p: Partial<Assistant>) => void;
 }) {
-    const [agents, setAgents] = useState<{ id: string; name: string; skills: string[]; toolNames: string[] }[]>([]);
+    const [skills, setSkills] = useState<{ id: string; name: string; desc: string }[]>([]);
+    const [tables, setTables] = useState<{ id: string; name: string }[]>([]);
+    const [toolNames, setToolNames] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
 
+    // The active list is read back from the server, so it reflects what
+    // is stored rather than what is merely typed — the whole point of
+    // showing it is that it can be trusted.
     useEffect(() => {
         let cancelled = false;
-        api.get('/voice/assistants/tool-options')
-            .then(r => { if (!cancelled && r.data?.success) setAgents(r.data.agents || []); })
-            .catch(() => { /* the tab still renders, just without options */ })
+        api.get('/voice/assistants/tool-options', { params: { assistantId: assistant.id } })
+            .then(r => {
+                if (cancelled || !r.data?.success) return;
+                setSkills(r.data.skills || []);
+                setTables(r.data.tables || []);
+                setToolNames(r.data.toolNames || []);
+            })
+            .catch(() => { /* the tab still renders without the extras */ })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
-    }, []);
+    }, [assistant.id, assistant.updatedAt]);
 
-    const linked = agents.find(a => a.id === assistant.linkedAgentId);
-    const available = linked?.toolNames || [];
-    // Empty selection means "everything this agent has" — the same
-    // unrestricted-by-default sentinel the plan allow-lists use.
-    const chosen = assistant.mcpToolNames || [];
-    const isOn = (name: string) => chosen.length === 0 || chosen.includes(name);
+    const on = assistant.skills || [];
+    const toggle = (id: string) =>
+        patch({ skills: on.includes(id) ? on.filter(s => s !== id) : [...on, id] });
 
-    const toggle = (name: string) => {
-        // First tick has to expand the implicit "all" into an explicit
-        // list, otherwise unticking one tool would read as "none".
-        const base = chosen.length === 0 ? available : chosen;
-        const next = base.includes(name) ? base.filter(n => n !== name) : [...base, name];
-        patch({ mcpToolNames: next.length === available.length ? [] : next });
-    };
+    const pickedTables = assistant.allowedTableIds || [];
+    const toggleTable = (id: string) =>
+        patch({
+            allowedTableIds: pickedTables.includes(id)
+                ? pickedTables.filter(t => t !== id)
+                : [...pickedTables, id],
+        });
+
+    const httpTools: any[] = (assistant.httpTools as any[]) || [];
 
     if (loading) return (
         <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
@@ -1146,77 +1161,164 @@ function ToolsTab({ assistant, patch }: {
 
     return (
         <div className="space-y-4">
-            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
                 <div>
-                    <h3 className="font-semibold flex items-center gap-2"><Wrench className="w-4 h-4 text-primary" /> Tools from an agent</h3>
+                    <h3 className="font-semibold flex items-center gap-2">
+                        <Wrench className="w-4 h-4 text-primary" /> What this assistant can do on a call
+                    </h3>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Link a text agent and this assistant can use its tools on a call — look a customer up, read a
-                        table, hit your API. Answers come from the same data the agent uses in chat.
+                        Tick what it may use while talking to someone. Everything here belongs to the assistant — you
+                        do not need a text agent for any of it.
                     </p>
                 </div>
 
-                <select
-                    value={assistant.linkedAgentId || ''}
-                    onChange={e => patch({ linkedAgentId: e.target.value || null, mcpToolNames: [] })}
-                    className="w-full max-w-md bg-card border border-border rounded-xl px-3 py-2 text-sm">
-                    <option value="" className="bg-card">No tools — conversation only</option>
-                    {agents.map(a => (
-                        <option key={a.id} value={a.id} className="bg-card">
-                            {a.name} ({a.toolNames.length} tool{a.toolNames.length === 1 ? '' : 's'})
-                        </option>
-                    ))}
-                </select>
-
-                {agents.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                        No agents in this workspace yet. Create one under AI Agents and give it skills first.
-                    </p>
-                )}
+                <div className="grid sm:grid-cols-2 gap-2">
+                    {skills.map(s => {
+                        const active = on.includes(s.id);
+                        return (
+                            <button key={s.id} onClick={() => toggle(s.id)}
+                                className={`text-left rounded-xl border p-3 transition-all ${
+                                    active ? 'border-primary/50 bg-primary/5' : 'border-border bg-secondary/20 hover:bg-secondary/40'
+                                }`}>
+                                <div className="flex items-center gap-2">
+                                    <input type="checkbox" readOnly checked={active}
+                                        className="w-4 h-4 accent-primary pointer-events-none" />
+                                    <span className="font-medium text-sm">{s.name}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1 ml-6">{s.desc}</p>
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
-            {linked && (
+            {on.includes('tables') && (
                 <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div>
-                            <h3 className="font-semibold text-sm">Available on a call</h3>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                {chosen.length === 0
-                                    ? `All ${available.length} of ${linked.name}'s call-capable tools.`
-                                    : `${chosen.length} of ${available.length} enabled.`}
-                            </p>
-                        </div>
-                        {chosen.length > 0 && (
-                            <button onClick={() => patch({ mcpToolNames: [] })}
-                                className="text-xs text-primary hover:underline">Use all</button>
-                        )}
+                    <div>
+                        <h3 className="font-semibold text-sm">Which tables it may read</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            None ticked means it can read none — pick at least one.
+                        </p>
                     </div>
-
-                    {available.length === 0 ? (
+                    {tables.length === 0 ? (
                         <p className="text-sm text-muted-foreground">
-                            This agent has no tools that work on a phone call. Skills tied to a WhatsApp thread —
-                            polls, media, operator hand-off — can&apos;t run here; give the agent CRM, tables, saved
-                            fields or HTTP tools instead.
+                            No tables in this workspace yet. Create one under AI Workspace &rarr; Data Tables.
                         </p>
                     ) : (
                         <div className="grid sm:grid-cols-2 gap-1.5">
-                            {available.map(name => (
-                                <label key={name}
+                            {tables.map(t => (
+                                <label key={t.id}
                                     className="flex items-center gap-2 bg-secondary/25 border border-border rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-secondary/40">
-                                    <input type="checkbox" checked={isOn(name)} onChange={() => toggle(name)}
-                                        className="w-4 h-4 accent-primary" />
-                                    <span className="text-xs font-mono truncate">{name}</span>
+                                    <input type="checkbox" checked={pickedTables.includes(t.id)}
+                                        onChange={() => toggleTable(t.id)} className="w-4 h-4 accent-primary" />
+                                    <span className="text-xs truncate">{t.name}</span>
                                 </label>
                             ))}
                         </div>
                     )}
-
-                    <p className="text-[11px] text-muted-foreground">
-                        Tools that look a customer up use the number on the call, so a caller the agent already chats
-                        with resolves to the same record. A tool that takes longer than 8 seconds is abandoned and the
-                        assistant is told, rather than leaving the caller in silence.
-                    </p>
                 </div>
             )}
+
+            {on.includes('http') && (
+                <HttpToolsEditor tools={httpTools} onChange={next => patch({ httpTools: next } as any)} />
+            )}
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-2">
+                <h3 className="font-semibold text-sm">Active on a call ({toolNames.length})</h3>
+                {toolNames.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                        Nothing yet. Tick a skill above and save — this list shows what the saved configuration exposes.
+                    </p>
+                ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                        {toolNames.map(n => (
+                            <span key={n} className="text-[11px] font-mono bg-secondary/40 border border-border rounded px-2 py-0.5">{n}</span>
+                        ))}
+                    </div>
+                )}
+                <p className="text-[11px] text-muted-foreground pt-1">
+                    Lookups use the number on the call, so someone who has also written to you on WhatsApp resolves to
+                    the same record. A tool that takes longer than 8 seconds is abandoned and the assistant is told,
+                    rather than leaving the caller in silence.
+                </p>
+            </div>
+        </div>
+    );
+}
+
+// A phone assistant needs the same custom-endpoint tools an agent has,
+// but not the whole form builder. Raw mode carries method, URL, headers
+// and body in one block — the shape most people paste out of their own
+// API docs anyway. Double braces mark a value the assistant fills in.
+function HttpToolsEditor({ tools, onChange }: {
+    tools: any[];
+    onChange: (next: any[]) => void;
+}) {
+    const blank = { name: '', description: '', inputMode: 'raw', rawRequest: '', method: 'GET', url: '' };
+    const [draft, setDraft] = useState<any>(blank);
+
+    const ok = draft.name.trim() && draft.description.trim() && draft.rawRequest.trim();
+    const add = () => {
+        if (!ok) return;
+        onChange([...tools, { ...draft, name: draft.name.trim(), description: draft.description.trim() }]);
+        setDraft(blank);
+    };
+
+    return (
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <div>
+                <h3 className="font-semibold text-sm">Your API</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Endpoints the assistant may call mid-conversation.
+                </p>
+            </div>
+
+            {tools.length > 0 && (
+                <div className="space-y-1.5">
+                    {tools.map((t, i) => (
+                        <div key={i} className="flex items-start justify-between gap-3 bg-secondary/25 border border-border rounded-lg px-3 py-2">
+                            <div className="min-w-0">
+                                <div className="text-xs font-mono">{t.name}</div>
+                                <div className="text-[11px] text-muted-foreground truncate">{t.description}</div>
+                                {t.rawRequest && (
+                                    <div className="text-[10px] font-mono text-muted-foreground/70 truncate mt-0.5">
+                                        {String(t.rawRequest).split('\n')[0]}
+                                    </div>
+                                )}
+                            </div>
+                            <button onClick={() => onChange(tools.filter((_, j) => j !== i))}
+                                className="p-1 rounded text-muted-foreground hover:text-red-400 flex-shrink-0">
+                                <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <div className="space-y-2 border-t border-border pt-3">
+                <div className="grid sm:grid-cols-2 gap-2">
+                    <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
+                        placeholder="tool name, e.g. checkOrder"
+                        className="bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    <input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })}
+                        placeholder="when should the assistant use it?"
+                        className="bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <textarea value={draft.rawRequest} onChange={e => setDraft({ ...draft, rawRequest: e.target.value })}
+                    rows={5}
+                    placeholder={"GET https://api.example.com/orders/{{order number}}\nAuthorization: Bearer xxx"}
+                    className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-[11px] text-muted-foreground">
+                        First line is method and URL, then headers, then a blank line and the body. Anything in
+                        double braces is filled in by the assistant.
+                    </p>
+                    <button onClick={add} disabled={!ok}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                        <Plus className="w-3.5 h-3.5" /> Add
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

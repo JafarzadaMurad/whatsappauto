@@ -15,6 +15,7 @@ import {
 } from '../../lib/voice-catalog';
 import { loadAllowedVoice } from '../../lib/model-access';
 import { listConfiguredProviders } from '../../lib/ai-pricing';
+import { VOICE_SKILL_IDS } from './voice-tools';
 
 // Shared editor payload — every field is optional on PATCH, required
 // on create (create dupes editor defaults).
@@ -79,6 +80,14 @@ const editorPayload = {
     backgroundSound: z.enum(['off', 'office', 'cafe']).optional(),
     backgroundDenoise: z.boolean().optional(),
 
+    // Tools the assistant owns. `skills` is validated against the
+    // voice-capable list, not the agent one — ticking a WhatsApp-only
+    // skill here would save fine and then silently do nothing.
+    skills: z.array(z.string().max(60)).max(20).optional(),
+    allowedTableIds: z.array(z.string().max(60)).max(100).optional(),
+    httpTools: z.array(z.any()).max(50).optional(),
+    skillPrompts: z.record(z.string(), z.string().max(4000)).optional(),
+
     linkedAgentId: z.string().uuid().nullable().optional(),
     mcpToolNames: z.array(z.string().max(120)).max(200).optional(),
 };
@@ -90,6 +99,14 @@ const createSchema = z.object({
 });
 
 const patchSchema = z.object(editorPayload).partial();
+
+// Drop skills a phone call can't support. Saving one would look like it
+// worked and then do nothing on the call, which is the worst of both —
+// better to reject it at the door than to debug it live.
+function voiceSkillsOnly(skills: string[] | undefined): string[] | undefined {
+    if (!skills) return undefined;
+    return skills.filter(s => VOICE_SKILL_IDS.includes(s));
+}
 
 export class VoiceAssistantController {
     // ─── Catalog (no auth-gated on workspace — anyone can render) ───
@@ -313,6 +330,10 @@ export class VoiceAssistantController {
                     backgroundDenoise: !!data.backgroundDenoise,
                     linkedAgentId: data.linkedAgentId || null,
                     mcpToolNames: data.mcpToolNames || [],
+                    skills: voiceSkillsOnly(data.skills) || [],
+                    allowedTableIds: data.allowedTableIds || [],
+                    httpTools: (data.httpTools as any) || [],
+                    skillPrompts: (data.skillPrompts as any) || {},
                 },
             });
             return res.status(201).json({ success: true, assistant: row });
@@ -351,7 +372,10 @@ export class VoiceAssistantController {
 
             const row = await prisma.voiceAssistant.update({
                 where: { id },
-                data,
+                data: {
+                    ...data,
+                    ...(data.skills ? { skills: voiceSkillsOnly(data.skills) } : {}),
+                },
             });
             return res.json({ success: true, assistant: row });
         } catch (error: any) {
@@ -494,30 +518,43 @@ export class VoiceAssistantController {
     // one. Returns 400 with a helpful pointer when no number is
     // linked yet so the UI can direct the operator to Voice → Phone
     // Numbers.
-    // What tools a voice assistant could have. The operator picks an
-    // agent to inherit from, so they need to see what each agent would
-    // actually bring in — the skill list on the agent isn't the answer,
-    // since the WhatsApp-bound half of it doesn't survive a phone call.
+    // What the Tools tab needs to render: the skills a call can support,
+    // the workspace's tables to choose from, and the tool names the
+    // current selection would actually expose — so the operator sees
+    // what ticking a skill turns on instead of finding out mid-call.
     async toolOptions(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);
             if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
 
-            const agents = await prisma.agent.findMany({
+            const { VOICE_SKILLS, previewVoiceToolNames } = await import('./voice-tools');
+
+            const assistantId = typeof req.query.assistantId === 'string' ? req.query.assistantId : '';
+            const asst = assistantId
+                ? await prisma.voiceAssistant.findFirst({
+                    where: { id: assistantId, workspaceId },
+                    select: { id: true, skills: true, allowedTableIds: true, httpTools: true, skillPrompts: true },
+                })
+                : null;
+
+            const tables = await prisma.customTable.findMany({
                 where: { workspaceId },
-                orderBy: { updatedAt: 'desc' },
-                select: { id: true, name: true, skills: true },
+                orderBy: { name: 'asc' },
+                select: { id: true, name: true },
             });
 
-            const { listAgentToolNames } = await import('./voice-tools');
-            const withTools = await Promise.all(agents.map(async a => ({
-                id: a.id,
-                name: a.name,
-                skills: a.skills || [],
-                toolNames: await listAgentToolNames(a.id, workspaceId).catch(() => [] as string[]),
-            })));
+            const toolNames = asst
+                ? await previewVoiceToolNames({
+                    assistantId: asst.id,
+                    workspaceId,
+                    skills: asst.skills || [],
+                    allowedTableIds: asst.allowedTableIds || [],
+                    httpTools: (asst.httpTools as any) || [],
+                    skillPrompts: (asst.skillPrompts as any) || {},
+                }).catch(() => [] as string[])
+                : [];
 
-            return res.json({ success: true, agents: withTools });
+            return res.json({ success: true, skills: VOICE_SKILLS, tables, toolNames });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }

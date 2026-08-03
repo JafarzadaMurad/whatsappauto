@@ -1,31 +1,61 @@
 // Tools for voice assistants.
 //
-// A voice assistant already had `linkedAgentId` and `mcpToolNames` in
-// its schema and its editor, but nothing read them — the phone bridge
-// registered exactly one function (`end_call`) and nothing else. So an
-// assistant could be pointed at an agent with a full CRM + tables +
-// HTTP toolkit and still be unable to look anything up mid-call.
+// A voice assistant owns its tools. It does not borrow them from a text
+// agent, because a workspace may never create one — plenty of customers
+// will only ever run an assistant on the phone, and making the phone
+// depend on a chat agent that doesn't exist would be a configuration
+// riddle with no answer.
 //
-// This module closes that gap by reusing the chat agent's tool builder
-// rather than growing a second one. Two things have to be reconciled:
+// What IS shared is the implementations. `buildToolsForSkills` already
+// builds CRM, tables, saved-fields, HTTP and calendar tools; a voice
+// assistant passes its own skills and its own table/HTTP config into
+// the same builder. So a tool behaves identically whichever channel
+// invokes it, and a fix lands in both at once.
 //
-//  1. Shape. Agent tools are AI-SDK tools — a zod schema plus an
-//     execute(). The Realtime API wants JSON Schema function defs and
-//     dispatches by name. The zod wrapper already carries `.jsonSchema`,
-//     so the conversion is a projection, not a re-declaration.
+// Not every skill survives the trip. Polls, media and operator hand-off
+// are WhatsApp-thread features with no phone equivalent, and memory is
+// scoped to a chat agent's own history. VOICE_SKILLS is the list that
+// does work on a call, and it's what the editor offers.
 //
-//  2. Context. Half the agent toolkit is bound to a WhatsApp thread
-//     (polls, media, live-operator hand-off). Those are gated on an
-//     instanceId, so passing an empty one leaves them out on their own
-//     — no separate deny-list to keep in sync. What DOES carry over is
-//     anything keyed to the person: CRM, saved fields, conversation
-//     memory. We hand those the caller's number in WhatsApp's own jid
-//     form, so the assistant on the phone sees the same customer record
-//     the agent sees in chat.
+// Two shapes have to be reconciled for the Realtime API: agent tools
+// are AI-SDK tools (a zod schema plus execute), Realtime wants JSON
+// Schema function defs dispatched by name. The zod wrapper already
+// carries `.jsonSchema`, so this is a projection, not a re-declaration.
 
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { buildToolsForSkills } from '../agent/ai.service';
+
+/** The skills a phone call can actually support. */
+export const VOICE_SKILLS: { id: string; name: string; desc: string }[] = [
+    {
+        id: 'crm',
+        name: 'CRM',
+        desc: 'Look the caller up, save their name and status, write a summary of the call.',
+    },
+    {
+        id: 'user_fields',
+        name: 'Saved fields',
+        desc: 'Remember specific facts about a caller — order number, address, plan — and recall them next time.',
+    },
+    {
+        id: 'tables',
+        name: 'Data tables',
+        desc: 'Read your own tables during the call: stock, prices, bookings, whatever you keep there.',
+    },
+    {
+        id: 'http',
+        name: 'Your API',
+        desc: 'Call your own endpoints mid-conversation — check an order, trigger something on your side.',
+    },
+    {
+        id: 'google_calendar',
+        name: 'Google Calendar',
+        desc: 'Check availability and book an appointment while the caller is still on the line.',
+    },
+];
+
+export const VOICE_SKILL_IDS = VOICE_SKILLS.map(s => s.id);
 
 export type VoiceTool = {
     name: string;
@@ -34,12 +64,13 @@ export type VoiceTool = {
     execute: (args: any) => Promise<any>;
 };
 
-export type VoiceToolContext = {
+export type VoiceToolConfig = {
     assistantId: string;
     workspaceId: string;
-    linkedAgentId: string | null;
-    /** Empty = every tool the linked agent has. Otherwise a subset. */
-    mcpToolNames: string[];
+    skills: string[];
+    allowedTableIds: string[];
+    httpTools: any[];
+    skillPrompts: Record<string, string>;
     /** The other party on the call, E.164 or raw digits. */
     contactPhone: string | null;
 };
@@ -54,59 +85,56 @@ function toRealtimeSchema(jsonSchema: any) {
 
 /**
  * Build the tool set a voice assistant may call during a phone call.
- * Returns an empty list when the assistant isn't linked to an agent —
- * which is the default, so silence here is not a failure.
+ * An assistant with no skills ticked gets none, which is the default —
+ * silence here is a configuration choice, not a failure.
  */
-export async function buildVoiceTools(ctx: VoiceToolContext): Promise<{ tools: VoiceTool[]; prompt: string }> {
-    if (!ctx.linkedAgentId) return { tools: [], prompt: '' };
+export async function buildVoiceTools(cfg: VoiceToolConfig): Promise<{ tools: VoiceTool[]; prompt: string }> {
+    const skills = (cfg.skills || []).filter(s => VOICE_SKILL_IDS.includes(s));
+    if (skills.length === 0) return { tools: [], prompt: '' };
 
-    const agent = await prisma.agent.findFirst({
-        where: { id: ctx.linkedAgentId, workspaceId: ctx.workspaceId },
-        select: {
-            id: true, name: true, userId: true, workspaceId: true,
-            skills: true, allowedTableIds: true, httpTools: true, skillPrompts: true,
-        },
+    // The CRM and table builders record who acted. An assistant isn't a
+    // user, so the workspace owner stands in — the same account that
+    // owns the data being written.
+    const ws = await prisma.workspace.findUnique({
+        where: { id: cfg.workspaceId },
+        select: { ownerId: true },
     });
-    if (!agent) {
-        logger.warn({ assistantId: ctx.assistantId, agentId: ctx.linkedAgentId },
-            '[voice-tools] linked agent not found in this workspace — call runs without tools');
+    if (!ws) {
+        logger.warn({ assistantId: cfg.assistantId }, '[voice-tools] workspace not found — call runs without tools');
         return { tools: [], prompt: '' };
     }
 
-    // The digits are what every contact-scoped tool keys on; the jid
-    // form is what the chat agent stores against, so building it here
-    // is what makes "same customer" true across the two channels.
-    const digits = (ctx.contactPhone || '').replace(/[^0-9]/g, '');
+    // Contact-scoped tools key on the digits; the jid form is what the
+    // chat side stores against, so building it here is what makes "same
+    // customer" true whether they typed or dialled.
+    const digits = (cfg.contactPhone || '').replace(/[^0-9]/g, '');
     const remoteJid = digits ? `${digits}@s.whatsapp.net` : '';
 
     let built: { tools?: Record<string, any>; skillPrompt: string };
     try {
         built = buildToolsForSkills(
-            agent.skills || [],
-            agent.allowedTableIds || [],
-            agent.userId,
-            ctx.workspaceId,
-            (agent.httpTools as any) || [],
-            agent.id,
+            skills,
+            cfg.allowedTableIds || [],
+            ws.ownerId,
+            cfg.workspaceId,
+            (cfg.httpTools as any) || [],
+            // No agent id and no instance id: a phone call belongs to
+            // neither. Every WhatsApp-bound tool is gated on those, so
+            // leaving them empty excludes them without a deny-list that
+            // could fall out of sync.
+            '',
             remoteJid,
-            (agent.skillPrompts as any) || {},
-            // No instanceId on a phone call. Every WhatsApp-bound tool
-            // (polls, media, operator hand-off) is gated on one, so
-            // leaving it empty excludes them without a deny-list.
+            cfg.skillPrompts || {},
             '',
             null,
         );
     } catch (err: any) {
-        logger.error({ err: err.message, agentId: agent.id }, '[voice-tools] failed to build agent tools');
+        logger.error({ err: err.message, assistantId: cfg.assistantId }, '[voice-tools] failed to build tools');
         return { tools: [], prompt: '' };
     }
 
     const all = built.tools || {};
-    const wanted = ctx.mcpToolNames?.length
-        ? Object.keys(all).filter(n => ctx.mcpToolNames.includes(n))
-        : Object.keys(all);
-
-    const tools: VoiceTool[] = wanted.map(name => {
+    const tools: VoiceTool[] = Object.keys(all).map(name => {
         const t = all[name];
         return {
             name,
@@ -116,10 +144,10 @@ export async function buildVoiceTools(ctx: VoiceToolContext): Promise<{ tools: V
         };
     });
 
-    // The skill guidance the chat agent gets is written for a keyboard.
-    // On a call the same tools need one extra rule the text channel
-    // never needs: say something before a lookup, because silence on a
-    // phone line reads as a dropped call rather than as thinking.
+    // The built-in skill guidance is written for a keyboard. On a call
+    // the same tools need one rule the text channel never needs: say
+    // something before a lookup, because silence on a phone line reads
+    // as a dropped call rather than as thinking.
     const prompt = tools.length
         ? `${built.skillPrompt}\n\nYou are on a live phone call. Before using a tool that looks something up, ` +
           `say a short natural line first ("let me check that for you") — otherwise the caller hears silence ` +
@@ -156,11 +184,12 @@ export function parseToolArgs(raw: string | undefined): { ok: true; args: any } 
     }
 }
 
-// Kept exported for the assistant editor, which lists what a link would
-// bring in before the operator commits to it.
-export async function listAgentToolNames(agentId: string, workspaceId: string): Promise<string[]> {
-    const { tools } = await buildVoiceTools({
-        assistantId: '', workspaceId, linkedAgentId: agentId, mcpToolNames: [], contactPhone: null,
-    });
+/**
+ * Names of the tools a given configuration would expose. Used by the
+ * editor to show what ticking a skill actually turns on, rather than
+ * leaving the operator to find out on a live call.
+ */
+export async function previewVoiceToolNames(cfg: Omit<VoiceToolConfig, 'contactPhone'>): Promise<string[]> {
+    const { tools } = await buildVoiceTools({ ...cfg, contactPhone: null });
     return tools.map(t => t.name);
 }

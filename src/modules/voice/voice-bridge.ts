@@ -53,8 +53,10 @@ type AssistantConfig = {
     responseDelayMs: number;
     numWordsToInterrupt: number;
     endCallPhrases: string[];
-    linkedAgentId: string | null;
-    mcpToolNames: string[];
+    skills: string[];
+    allowedTableIds: string[];
+    httpTools: any[];
+    skillPrompts: Record<string, string>;
 };
 
 async function loadAssistant(assistantId: string): Promise<AssistantConfig | null> {
@@ -78,8 +80,10 @@ async function loadAssistant(assistantId: string): Promise<AssistantConfig | nul
         responseDelayMs: a.responseDelayMs,
         numWordsToInterrupt: a.numWordsToInterrupt,
         endCallPhrases: a.endCallPhrases,
-        linkedAgentId: a.linkedAgentId,
-        mcpToolNames: a.mcpToolNames,
+        skills: a.skills || [],
+        allowedTableIds: a.allowedTableIds || [],
+        httpTools: (a.httpTools as any) || [],
+        skillPrompts: (a.skillPrompts as any) || {},
     };
 }
 
@@ -169,17 +173,18 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
         if (row) counterpartyPhone = row.direction === 'outbound' ? row.toNumber : row.fromNumber;
     }
 
-    // Tools the assistant may call mid-conversation. Empty unless the
-    // operator linked an agent — see voice-tools for what carries over
-    // from the chat channel and what can't.
+    // Tools the assistant may call mid-conversation, from its own skill
+    // configuration. Empty until an operator ticks something.
     let voiceTools: VoiceTool[] = [];
     let toolPrompt = '';
     try {
         const built = await buildVoiceTools({
             assistantId: asst.id,
             workspaceId: asst.workspaceId,
-            linkedAgentId: asst.linkedAgentId,
-            mcpToolNames: asst.mcpToolNames || [],
+            skills: asst.skills,
+            allowedTableIds: asst.allowedTableIds,
+            httpTools: asst.httpTools,
+            skillPrompts: asst.skillPrompts,
             contactPhone: counterpartyPhone,
         });
         voiceTools = built.tools;
@@ -428,9 +433,9 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                             required: [],
                         },
                     },
-                    // Whatever the linked agent brings. Same tools the
-                    // chat agent uses, so an answer given on the phone
-                    // comes from the same data as one given in chat.
+                    // The assistant's own skills. Same implementations
+                    // the chat agent uses, so an answer given on the
+                    // phone comes from the same data as one in chat.
                     ...voiceTools.map(t => ({
                         type: 'function',
                         name: t.name,

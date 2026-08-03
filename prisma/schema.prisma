@@ -1908,8 +1908,18 @@ model VoiceAssistant {
   backgroundSound     String @default("off") // off | office | cafe
   backgroundDenoise   Boolean @default(false)
 
-  // Tools — either reuse an existing Agent's skill+tool set (agent link)
-  // or pick a subset of MCP tools by name (custom).
+  // Tools. A voice assistant configures its own — it is not required to
+  // have a text agent at all, and plenty of workspaces will only ever
+  // run one on the phone. Same field names and same builders as Agent,
+  // so a tool behaves identically whichever channel invokes it; the
+  // difference is only which skills a phone call can support.
+  skills              String[] @default([])   // e.g. ["crm", "tables", "http"]
+  allowedTableIds     String[] @default([])   // CustomTable ids this assistant may read
+  httpTools           Json     @default("[]") // HttpToolTemplate[]
+  skillPrompts        Json     @default("{}") // per-skill prompt overrides
+
+  // Reserved for the agent → call hand-off (an agent asking the
+  // assistant to phone someone). Not a tool source.
   linkedAgentId       String?
   mcpToolNames        String[] @default([])
 

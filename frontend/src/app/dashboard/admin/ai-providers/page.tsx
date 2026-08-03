@@ -1,23 +1,28 @@
 "use client";
 
-// Admin → AI Providers. One page for what used to be three.
+// Admin → AI Providers & Pricing. One page for what used to be three.
 //
 // "AI Models", "Platform Keys" and "AI Pricing" were separate screens,
 // but they're three facets of one thing: a provider. Splitting them
 // meant the answers to "can users pick this?", "can the server call
 // it?" and "what do we charge for it?" lived in three places, and a
-// half-configured provider looked fine on every one of them. Here each
-// provider is a row you open, and the three answers sit side by side —
-// so a missing key is visible next to the models it silently disables.
+// half-configured provider looked fine on every one of them.
+//
+// So: one row per provider. The API key sits in the row itself — the
+// thing you most often come here to paste shouldn't need a click to
+// reach. Opening a row reveals its models, and since a model IS its
+// price row, models and pricing are one table rather than two tabs.
+// A model with no rate is a billing hole, so adding one demands its
+// rate in the same breath.
 //
 // Everything is edited locally and committed by one save (⌘S / the
-// floating bar), which fans out to the three endpoints that already
-// existed. No autosave: these numbers decide what customers are billed.
+// floating bar). No autosave: these numbers decide what customers pay.
 
 import { useEffect, useMemo, useState } from "react";
 import {
     Sparkles, Loader2, KeyRound, Coins, Bot, ChevronRight, Plus, Trash2,
-    Search, Eye, EyeOff, ExternalLink, RefreshCw, Mic, Volume2, MessageSquare, AudioLines,
+    Search, Eye, EyeOff, ExternalLink, RefreshCw, Mic, Volume2, MessageSquare,
+    AudioLines, AlertTriangle,
 } from "lucide-react";
 import api from "@/lib/api";
 import UnsavedChangesBar from "@/components/UnsavedChangesBar";
@@ -76,17 +81,14 @@ const KIND_LABEL: Record<Kind, string> = {
 };
 
 // 1 credit = $0.0001.
-const usdToCredits = (usd: number) => Math.ceil(usd * 10_000);
 const previewCredits = (r: PricingRow) => {
     const usd =
         r.kind === "stt_minute" ? r.unitCostUsd :
         r.kind === "tts_chars" ? (1_000 / 1_000_000) * r.unitCostUsd :
         (1_000 / 1_000_000) * r.outputCostPer1M;
-    return usdToCredits(usd * r.marginMultiplier);
+    return Math.ceil(usd * r.marginMultiplier * 10_000);
 };
 const previewUnit = (k: Kind) => (k === "stt_minute" ? "min" : k === "tts_chars" ? "1K chars" : "1K out");
-
-type Tab = "key" | "models" | "pricing";
 
 export default function AdminAiProvidersPage() {
     const [providers, setProviders] = useState<Provider[]>([]);
@@ -104,7 +106,6 @@ export default function AdminAiProvidersPage() {
     const [rows, setRows] = useState<PricingRow[]>([]);
 
     const [open, setOpen] = useState<string | null>(null);
-    const [tab, setTab] = useState<Record<string, Tab>>({});
     const [search, setSearch] = useState("");
     const [onlyConfigured, setOnlyConfigured] = useState(false);
 
@@ -124,8 +125,7 @@ export default function AdminAiProvidersPage() {
                 setCatalogue(cat);
                 setCatalogueBase(cat);
                 // Key values live in SystemConfig; the hub only reports
-                // whether one is set (it must never ship secrets around
-                // more than it already does).
+                // whether one is set.
                 const conf = cfg.data?.config || {};
                 const kv: Record<string, string> = {};
                 for (const p of ps) if (p.configKey) kv[p.configKey] = conf[p.configKey]?.value || "";
@@ -170,23 +170,13 @@ export default function AdminAiProvidersPage() {
         setError(null);
         try {
             if (dirtyKeys.length) {
+                // Only send what changed — a blanket PUT of every field
+                // would rewrite keys nobody touched.
                 const entries: Record<string, string> = {};
-                // Only send what changed — an empty box means "leave it",
-                // not "wipe the key", which is what a blanket PUT of every
-                // field would have meant.
                 for (const k of dirtyKeys) entries[k] = keys[k].trim();
                 await api.put("/admin/config", { entries });
             }
-            if (dirtyBuckets.length) {
-                await api.put("/admin/ai-models", {
-                    models: {
-                        OPENAI: catalogue.OPENAI || [],
-                        CLAUDE: catalogue.CLAUDE || [],
-                        GEMINI: catalogue.GEMINI || [],
-                        GLM: catalogue.GLM || [],
-                    },
-                });
-            }
+            if (dirtyBuckets.length) await putCatalogue(catalogue);
             for (const r of dirtyRows) {
                 await api.put(`/admin/ai-pricing/${r.id}`, {
                     inputCostPer1M: r.inputCostPer1M,
@@ -202,6 +192,46 @@ export default function AdminAiProvidersPage() {
             setError(e.response?.data?.message || e.message);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const putCatalogue = (cat: Record<string, string[]>) => api.put("/admin/ai-models", {
+        models: {
+            OPENAI: cat.OPENAI || [],
+            CLAUDE: cat.CLAUDE || [],
+            GEMINI: cat.GEMINI || [],
+            GLM: cat.GLM || [],
+        },
+    });
+
+    // Adding a model writes its price row immediately — a model with no
+    // rate silently bills at the fallback estimate, which is the exact
+    // hole this page exists to close. Catalogue membership goes with it
+    // in the same action so the two can't drift apart.
+    const addModel = async (p: Provider, draft: {
+        model: string; kind: Kind; inputCostPer1M: number; outputCostPer1M: number;
+        cachedCostPer1M: number; unitCostUsd: number; marginMultiplier: number; pickable: boolean;
+    }) => {
+        setError(null);
+        try {
+            await api.post("/admin/ai-pricing", {
+                provider: p.id,
+                model: draft.model,
+                kind: draft.kind,
+                inputCostPer1M: draft.inputCostPer1M,
+                outputCostPer1M: draft.outputCostPer1M,
+                cachedCostPer1M: draft.cachedCostPer1M,
+                unitCostUsd: draft.unitCostUsd,
+                marginMultiplier: draft.marginMultiplier,
+            });
+            if (draft.pickable && p.catalogueBucket) {
+                const bucket = p.catalogueBucket;
+                const next = { ...catalogue, [bucket]: [...(catalogue[bucket] || []), draft.model] };
+                await putCatalogue(next);
+            }
+            await load();
+        } catch (e: any) {
+            setError(e.response?.data?.message || e.message);
         }
     };
 
@@ -237,11 +267,11 @@ export default function AdminAiProvidersPage() {
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-3">
                         <div className="p-2 bg-primary/10 text-primary rounded-xl"><Sparkles className="w-6 h-6" /></div>
-                        AI Providers & Pricing
+                        AI Providers &amp; Pricing
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-                        Every provider in one place — its API key, the models users can pick, and what each model costs.
-                        Open a provider to edit all three. Nothing saves until you hit Save (⌘S).
+                        Every provider in one place. Paste its API key right in the row; open the row to see the models
+                        it offers and what each one costs. Nothing saves until you hit Save (⌘S).
                     </p>
                 </div>
                 <button
@@ -292,10 +322,10 @@ export default function AdminAiProvidersPage() {
             <div className="space-y-2.5">
                 {visible.map(p => {
                     const isOpen = open === p.id;
-                    const active = tab[p.id] || (p.configKey ? "key" : "pricing");
                     const myRows = rowsFor(p);
                     const bucket = p.catalogueBucket;
                     const models = bucket ? (catalogue[bucket] || []) : [];
+                    const unpriced = models.filter(m => !myRows.some(r => r.model === m));
                     const edited =
                         (p.configKey && dirtyKeys.includes(p.configKey)) ||
                         (bucket && dirtyBuckets.includes(bucket)) ||
@@ -305,86 +335,85 @@ export default function AdminAiProvidersPage() {
                         <div key={p.id} className={`bg-card border rounded-2xl overflow-hidden transition-colors ${
                             edited ? "border-amber-500/40" : "border-border"
                         }`}>
-                            {/* Row header — the dropdown handle */}
-                            <button onClick={() => setOpen(isOpen ? null : p.id)}
-                                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-secondary/30 transition-colors">
-                                <ChevronRight className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${p.keySet ? "bg-emerald-400" : "bg-muted-foreground/40"}`}
-                                    title={p.keySet ? "API key installed" : "No API key — this provider's models are hidden from users"} />
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-semibold">{p.label}</span>
-                                        {p.capabilities.map(c => {
-                                            const m = CAP_META[c];
-                                            const Icon = m.icon;
-                                            return (
-                                                <span key={c} className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${m.cls}`}>
-                                                    <Icon className="w-3 h-3" /> {m.label}
+                            {/* Row header — name toggles the dropdown, the key
+                                stays reachable without opening anything. */}
+                            <div className="flex items-center gap-3 px-3 sm:px-4 py-3">
+                                <button onClick={() => setOpen(isOpen ? null : p.id)}
+                                    className="flex items-center gap-3 min-w-0 flex-1 text-left group">
+                                    <ChevronRight className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${p.keySet ? "bg-emerald-400" : "bg-muted-foreground/40"}`}
+                                        title={p.keySet ? "API key installed" : "No API key — this provider's models are hidden from users"} />
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-semibold group-hover:text-primary transition-colors">{p.label}</span>
+                                            {p.capabilities.map(c => {
+                                                const m = CAP_META[c];
+                                                const Icon = m.icon;
+                                                return (
+                                                    <span key={c} className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${m.cls}`}>
+                                                        <Icon className="w-3 h-3" /> {m.label}
+                                                    </span>
+                                                );
+                                            })}
+                                            {edited && <span className="text-[10px] font-semibold text-amber-400">● edited</span>}
+                                            {unpriced.length > 0 && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400"
+                                                    title="Models users can pick that have no rate — these bill at the fallback estimate">
+                                                    <AlertTriangle className="w-3 h-3" /> {unpriced.length} unpriced
                                                 </span>
-                                            );
-                                        })}
-                                        {edited && <span className="text-[10px] font-semibold text-amber-400">● edited</span>}
+                                            )}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                                            {bucket ? `${models.length} pickable · ` : ""}{myRows.length} priced
+                                        </p>
                                     </div>
-                                    <p className="text-xs text-muted-foreground mt-0.5 truncate">{p.blurb}</p>
-                                </div>
-                                <div className="hidden sm:flex items-center gap-4 text-xs text-muted-foreground flex-shrink-0">
-                                    {bucket && <span>{models.length} pickable</span>}
-                                    <span>{myRows.length} priced</span>
-                                    <span className={`font-medium ${p.keySet ? "text-emerald-400" : "text-amber-400"}`}>
-                                        {p.keySet ? "installed" : "no key"}
-                                    </span>
-                                </div>
-                            </button>
+                                </button>
+
+                                {p.configKey && (
+                                    <InlineKey provider={p}
+                                        value={keys[p.configKey] || ""}
+                                        onChange={v => setKeys({ ...keys, [p.configKey!]: v })} />
+                                )}
+                            </div>
 
                             {isOpen && (
-                                <div className="border-t border-border">
-                                    {/* Tabs */}
-                                    <div className="flex items-center gap-1 px-4 pt-3">
-                                        {([
-                                            p.configKey && (["key", "API key"] as const),
-                                            ["models", "Models"] as const,
-                                            ["pricing", `Pricing (${myRows.length})`] as const,
-                                        ].filter(Boolean) as [Tab, string][]).map(([id, label]) => (
-                                            <button key={id} onClick={() => setTab({ ...tab, [p.id]: id })}
-                                                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
-                                                    active === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60"
-                                                }`}>
-                                                {label}
-                                            </button>
-                                        ))}
-                                    </div>
+                                <div className="border-t border-border p-4 space-y-5">
+                                    {p.keyHint && <p className="text-xs text-amber-400">{p.keyHint}</p>}
+                                    <p className="text-xs text-muted-foreground">
+                                        {p.blurb}
+                                        {p.configKey && <> Key stored in <code className="bg-secondary px-1 rounded">{p.configKey}</code>; workers pick up a change within ~60 s.</>}
+                                        {p.keyUpdatedAt && <> Last updated {new Date(p.keyUpdatedAt).toLocaleString()}.</>}
+                                    </p>
+                                    {!p.keySet && (
+                                        <p className="text-xs text-amber-400">
+                                            No key — this provider is hidden from the voice pipeline picker and its calls fail, whatever is listed below.
+                                        </p>
+                                    )}
 
-                                    <div className="p-4">
-                                        {active === "key" && p.configKey && (
-                                            <KeyPanel provider={p}
-                                                value={keys[p.configKey] || ""}
-                                                onChange={v => setKeys({ ...keys, [p.configKey!]: v })} />
-                                        )}
+                                    <ModelTable
+                                        provider={p}
+                                        rows={myRows}
+                                        unpriced={unpriced}
+                                        catalogueModels={models}
+                                        onChange={(id, patch) => setRows(rows.map(r => r.id === id ? { ...r, ...patch } : r))}
+                                        onTogglePickable={(model, on) => {
+                                            if (!bucket) return;
+                                            const next = on
+                                                ? [...models, model]
+                                                : models.filter(x => x !== model);
+                                            setCatalogue({ ...catalogue, [bucket]: next });
+                                        }}
+                                        onAdd={draft => addModel(p, draft)}
+                                        onDelete={async row => {
+                                            if (!confirm(`Delete the price row for ${row.provider}/${row.model}?`)) return;
+                                            try {
+                                                await api.delete(`/admin/ai-pricing/${row.id}`);
+                                                await load();
+                                            } catch (e: any) { setError(e.response?.data?.message || e.message); }
+                                        }}
+                                    />
 
-                                        {active === "models" && (
-                                            <ModelsPanel provider={p} models={models}
-                                                onAdd={m => bucket && setCatalogue({ ...catalogue, [bucket]: [...models, m] })}
-                                                onRemove={m => bucket && setCatalogue({ ...catalogue, [bucket]: models.filter(x => x !== m) })} />
-                                        )}
-
-                                        {active === "pricing" && (
-                                            <PricingPanel rows={myRows} provider={p}
-                                                onChange={(id, patch) => setRows(rows.map(r => r.id === id ? { ...r, ...patch } : r))}
-                                                onCreate={async draft => {
-                                                    try {
-                                                        await api.post("/admin/ai-pricing", draft);
-                                                        await load();
-                                                    } catch (e: any) { setError(e.response?.data?.message || e.message); }
-                                                }}
-                                                onDelete={async row => {
-                                                    if (!confirm(`Delete the price row for ${row.provider}/${row.model}?`)) return;
-                                                    try {
-                                                        await api.delete(`/admin/ai-pricing/${row.id}`);
-                                                        await load();
-                                                    } catch (e: any) { setError(e.response?.data?.message || e.message); }
-                                                }} />
-                                        )}
-                                    </div>
+                                    <VoiceCatalogue provider={p} />
                                 </div>
                             )}
                         </div>
@@ -422,191 +451,91 @@ function Stat({ icon: Icon, label, value, small }: { icon: any; label: string; v
     );
 }
 
-function KeyPanel({ provider, value, onChange }: { provider: Provider; value: string; onChange: (v: string) => void }) {
+// The key lives in the collapsed row. Pasting a key is the single most
+// common reason to visit this page; making it the one thing you had to
+// open a panel for was backwards.
+function InlineKey({ provider, value, onChange }: {
+    provider: Provider; value: string; onChange: (v: string) => void;
+}) {
     const [show, setShow] = useState(false);
     return (
-        <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Platform API key</label>
-                {provider.docsUrl && (
-                    <a href={provider.docsUrl} target="_blank" rel="noreferrer"
-                        className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                        Get a key <ExternalLink className="w-3 h-3" />
-                    </a>
-                )}
-            </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <div className="relative">
                 <input type={show ? "text" : "password"} value={value}
                     onChange={e => onChange(e.target.value)}
                     placeholder={provider.keyPlaceholder}
-                    className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 pr-11 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    spellCheck={false} autoComplete="off"
+                    className="w-40 sm:w-64 bg-secondary/50 border border-border rounded-lg pl-3 pr-8 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
                 <button type="button" onClick={() => setShow(s => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
-                    {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    title={show ? "Hide" : "Show"}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded text-muted-foreground hover:text-foreground">
+                    {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
             </div>
-            {provider.keyHint && <p className="text-xs text-amber-400">{provider.keyHint}</p>}
-            <p className="text-xs text-muted-foreground">
-                Stored in <code className="bg-secondary px-1 rounded">{provider.configKey}</code>. Workers pick up a new value within ~60 s — no restart.
-                {provider.keyUpdatedAt && <> Last updated {new Date(provider.keyUpdatedAt).toLocaleString()}.</>}
-            </p>
-            {!provider.keySet && (
-                <p className="text-xs text-amber-400">
-                    Without a key here, this provider is hidden from the voice pipeline picker and its calls fail — even if its models are listed under Models.
-                </p>
+            {provider.docsUrl && (
+                <a href={provider.docsUrl} target="_blank" rel="noreferrer"
+                    title="Get a key from the provider"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-secondary">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                </a>
             )}
         </div>
     );
 }
 
-function ModelsPanel({ provider, models, onAdd, onRemove }: {
-    provider: Provider; models: string[]; onAdd: (m: string) => void; onRemove: (m: string) => void;
-}) {
-    const [input, setInput] = useState("");
-    const commit = () => {
-        const v = input.trim();
-        if (!v || models.includes(v)) return;
-        onAdd(v);
-        setInput("");
-    };
-    const v = provider.voice;
-    const hasVoice = v.transcribers.length + v.llms.length + v.voices.length > 0;
-
-    return (
-        <div className="space-y-5">
-            {provider.catalogueBucket ? (
-                <div>
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-sky-400" /> Agent models
-                        <span className="text-xs font-normal text-muted-foreground">— what users can pick for a text agent</span>
-                    </h3>
-                    {models.length === 0 ? (
-                        <p className="text-sm text-muted-foreground italic mt-2">
-                            No models listed — users can't pick this provider for an agent.
-                        </p>
-                    ) : (
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                            {models.map(m => (
-                                <span key={m} className="inline-flex items-center gap-1.5 text-xs font-mono bg-secondary/40 border border-border rounded-lg pl-2.5 pr-1 py-1">
-                                    {m}
-                                    <button onClick={() => onRemove(m)} title={`Remove ${m}`}
-                                        className="text-muted-foreground hover:text-red-400 transition-colors p-0.5 rounded">
-                                        <Trash2 className="w-3 h-3" />
-                                    </button>
-                                </span>
-                            ))}
-                        </div>
-                    )}
-                    <div className="flex gap-2 mt-3 max-w-lg">
-                        <input value={input} onChange={e => setInput(e.target.value)}
-                            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
-                            placeholder="model id, e.g. claude-opus-4-8"
-                            className="flex-1 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                        <button onClick={commit} disabled={!input.trim()}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-secondary/60 border border-border hover:bg-secondary disabled:opacity-50">
-                            <Plus className="w-3.5 h-3.5" /> Add
-                        </button>
-                    </div>
-                </div>
-            ) : (
-                <p className="text-sm text-muted-foreground">
-                    This provider only serves the voice pipeline — it has no text agent models.
-                </p>
-            )}
-
-            {hasVoice && (
-                <div className="space-y-3 pt-1">
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                        <AudioLines className="w-4 h-4 text-violet-400" /> Voice pipeline
-                        <span className="text-xs font-normal text-muted-foreground">
-                            — defined in the voice catalogue; edit rates under Pricing
-                        </span>
-                    </h3>
-                    <VoiceList title="Transcribers" icon={Mic}
-                        items={v.transcribers.map(t => ({ id: t.model, label: t.label, note: `$${t.costPerMin}/min` }))} />
-                    <VoiceList title="Voice LLMs" icon={AudioLines}
-                        items={v.llms.map(l => ({
-                            id: l.model, label: l.label,
-                            note: `$${l.inCostPer1M} in / $${l.outCostPer1M} out per 1M${l.combinesSttTts ? " · speech-to-speech" : ""}`,
-                        }))} />
-                    <VoiceList title="TTS voices" icon={Volume2}
-                        items={v.voices.map(x => ({ id: x.voiceId, label: x.label, note: `$${x.costPer1MChars}/1M chars` }))} />
-                    <VoiceList title="TTS models" icon={Volume2}
-                        items={v.voiceModels.map(x => ({ id: x.id, label: x.label, note: x.costPer1MChars ? `$${x.costPer1MChars}/1M chars` : "" }))} />
-                </div>
-            )}
-        </div>
-    );
-}
-
-function VoiceList({ title, icon: Icon, items }: {
-    title: string; icon: any; items: { id: string; label: string; note: string }[];
-}) {
-    if (items.length === 0) return null;
-    return (
-        <div>
-            <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-1.5">
-                <Icon className="w-3.5 h-3.5" /> {title} <span className="opacity-60">({items.length})</span>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-1.5">
-                {items.map(i => (
-                    <div key={i.id} className="flex items-center justify-between gap-2 bg-secondary/25 border border-border rounded-lg px-2.5 py-1.5">
-                        <div className="min-w-0">
-                            <div className="text-xs truncate">{i.label}</div>
-                            <div className="text-[10px] font-mono text-muted-foreground truncate">{i.id}</div>
-                        </div>
-                        {i.note && <span className="text-[10px] text-muted-foreground whitespace-nowrap">{i.note}</span>}
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function PricingPanel({ rows, provider, onChange, onCreate, onDelete }: {
-    rows: PricingRow[];
+// One table: a model and its rate are the same object, so listing them
+// apart only invited the two to disagree.
+function ModelTable({ provider, rows, unpriced, catalogueModels, onChange, onTogglePickable, onAdd, onDelete }: {
     provider: Provider;
+    rows: PricingRow[];
+    unpriced: string[];
+    catalogueModels: string[];
     onChange: (id: string, patch: Partial<PricingRow>) => void;
-    onCreate: (draft: { provider: string; model: string; kind: Kind }) => void;
+    onTogglePickable: (model: string, on: boolean) => void;
+    onAdd: (d: {
+        model: string; kind: Kind; inputCostPer1M: number; outputCostPer1M: number;
+        cachedCostPer1M: number; unitCostUsd: number; marginMultiplier: number; pickable: boolean;
+    }) => void;
     onDelete: (row: PricingRow) => void;
 }) {
-    const [newModel, setNewModel] = useState("");
-    const [newKind, setNewKind] = useState<Kind>("token");
-    const adder = (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-            <input value={newModel} onChange={e => setNewModel(e.target.value)}
-                placeholder="add a model id…"
-                className="flex-1 min-w-[180px] bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
-            <select value={newKind} onChange={e => setNewKind(e.target.value as Kind)}
-                className="bg-card border border-border rounded-lg px-2 py-1.5 text-xs">
-                {(Object.keys(KIND_LABEL) as Kind[]).map(k => (
-                    <option key={k} value={k} className="bg-card">Billed {KIND_LABEL[k]}</option>
-                ))}
-            </select>
-            <button disabled={!newModel.trim()}
-                onClick={() => { onCreate({ provider: provider.id, model: newModel.trim(), kind: newKind }); setNewModel(""); }}
-                className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-secondary/60 border border-border hover:bg-secondary disabled:opacity-50">
-                <Plus className="w-3.5 h-3.5" /> Add row
-            </button>
-        </div>
-    );
-
-    if (rows.length === 0) return (
-        <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-                No price rows yet. They're seeded from the catalogue on boot — or hit “Refresh rates from catalog” above.
-            </p>
-            {adder}
-        </div>
-    );
-
-    // Grouped by how the model bills, because the columns differ.
+    const bucket = provider.catalogueBucket;
     const groups: { kind: Kind; rows: PricingRow[] }[] = (["token", "stt_minute", "tts_chars"] as Kind[])
         .map(kind => ({ kind, rows: rows.filter(r => r.kind === kind) }))
         .filter(g => g.rows.length > 0);
 
     return (
         <div className="space-y-5">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Coins className="w-4 h-4 text-primary" /> Models &amp; rates
+                {bucket && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                        — tick “Agents” to let users pick a model when configuring an agent
+                    </span>
+                )}
+            </h3>
+
+            {unpriced.length > 0 && (
+                <div className="bg-amber-500/5 border border-amber-500/25 rounded-xl px-3 py-2.5 text-xs">
+                    <p className="text-amber-400 font-medium flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> No rate set for: {unpriced.join(", ")}
+                    </p>
+                    <p className="text-muted-foreground mt-1">
+                        Users can pick these, but they bill at the fallback estimate rather than their real price.
+                        Add each below with its rate, or untick it from the agent catalogue.
+                    </p>
+                    {bucket && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                            {unpriced.map(m => (
+                                <button key={m} onClick={() => onTogglePickable(m, false)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-mono bg-secondary/50 border border-border rounded px-2 py-0.5 hover:text-red-400">
+                                    {m} <Trash2 className="w-3 h-3" />
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {groups.map(g => (
                 <div key={g.kind}>
                     <div className="text-xs font-medium text-muted-foreground mb-1.5">
@@ -617,6 +546,7 @@ function PricingPanel({ rows, provider, onChange, onCreate, onDelete }: {
                             <thead className="text-[10px] uppercase text-muted-foreground">
                                 <tr>
                                     <th className="text-left font-medium py-1.5 pr-3">Model</th>
+                                    {bucket && g.kind === "token" && <th className="text-center font-medium py-1.5 px-2">Agents</th>}
                                     {g.kind === "token" ? (
                                         <>
                                             <th className="text-right font-medium py-1.5 px-2">Input $/1M</th>
@@ -643,6 +573,15 @@ function PricingPanel({ rows, provider, onChange, onCreate, onDelete }: {
                                                 <span className="ml-1.5 text-[10px] text-violet-400">realtime</span>
                                             )}
                                         </td>
+                                        {bucket && g.kind === "token" && (
+                                            <td className="py-1.5 px-2 text-center">
+                                                <input type="checkbox"
+                                                    checked={catalogueModels.includes(r.model)}
+                                                    onChange={e => onTogglePickable(r.model, e.target.checked)}
+                                                    title="Users can pick this model when configuring an agent"
+                                                    className="w-4 h-4 accent-primary" />
+                                            </td>
+                                        )}
                                         {g.kind === "token" ? (
                                             <>
                                                 <Num value={r.inputCostPer1M} onChange={v => onChange(r.id, { inputCostPer1M: v })} />
@@ -662,7 +601,7 @@ function PricingPanel({ rows, provider, onChange, onCreate, onDelete }: {
                                                 className="w-4 h-4 accent-primary" />
                                         </td>
                                         <td className="py-1.5 text-right">
-                                            <button onClick={() => onDelete(r)} title="Delete this price row"
+                                            <button onClick={() => onDelete(r)} title="Delete this model"
                                                 className="p-1 rounded text-muted-foreground hover:text-red-400">
                                                 <Trash2 className="w-3.5 h-3.5" />
                                             </button>
@@ -674,11 +613,185 @@ function PricingPanel({ rows, provider, onChange, onCreate, onDelete }: {
                     </div>
                 </div>
             ))}
-            {adder}
+
+            {rows.length === 0 && (
+                <p className="text-sm text-muted-foreground">No models yet for this provider.</p>
+            )}
+
+            <AddModel provider={provider} onAdd={onAdd} />
+
             <p className="text-[11px] text-muted-foreground">
                 Charged = raw cost × margin, converted at 1 cai = $0.0001. These rates drive both agent billing and the
-                per-minute estimate shown on a voice assistant.
+                per-minute price shown on a voice assistant.
             </p>
+        </div>
+    );
+}
+
+// Adding a model demands its rate. An unpriced model doesn't fail
+// loudly — it quietly bills at a guessed fallback, which is worse.
+function AddModel({ provider, onAdd }: {
+    provider: Provider;
+    onAdd: (d: {
+        model: string; kind: Kind; inputCostPer1M: number; outputCostPer1M: number;
+        cachedCostPer1M: number; unitCostUsd: number; marginMultiplier: number; pickable: boolean;
+    }) => void;
+}) {
+    const empty = {
+        model: "", kind: "token" as Kind,
+        input: "", output: "", cached: "0", unit: "",
+        margin: "3", pickable: !!provider.catalogueBucket,
+    };
+    const [d, setD] = useState(empty);
+
+    const num = (s: string) => (s.trim() === "" ? NaN : Number(s));
+    const rateOk = d.kind === "token"
+        ? Number.isFinite(num(d.input)) && num(d.input) >= 0 && Number.isFinite(num(d.output)) && num(d.output) > 0
+        : Number.isFinite(num(d.unit)) && num(d.unit) > 0;
+    const ok = d.model.trim().length > 0 && rateOk && Number.isFinite(num(d.margin)) && num(d.margin) > 0;
+
+    const submit = () => {
+        if (!ok) return;
+        onAdd({
+            model: d.model.trim(),
+            kind: d.kind,
+            inputCostPer1M: d.kind === "token" ? num(d.input) : 0,
+            outputCostPer1M: d.kind === "token" ? num(d.output) : 0,
+            cachedCostPer1M: d.kind === "token" ? (Number.isFinite(num(d.cached)) ? num(d.cached) : 0) : 0,
+            unitCostUsd: d.kind === "token" ? 0 : num(d.unit),
+            marginMultiplier: num(d.margin),
+            pickable: d.pickable,
+        });
+        setD(empty);
+    };
+
+    return (
+        <div className="bg-secondary/20 border border-border rounded-xl p-3 space-y-2.5">
+            <div className="text-xs font-medium flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> Add a model to {provider.label}
+                <span className="font-normal text-muted-foreground">— its rate is required</span>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+                <Field label="Model id" className="flex-1 min-w-[180px]">
+                    <input value={d.model} onChange={e => setD({ ...d, model: e.target.value })}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
+                        placeholder="claude-opus-4-8"
+                        className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </Field>
+                <Field label="Bills by">
+                    <select value={d.kind} onChange={e => setD({ ...d, kind: e.target.value as Kind })}
+                        className="bg-card border border-border rounded-lg px-2 py-1.5 text-xs">
+                        {(Object.keys(KIND_LABEL) as Kind[]).map(k => (
+                            <option key={k} value={k} className="bg-card">{KIND_LABEL[k]}</option>
+                        ))}
+                    </select>
+                </Field>
+
+                {d.kind === "token" ? (
+                    <>
+                        <Field label="Input $/1M"><RateInput value={d.input} onChange={v => setD({ ...d, input: v })} /></Field>
+                        <Field label="Output $/1M"><RateInput value={d.output} onChange={v => setD({ ...d, output: v })} /></Field>
+                        <Field label="Cached $/1M"><RateInput value={d.cached} onChange={v => setD({ ...d, cached: v })} /></Field>
+                    </>
+                ) : (
+                    <Field label={d.kind === "stt_minute" ? "$ per minute" : "$ per 1M chars"}>
+                        <RateInput step="0.0001" value={d.unit} onChange={v => setD({ ...d, unit: v })} />
+                    </Field>
+                )}
+
+                <Field label="Margin ×"><RateInput step="0.1" width="w-16" value={d.margin} onChange={v => setD({ ...d, margin: v })} /></Field>
+
+                {provider.catalogueBucket && d.kind === "token" && (
+                    <label className="flex items-center gap-1.5 text-xs pb-1.5 cursor-pointer">
+                        <input type="checkbox" checked={d.pickable}
+                            onChange={e => setD({ ...d, pickable: e.target.checked })}
+                            className="w-4 h-4 accent-primary" />
+                        Agents can pick
+                    </label>
+                )}
+
+                <button onClick={submit} disabled={!ok}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                    <Plus className="w-3.5 h-3.5" /> Add
+                </button>
+            </div>
+
+            {!ok && d.model.trim() && (
+                <p className="text-[11px] text-amber-400">
+                    {d.kind === "token"
+                        ? "Enter the input and output $ per 1M tokens — a model without a rate bills at a guessed fallback."
+                        : "Enter this model's unit rate — a model without a rate bills at a guessed fallback."}
+                </p>
+            )}
+        </div>
+    );
+}
+
+function Field({ label, children, className = "" }: { label: string; children: any; className?: string }) {
+    return (
+        <div className={className}>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</div>
+            {children}
+        </div>
+    );
+}
+
+function RateInput({ value, onChange, step = "0.001", width = "w-24" }: {
+    value: string; onChange: (v: string) => void; step?: string; width?: string;
+}) {
+    return (
+        <input type="number" step={step} value={value} onChange={e => onChange(e.target.value)}
+            className={`${width} bg-secondary/50 border border-border rounded-lg px-2 py-1.5 text-xs text-right font-mono focus:outline-none focus:ring-2 focus:ring-primary/40`} />
+    );
+}
+
+// The voice pipeline's entries are defined in code, not here — showing
+// them keeps "what this provider offers" honest, and their rates are
+// the rows above.
+function VoiceCatalogue({ provider }: { provider: Provider }) {
+    const v = provider.voice;
+    const items: { title: string; icon: any; list: { id: string; label: string; note: string }[] }[] = [
+        { title: "Transcribers", icon: Mic, list: v.transcribers.map(t => ({ id: t.model, label: t.label, note: `$${t.costPerMin}/min` })) },
+        {
+            title: "Voice LLMs", icon: AudioLines, list: v.llms.map(l => ({
+                id: l.model, label: l.label,
+                note: `$${l.inCostPer1M} in / $${l.outCostPer1M} out${l.combinesSttTts ? " · speech-to-speech" : ""}`,
+            })),
+        },
+        { title: "TTS voices", icon: Volume2, list: v.voices.map(x => ({ id: x.voiceId, label: x.label, note: `$${x.costPer1MChars}/1M chars` })) },
+        { title: "TTS models", icon: Volume2, list: v.voiceModels.map(x => ({ id: x.id, label: x.label, note: x.costPer1MChars ? `$${x.costPer1MChars}/1M chars` : "" })) },
+    ].filter(s => s.list.length > 0);
+
+    if (items.length === 0) return null;
+
+    return (
+        <div className="space-y-3 pt-1 border-t border-border/60">
+            <h3 className="text-sm font-semibold flex items-center gap-2 pt-3">
+                <AudioLines className="w-4 h-4 text-violet-400" /> Voice pipeline
+                <span className="text-xs font-normal text-muted-foreground">— defined in the voice catalogue; priced in the table above</span>
+            </h3>
+            {items.map(s => {
+                const Icon = s.icon;
+                return (
+                    <div key={s.title}>
+                        <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-1.5">
+                            <Icon className="w-3.5 h-3.5" /> {s.title} <span className="opacity-60">({s.list.length})</span>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-1.5">
+                            {s.list.map(i => (
+                                <div key={i.id} className="flex items-center justify-between gap-2 bg-secondary/25 border border-border rounded-lg px-2.5 py-1.5">
+                                    <div className="min-w-0">
+                                        <div className="text-xs truncate">{i.label}</div>
+                                        <div className="text-[10px] font-mono text-muted-foreground truncate">{i.id}</div>
+                                    </div>
+                                    {i.note && <span className="text-[10px] text-muted-foreground whitespace-nowrap">{i.note}</span>}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
         </div>
     );
 }

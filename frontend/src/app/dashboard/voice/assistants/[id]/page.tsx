@@ -18,7 +18,7 @@ import {
     Plus, Trash2, Music, Ear, Waves, Rabbit, Turtle,
     Phone, BookOpen, Wrench, LineChart, Settings2,
     PhoneCall as PhoneCallIcon, MicOff, Voicemail, FileText,
-    CheckCircle2, PhoneOutgoing, AlertCircle,
+    CheckCircle2, PhoneOutgoing, AlertCircle, ChevronRight,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -1123,6 +1123,12 @@ function ToolsTab({ assistant, patch }: {
     const [tables, setTables] = useState<{ id: string; name: string }[]>([]);
     const [toolNames, setToolNames] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
+    // The calendar link belongs to the workspace, not to this assistant,
+    // so it's read separately and never travels in the save payload.
+    const [calendar, setCalendar] = useState<{ connected: boolean; email: string | null; calendarId: string | null } | null>(null);
+    // Which enabled skills have their settings open. Turning one on
+    // opens it, since that's the moment you'd want to configure it.
+    const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
     // The active list is read back from the server, so it reflects what
     // is stored rather than what is merely typed — the whole point of
@@ -1138,12 +1144,46 @@ function ToolsTab({ assistant, patch }: {
             })
             .catch(() => { /* the tab still renders without the extras */ })
             .finally(() => { if (!cancelled) setLoading(false); });
+
+        api.get('/google/oauth/status')
+            .then(r => {
+                if (cancelled || !r.data?.success) return;
+                setCalendar({
+                    connected: !!r.data.connected,
+                    email: r.data.email ?? null,
+                    calendarId: r.data.calendarId ?? null,
+                });
+            })
+            .catch(() => { if (!cancelled) setCalendar({ connected: false, email: null, calendarId: null }); });
+
         return () => { cancelled = true; };
     }, [assistant.id, assistant.updatedAt]);
 
     const on = assistant.skills || [];
-    const toggle = (id: string) =>
-        patch({ skills: on.includes(id) ? on.filter(s => s !== id) : [...on, id] });
+    const toggle = (id: string) => {
+        const turningOn = !on.includes(id);
+        patch({ skills: turningOn ? [...on, id] : on.filter(s => s !== id) });
+        setExpanded(prev => {
+            const next = new Set(prev);
+            if (turningOn) next.add(id); else next.delete(id);
+            return next;
+        });
+    };
+    const toggleExpand = (id: string) => setExpanded(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
+
+    // Extra instructions are APPENDED to the built-in guidance for that
+    // skill, never replacing it — the assistant keeps knowing how to
+    // call the tool and gains your rules on top.
+    const prompts: Record<string, string> = (assistant.skillPrompts as any) || {};
+    const setPrompt = (id: string, value: string) => {
+        const next = { ...prompts };
+        if (value.trim()) next[id] = value; else delete next[id];
+        patch({ skillPrompts: next } as any);
+    };
 
     const pickedTables = assistant.allowedTableIds || [];
     const toggleTable = (id: string) =>
@@ -1172,21 +1212,59 @@ function ToolsTab({ assistant, patch }: {
                     </p>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-2">
+                <div className="space-y-2">
                     {skills.map(s => {
                         const active = on.includes(s.id);
+                        const open = active && expanded.has(s.id);
+                        const custom = (prompts[s.id] || '').trim().length > 0;
                         return (
-                            <button key={s.id} onClick={() => toggle(s.id)}
-                                className={`text-left rounded-xl border p-3 transition-all ${
-                                    active ? 'border-primary/50 bg-primary/5' : 'border-border bg-secondary/20 hover:bg-secondary/40'
+                            <div key={s.id}
+                                className={`rounded-xl border transition-all ${
+                                    active ? 'border-primary/50 bg-primary/5' : 'border-border bg-secondary/20'
                                 }`}>
-                                <div className="flex items-center gap-2">
-                                    <input type="checkbox" readOnly checked={active}
-                                        className="w-4 h-4 accent-primary pointer-events-none" />
-                                    <span className="font-medium text-sm">{s.name}</span>
+                                <div className="flex items-start gap-2.5 p-3">
+                                    <input type="checkbox" checked={active} onChange={() => toggle(s.id)}
+                                        className="w-4 h-4 accent-primary mt-0.5 cursor-pointer" />
+                                    <button type="button" onClick={() => active && toggleExpand(s.id)}
+                                        disabled={!active}
+                                        className={`flex-1 text-left min-w-0 ${active ? 'cursor-pointer' : 'cursor-default'}`}>
+                                        <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                            {s.name}
+                                            {custom && <span className="text-[10px] font-semibold text-primary">● custom prompt</span>}
+                                            {s.id === 'google_calendar' && calendar && !calendar.connected && (
+                                                <span className="text-[10px] font-semibold text-amber-400">not connected</span>
+                                            )}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">{s.desc}</p>
+                                    </button>
+                                    {active && (
+                                        <ChevronRight className={`w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5 transition-transform ${open ? 'rotate-90' : ''}`} />
+                                    )}
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-1 ml-6">{s.desc}</p>
-                            </button>
+
+                                {open && (
+                                    <div className="border-t border-border/60 p-3 space-y-3">
+                                        {s.id === 'google_calendar' && (
+                                            <CalendarConnection status={calendar} />
+                                        )}
+                                        <div>
+                                            <label className="text-xs font-medium text-muted-foreground">
+                                                Extra instructions for {s.name}
+                                            </label>
+                                            <textarea
+                                                value={prompts[s.id] || ''}
+                                                onChange={e => setPrompt(s.id, e.target.value)}
+                                                rows={3}
+                                                placeholder={`e.g. rules the assistant should follow when using ${s.name} on a call`}
+                                                className="mt-1 w-full bg-secondary/50 border border-border rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                                            <p className="text-[11px] text-muted-foreground mt-1">
+                                                Added on top of the built-in guidance — the assistant still knows how to
+                                                call the tool, and follows your rules as well.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         );
                     })}
                 </div>
@@ -1242,6 +1320,46 @@ function ToolsTab({ assistant, patch }: {
                     rather than leaving the caller in silence.
                 </p>
             </div>
+        </div>
+    );
+}
+
+// The Google link is owned by the workspace and shared by everything
+// that books — showing the state here means a skill that can't work yet
+// says so where it's switched on, instead of failing on a live call.
+function CalendarConnection({ status }: {
+    status: { connected: boolean; email: string | null; calendarId: string | null } | null;
+}) {
+    if (status === null) return (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking connection…
+        </div>
+    );
+
+    if (status.connected) return (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 space-y-1">
+            <div className="text-xs font-medium text-emerald-300">Google Calendar connected</div>
+            <div className="text-[11px] text-muted-foreground truncate">
+                Account: <span className="font-mono text-foreground/80">{status.email}</span>
+                {' · '}Calendar: <span className="font-mono text-foreground/80">{status.calendarId || 'primary'}</span>
+            </div>
+            <a href="/dashboard/connectors" className="inline-block text-[11px] text-primary hover:underline">
+                Manage in Connectors →
+            </a>
+        </div>
+    );
+
+    return (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
+            <div className="text-xs font-medium text-amber-300">No Google Calendar connected to this workspace yet.</div>
+            <p className="text-[11px] text-muted-foreground">
+                The assistant can&apos;t check availability or book anything until the workspace owner links a Google
+                account. One connection covers every agent and assistant with this skill on.
+            </p>
+            <a href="/dashboard/connectors"
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                Connect Google Calendar →
+            </a>
         </div>
     );
 }

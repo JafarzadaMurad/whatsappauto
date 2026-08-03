@@ -555,7 +555,7 @@ export default function VoiceAssistantEditorPage() {
             {/* End of Assistant tab */}
 
             {tab === 'logs' && <LogsTab assistantId={id} />}
-            {tab === 'tools' && <ToolsTab />}
+            {tab === 'tools' && <ToolsTab assistant={assistant} patch={p => setAssistant({ ...assistant, ...p })} />}
             {tab === 'analysis' && <AnalysisTab />}
             {tab === 'advanced' && <AdvancedTab assistant={assistant} onPatch={(patch) => setAssistant({ ...assistant, ...patch })} />}
 
@@ -1109,14 +1109,114 @@ function LogsTab({ assistantId }: { assistantId: string }) {
     );
 }
 
-function ToolsTab() {
+function ToolsTab({ assistant, patch }: {
+    assistant: Assistant;
+    patch: (p: Partial<Assistant>) => void;
+}) {
+    const [agents, setAgents] = useState<{ id: string; name: string; skills: string[]; toolNames: string[] }[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/voice/assistants/tool-options')
+            .then(r => { if (!cancelled && r.data?.success) setAgents(r.data.agents || []); })
+            .catch(() => { /* the tab still renders, just without options */ })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, []);
+
+    const linked = agents.find(a => a.id === assistant.linkedAgentId);
+    const available = linked?.toolNames || [];
+    // Empty selection means "everything this agent has" — the same
+    // unrestricted-by-default sentinel the plan allow-lists use.
+    const chosen = assistant.mcpToolNames || [];
+    const isOn = (name: string) => chosen.length === 0 || chosen.includes(name);
+
+    const toggle = (name: string) => {
+        // First tick has to expand the implicit "all" into an explicit
+        // list, otherwise unticking one tool would read as "none".
+        const base = chosen.length === 0 ? available : chosen;
+        const next = base.includes(name) ? base.filter(n => n !== name) : [...base, name];
+        patch({ mcpToolNames: next.length === available.length ? [] : next });
+    };
+
+    if (loading) return (
+        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+    );
+
     return (
-        <div className="bg-card border border-border rounded-2xl p-16 text-center space-y-3">
-            <Wrench className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-            <p className="font-semibold">Tools coming to voice assistants</p>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                Voice-side tool calling (Twilio Transfer Call, DTMF keypad, custom webhooks) is wiring next. Text-side agents already have the full MCP tool set — reuse via the &quot;Link to Agent&quot; field.
-            </p>
+        <div className="space-y-4">
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+                <div>
+                    <h3 className="font-semibold flex items-center gap-2"><Wrench className="w-4 h-4 text-primary" /> Tools from an agent</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        Link a text agent and this assistant can use its tools on a call — look a customer up, read a
+                        table, hit your API. Answers come from the same data the agent uses in chat.
+                    </p>
+                </div>
+
+                <select
+                    value={assistant.linkedAgentId || ''}
+                    onChange={e => patch({ linkedAgentId: e.target.value || null, mcpToolNames: [] })}
+                    className="w-full max-w-md bg-card border border-border rounded-xl px-3 py-2 text-sm">
+                    <option value="" className="bg-card">No tools — conversation only</option>
+                    {agents.map(a => (
+                        <option key={a.id} value={a.id} className="bg-card">
+                            {a.name} ({a.toolNames.length} tool{a.toolNames.length === 1 ? '' : 's'})
+                        </option>
+                    ))}
+                </select>
+
+                {agents.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                        No agents in this workspace yet. Create one under AI Agents and give it skills first.
+                    </p>
+                )}
+            </div>
+
+            {linked && (
+                <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                            <h3 className="font-semibold text-sm">Available on a call</h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                {chosen.length === 0
+                                    ? `All ${available.length} of ${linked.name}'s call-capable tools.`
+                                    : `${chosen.length} of ${available.length} enabled.`}
+                            </p>
+                        </div>
+                        {chosen.length > 0 && (
+                            <button onClick={() => patch({ mcpToolNames: [] })}
+                                className="text-xs text-primary hover:underline">Use all</button>
+                        )}
+                    </div>
+
+                    {available.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                            This agent has no tools that work on a phone call. Skills tied to a WhatsApp thread —
+                            polls, media, operator hand-off — can&apos;t run here; give the agent CRM, tables, saved
+                            fields or HTTP tools instead.
+                        </p>
+                    ) : (
+                        <div className="grid sm:grid-cols-2 gap-1.5">
+                            {available.map(name => (
+                                <label key={name}
+                                    className="flex items-center gap-2 bg-secondary/25 border border-border rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-secondary/40">
+                                    <input type="checkbox" checked={isOn(name)} onChange={() => toggle(name)}
+                                        className="w-4 h-4 accent-primary" />
+                                    <span className="text-xs font-mono truncate">{name}</span>
+                                </label>
+                            ))}
+                        </div>
+                    )}
+
+                    <p className="text-[11px] text-muted-foreground">
+                        Tools that look a customer up use the number on the call, so a caller the agent already chats
+                        with resolves to the same record. A tool that takes longer than 8 seconds is abandoned and the
+                        assistant is told, rather than leaving the caller in silence.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

@@ -21,6 +21,7 @@ router.use(authMiddleware);
 router.get('/catalog', assistants.catalog.bind(assistants));
 router.post('/estimate', assistants.estimate.bind(assistants));
 
+router.get('/assistants/tool-options', assistants.toolOptions.bind(assistants));
 router.get('/assistants', assistants.list.bind(assistants));
 router.post('/assistants', assistants.create.bind(assistants));
 router.get('/assistants/:id', assistants.get.bind(assistants));

@@ -28,6 +28,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
 import { findLlm, loadLlmPricing, applyLlmPricing } from '../../lib/voice-catalog';
+import { buildVoiceTools, runVoiceTool, parseToolArgs, VoiceTool } from './voice-tools';
 
 // Rough audio-token conversion: OpenAI bills Realtime by tokens; ~1
 // audio second ≈ 100 audio tokens per direction on g711_ulaw. Used to
@@ -52,6 +53,8 @@ type AssistantConfig = {
     responseDelayMs: number;
     numWordsToInterrupt: number;
     endCallPhrases: string[];
+    linkedAgentId: string | null;
+    mcpToolNames: string[];
 };
 
 async function loadAssistant(assistantId: string): Promise<AssistantConfig | null> {
@@ -75,6 +78,8 @@ async function loadAssistant(assistantId: string): Promise<AssistantConfig | nul
         responseDelayMs: a.responseDelayMs,
         numWordsToInterrupt: a.numWordsToInterrupt,
         endCallPhrases: a.endCallPhrases,
+        linkedAgentId: a.linkedAgentId,
+        mcpToolNames: a.mcpToolNames,
     };
 }
 
@@ -149,6 +154,40 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
         return;
     }
     logger.info(`[voice-bridge] session starting · assistant=${assistantId} callSid=${callSid}`);
+
+    // Who is on the other end. Contact-scoped tools (CRM, saved fields,
+    // conversation memory) key on this, so a call from a number the
+    // agent already chats with resolves to the same customer record.
+    // A missing row isn't fatal — the tools simply run without a
+    // contact, exactly as they would for an unknown caller.
+    let counterpartyPhone: string | null = null;
+    if (callSid) {
+        const row = await prisma.phoneCall.findFirst({
+            where: { twilioCallSid: callSid },
+            select: { direction: true, fromNumber: true, toNumber: true },
+        });
+        if (row) counterpartyPhone = row.direction === 'outbound' ? row.toNumber : row.fromNumber;
+    }
+
+    // Tools the assistant may call mid-conversation. Empty unless the
+    // operator linked an agent — see voice-tools for what carries over
+    // from the chat channel and what can't.
+    let voiceTools: VoiceTool[] = [];
+    let toolPrompt = '';
+    try {
+        const built = await buildVoiceTools({
+            assistantId: asst.id,
+            workspaceId: asst.workspaceId,
+            linkedAgentId: asst.linkedAgentId,
+            mcpToolNames: asst.mcpToolNames || [],
+            contactPhone: counterpartyPhone,
+        });
+        voiceTools = built.tools;
+        toolPrompt = built.prompt;
+    } catch (err: any) {
+        logger.error({ err: err.message }, '[voice-bridge] tool build failed — continuing without tools');
+    }
+    const toolByName = new Map(voiceTools.map(t => [t.name, t]));
 
     const openaiKey = await resolvePlatformKey('OPENAI');
     if (!openaiKey) {
@@ -324,7 +363,8 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
         // `unknown_parameter` error — which was crashing the session
         // immediately after connect and making Twilio speak "an
         // application error has occurred".
-        const instructions = asst.systemPrompt || 'You are a helpful phone assistant. Reply in short, natural sentences.';
+        const instructions = (asst.systemPrompt || 'You are a helpful phone assistant. Reply in short, natural sentences.')
+            + toolPrompt;
         oaiWs.send(JSON.stringify({
             type: 'session.update',
             session: {
@@ -368,25 +408,36 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 // and then both sides sit in silence until the caller
                 // gives up or the duration cap fires — the call reads as
                 // broken even though the conversation went fine.
-                tools: [{
-                    type: 'function',
-                    name: 'end_call',
-                    description:
-                        'Hang up the phone. Call this once the conversation has genuinely finished — ' +
-                        'after saying goodbye, when the caller says they are done, or when there is ' +
-                        'nothing further to help with. Say your closing line first; the call ends ' +
-                        'after you finish speaking.',
-                    parameters: {
-                        type: 'object',
-                        properties: {
-                            reason: {
-                                type: 'string',
-                                description: 'Short note on why the call ended, for the call log.',
+                tools: [
+                    {
+                        type: 'function',
+                        name: 'end_call',
+                        description:
+                            'Hang up the phone. Call this once the conversation has genuinely finished — ' +
+                            'after saying goodbye, when the caller says they are done, or when there is ' +
+                            'nothing further to help with. Say your closing line first; the call ends ' +
+                            'after you finish speaking.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                reason: {
+                                    type: 'string',
+                                    description: 'Short note on why the call ended, for the call log.',
+                                },
                             },
+                            required: [],
                         },
-                        required: [],
                     },
-                }],
+                    // Whatever the linked agent brings. Same tools the
+                    // chat agent uses, so an answer given on the phone
+                    // comes from the same data as one given in chat.
+                    ...voiceTools.map(t => ({
+                        type: 'function',
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.jsonSchema,
+                    })),
+                ],
                 tool_choice: 'auto',
             },
         }));
@@ -434,6 +485,44 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                 const line = `OpenAI error · ${err.type || 'error'} · ${err.code || '-'} · ${err.message || 'no message'}${err.param ? ` · param=${err.param}` : ''}`;
                 logger.error({ err }, '[voice-bridge] ' + line);
                 logDiag(line);
+            } else if (ev.type === 'response.function_call_arguments.done' && toolByName.has(ev.name)) {
+                // An agent tool. Run it, hand the result back, and ask
+                // for a new response so the model speaks the answer.
+                // Nothing here may throw: a rejected promise inside a
+                // socket handler kills the call, and a failed lookup is
+                // something the model can talk its way out of if we
+                // tell it what went wrong.
+                const tool = toolByName.get(ev.name)!;
+                const callId = ev.call_id;
+                const parsed = parseToolArgs(ev.arguments);
+                const started = Date.now();
+
+                const respond = (payload: any) => {
+                    try {
+                        oaiWs.send(JSON.stringify({
+                            type: 'conversation.item.create',
+                            item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(payload) },
+                        }));
+                        oaiWs.send(JSON.stringify({ type: 'response.create' }));
+                    } catch { /* socket already gone */ }
+                };
+
+                if (!parsed.ok) {
+                    logDiag(`tool ${ev.name} · bad arguments · ${parsed.error}`);
+                    respond({ ok: false, error: parsed.error });
+                } else {
+                    void runVoiceTool(tool, parsed.args)
+                        .then(result => {
+                            logDiag(`tool ${ev.name} · ok · ${Date.now() - started}ms`);
+                            respond(result ?? { ok: true });
+                        })
+                        .catch((err: any) => {
+                            const msg = err?.message || 'tool failed';
+                            logger.error({ err: msg, tool: ev.name }, '[voice-bridge] tool execution failed');
+                            logDiag(`tool ${ev.name} · failed after ${Date.now() - started}ms · ${msg}`);
+                            respond({ ok: false, error: msg });
+                        });
+                }
             } else if (ev.type === 'response.function_call_arguments.done' && ev.name === 'end_call') {
                 // The assistant asked to hang up. Acknowledge the call so
                 // the model can deliver a closing line, then end once it

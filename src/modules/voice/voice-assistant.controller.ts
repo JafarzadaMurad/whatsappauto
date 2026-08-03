@@ -494,6 +494,35 @@ export class VoiceAssistantController {
     // one. Returns 400 with a helpful pointer when no number is
     // linked yet so the UI can direct the operator to Voice → Phone
     // Numbers.
+    // What tools a voice assistant could have. The operator picks an
+    // agent to inherit from, so they need to see what each agent would
+    // actually bring in — the skill list on the agent isn't the answer,
+    // since the WhatsApp-bound half of it doesn't survive a phone call.
+    async toolOptions(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+
+            const agents = await prisma.agent.findMany({
+                where: { workspaceId },
+                orderBy: { updatedAt: 'desc' },
+                select: { id: true, name: true, skills: true },
+            });
+
+            const { listAgentToolNames } = await import('./voice-tools');
+            const withTools = await Promise.all(agents.map(async a => ({
+                id: a.id,
+                name: a.name,
+                skills: a.skills || [],
+                toolNames: await listAgentToolNames(a.id, workspaceId).catch(() => [] as string[]),
+            })));
+
+            return res.json({ success: true, agents: withTools });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async testCall(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);

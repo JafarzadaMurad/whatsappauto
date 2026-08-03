@@ -88,6 +88,11 @@ const previewCredits = (r: PricingRow) => {
         (1_000 / 1_000_000) * r.outputCostPer1M;
     return Math.ceil(usd * r.marginMultiplier * 10_000);
 };
+// A row whose effective rate is zero charges nothing at all. It looks
+// like a normal row, so it needs to be said out loud.
+const rateOf = (r: PricingRow) => (r.kind === "token" ? r.outputCostPer1M : r.unitCostUsd);
+const isFree = (r: PricingRow) => r.isActive && rateOf(r) <= 0;
+
 const previewUnit = (k: Kind) => (k === "stt_minute" ? "min" : k === "tts_chars" ? "1K chars" : "1K out");
 
 export default function AdminAiProvidersPage() {
@@ -326,6 +331,7 @@ export default function AdminAiProvidersPage() {
                     const bucket = p.catalogueBucket;
                     const models = bucket ? (catalogue[bucket] || []) : [];
                     const unpriced = models.filter(m => !myRows.some(r => r.model === m));
+                    const freeRows = myRows.filter(isFree);
                     const edited =
                         (p.configKey && dirtyKeys.includes(p.configKey)) ||
                         (bucket && dirtyBuckets.includes(bucket)) ||
@@ -356,10 +362,10 @@ export default function AdminAiProvidersPage() {
                                                 );
                                             })}
                                             {edited && <span className="text-[10px] font-semibold text-amber-400">● edited</span>}
-                                            {unpriced.length > 0 && (
+                                            {(unpriced.length + freeRows.length) > 0 && (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400"
-                                                    title="Models users can pick that have no rate — these bill at the fallback estimate">
-                                                    <AlertTriangle className="w-3 h-3" /> {unpriced.length} unpriced
+                                                    title="Models with no rate — they charge nothing, or bill at the fallback estimate">
+                                                    <AlertTriangle className="w-3 h-3" /> {unpriced.length + freeRows.length} unpriced
                                                 </span>
                                             )}
                                         </div>
@@ -394,6 +400,7 @@ export default function AdminAiProvidersPage() {
                                         provider={p}
                                         rows={myRows}
                                         unpriced={unpriced}
+                                        freeRows={freeRows}
                                         catalogueModels={models}
                                         onChange={(id, patch) => setRows(rows.map(r => r.id === id ? { ...r, ...patch } : r))}
                                         onTogglePickable={(model, on) => {
@@ -485,10 +492,11 @@ function InlineKey({ provider, value, onChange }: {
 
 // One table: a model and its rate are the same object, so listing them
 // apart only invited the two to disagree.
-function ModelTable({ provider, rows, unpriced, catalogueModels, onChange, onTogglePickable, onAdd, onDelete }: {
+function ModelTable({ provider, rows, unpriced, freeRows, catalogueModels, onChange, onTogglePickable, onAdd, onDelete }: {
     provider: Provider;
     rows: PricingRow[];
     unpriced: string[];
+    freeRows: PricingRow[];
     catalogueModels: string[];
     onChange: (id: string, patch: Partial<PricingRow>) => void;
     onTogglePickable: (model: string, on: boolean) => void;
@@ -536,6 +544,18 @@ function ModelTable({ provider, rows, unpriced, catalogueModels, onChange, onTog
                 </div>
             )}
 
+            {freeRows.length > 0 && (
+                <div className="bg-amber-500/5 border border-amber-500/25 rounded-xl px-3 py-2.5 text-xs">
+                    <p className="text-amber-400 font-medium flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Rate is 0 for: {freeRows.map(r => r.model).join(", ")}
+                    </p>
+                    <p className="text-muted-foreground mt-1">
+                        These are active but charge nothing. Either fill the rate in below, or untick Active if the
+                        model isn't in use. “Refresh rates from catalog” fills in anything the catalogue knows.
+                    </p>
+                </div>
+            )}
+
             {groups.map(g => (
                 <div key={g.kind}>
                     <div className="text-xs font-medium text-muted-foreground mb-1.5">
@@ -566,7 +586,7 @@ function ModelTable({ provider, rows, unpriced, catalogueModels, onChange, onTog
                             </thead>
                             <tbody>
                                 {g.rows.map(r => (
-                                    <tr key={r.id} className="border-t border-border/60">
+                                    <tr key={r.id} className={`border-t border-border/60 ${isFree(r) ? "bg-amber-500/5" : ""}`}>
                                         <td className="py-1.5 pr-3 font-mono text-xs">
                                             {r.model}
                                             {r.provider.toLowerCase() === "openai-realtime" && (

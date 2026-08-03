@@ -167,6 +167,11 @@ export async function seedAiPricing() {
                 inputCostPer1M: r.inputCostPer1M,
                 outputCostPer1M: r.outputCostPer1M,
                 cachedCostPer1M: r.cachedCostPer1M ?? 0,
+                // Without these two the row lands as a token model at
+                // the column default, so a transcriber or a TTS voice
+                // seeds with an empty rate and bills nothing.
+                kind: r.kind ?? 'token',
+                unitCostUsd: r.unitCostUsd ?? 0,
                 marginMultiplier: DEFAULT_MARGIN,
                 isActive: true,
             },

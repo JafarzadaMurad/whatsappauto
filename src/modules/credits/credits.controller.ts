@@ -9,6 +9,8 @@
 //     PUT    /:id                         — edit one row
 //     POST   /                            — add a new model row
 //     DELETE /:id                         — remove a row
+//   Rates are typed by hand from each provider's pricing page; there is
+//   no bulk "sync from catalog" op, since it would overwrite them.
 //
 //   Admin under /api/admin/credits:
 //     POST /workspaces/:workspaceId/top-up  { amount } — grant cai
@@ -20,7 +22,6 @@ import { prisma } from '../../lib/prisma';
 import { getWorkspaceId } from '../../lib/workspace-context';
 import { getCreditBalance } from '../../lib/credit-guard';
 import { invalidatePriceCache } from '../../lib/ai-pricing';
-import { refreshAiPricing } from '../../lib/ai-pricing.seed';
 
 export class CreditsController {
     async getBalance(req: Request, res: Response) {
@@ -129,19 +130,6 @@ export class AiPricingController {
         }
     }
 
-    // One-shot "resync every catalog row to current provider prices"
-    // — used after a provider bumps a rate or when the admin realises
-    // stale seed values are still in place. Overwrites input/output/
-    // cached costs; does not touch marginMultiplier or isActive so
-    // admin-tuned margins survive.
-    async refreshFromCatalog(_req: Request, res: Response) {
-        try {
-            const diff = await refreshAiPricing();
-            return res.json({ success: true, ...diff });
-        } catch (error: any) {
-            return res.status(500).json({ success: false, message: error.message });
-        }
-    }
 }
 
 // ─── Admin credit ops (per-workspace top-up / reset) ───────────────

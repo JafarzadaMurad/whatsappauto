@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
     Sparkles, Loader2, KeyRound, Coins, Bot, ChevronRight, Plus, Trash2,
-    Search, Eye, EyeOff, ExternalLink, RefreshCw, Mic, Volume2, MessageSquare,
+    Search, Eye, EyeOff, ExternalLink, Mic, Volume2, MessageSquare,
     AudioLines, AlertTriangle,
 } from "lucide-react";
 import api from "@/lib/api";
@@ -276,23 +276,10 @@ export default function AdminAiProvidersPage() {
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
                         Every provider in one place. Paste its API key right in the row; open the row to see the models
-                        it offers and what each one costs. Nothing saves until you hit Save (⌘S).
+                        it offers and set what each one costs, read off that provider's own pricing page.
+                        Nothing saves until you hit Save (⌘S).
                     </p>
                 </div>
-                <button
-                    onClick={async () => {
-                        if (!confirm("Sync every catalog row to the current provider prices? Margins and Active toggles are kept — only raw $ rates are overwritten.")) return;
-                        try {
-                            const res = await api.post("/admin/ai-pricing/refresh-from-catalog");
-                            if (res.data.success) {
-                                alert(`Refreshed. Updated ${res.data.updated}, inserted ${res.data.inserted}, unchanged ${res.data.unchanged}.`);
-                                load();
-                            }
-                        } catch (e: any) { alert(e.response?.data?.message || e.message); }
-                    }}
-                    className="bg-secondary/70 hover:bg-secondary border border-border rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm font-medium transition-all">
-                    <RefreshCw className="w-4 h-4" /> Refresh rates from catalog
-                </button>
             </div>
 
             {error && (
@@ -550,8 +537,8 @@ function ModelTable({ provider, rows, unpriced, freeRows, catalogueModels, onCha
                         <AlertTriangle className="w-3.5 h-3.5" /> Rate is 0 for: {freeRows.map(r => r.model).join(", ")}
                     </p>
                     <p className="text-muted-foreground mt-1">
-                        These are active but charge nothing. Either fill the rate in below, or untick Active if the
-                        model isn't in use. “Refresh rates from catalog” fills in anything the catalogue knows.
+                        These are active but charge nothing. Fill the rate in from the provider's pricing page, or
+                        untick Active if the model isn't in use.
                     </p>
                 </div>
             )}

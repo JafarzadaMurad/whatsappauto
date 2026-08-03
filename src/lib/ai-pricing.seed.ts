@@ -1,15 +1,20 @@
-// Seeds AiPricing with the current provider price sheet on first boot,
-// and exposes a `refreshAiPricing()` op for the admin "Refresh from
-// catalog" button (upsert — overwrites the stored prices for every
-// row in DEFAULT_ROWS, useful after a provider price change).
+// Seeds AiPricing with a starting set of rows on boot — insert-only, so
+// a model an operator has priced by hand is never touched again.
 //
-// Source of truth (2026-07):
+// The numbers below are a STARTING POINT, not the source of truth. The
+// real rates are whatever admin has typed under Providers & Pricing,
+// read off each provider's own pricing page. There is deliberately no
+// "sync everything from here" action: a bulk overwrite would quietly
+// undo that work every time someone pressed it.
+//
+// What this file guarantees is only that every model an operator can
+// pick HAS a row, so nothing silently bills at the fallback estimate.
+//
+// Reference (2026-07), for whoever updates the starting values:
 //   Anthropic → https://platform.claude.com/docs/en/about-claude/pricing
 //   OpenAI    → https://developers.openai.com/api/docs/pricing
 //   Google    → https://ai.google.dev/gemini-api/docs/pricing
 //   Z.ai      → https://docs.z.ai/guides/overview/pricing
-// Update these numbers whenever a provider bumps a rate — the admin
-// can then hit "Refresh from catalog" to propagate the change.
 
 import { prisma } from './prisma';
 import { logger } from '../utils/logger';
@@ -182,61 +187,41 @@ export async function seedAiPricing() {
 }
 
 /**
- * One-shot "resync every catalog row to current provider prices" —
- * exposed as an admin endpoint. Overwrites input/output/cached prices
- * for every row in DEFAULT_ROWS(_GLM|_FREE); leaves marginMultiplier
- * + isActive untouched (admin controls those independently); inserts
- * rows that don't exist yet. Returns a diff so the UI can toast
- * "3 refreshed, 2 added".
+ * Repair rows the old seed wrote before it carried `kind` and
+ * `unitCostUsd`. Those landed at the column defaults — kind 'token',
+ * unit rate 0 — so a transcriber or a TTS voice sat in the table
+ * looking like a text model and charging nothing.
+ *
+ * Deliberately narrow. It fixes only the billing SHAPE (which columns
+ * a row bills from) and fills a unit rate that is still zero. It never
+ * overwrites a rate somebody typed, because prices here are set by
+ * hand from the provider's own pricing page and a background job that
+ * quietly reverts them would be worse than the bug it fixes.
  */
-export async function refreshAiPricing(): Promise<{ updated: number; inserted: number; unchanged: number }> {
-    const rows = allRows();
-    let updated = 0;
-    let inserted = 0;
-    let unchanged = 0;
-    for (const r of rows) {
+export async function backfillPricingKinds(): Promise<number> {
+    const catalog = voiceCatalogPricingRows();
+    let fixed = 0;
+    for (const c of catalog) {
         const existing = await prisma.aiPricing.findFirst({
-            where: { provider: r.provider, model: r.model },
+            where: { provider: c.provider, model: c.model },
         });
-        if (!existing) {
-            await prisma.aiPricing.create({
-                data: {
-                    provider: r.provider,
-                    model: r.model,
-                    inputCostPer1M: r.inputCostPer1M,
-                    outputCostPer1M: r.outputCostPer1M,
-                    cachedCostPer1M: r.cachedCostPer1M ?? 0,
-                    kind: r.kind ?? 'token',
-                    unitCostUsd: r.unitCostUsd ?? 0,
-                    marginMultiplier: DEFAULT_MARGIN,
-                    isActive: true,
-                },
-            });
-            inserted++;
-            continue;
+        if (!existing) continue;
+
+        const data: { kind?: string; unitCostUsd?: number } = {};
+        if (existing.kind !== c.kind) data.kind = c.kind;
+        // Only fill a rate that was never set. A zero on a row whose
+        // kind was already right is a deliberate "free" and stays.
+        if (data.kind && existing.unitCostUsd === 0 && (c.unitCostUsd ?? 0) > 0) {
+            data.unitCostUsd = c.unitCostUsd;
         }
-        const same =
-            existing.inputCostPer1M === r.inputCostPer1M &&
-            existing.outputCostPer1M === r.outputCostPer1M &&
-            existing.cachedCostPer1M === (r.cachedCostPer1M ?? 0) &&
-            existing.kind === (r.kind ?? 'token') &&
-            existing.unitCostUsd === (r.unitCostUsd ?? 0);
-        if (same) { unchanged++; continue; }
-        await prisma.aiPricing.update({
-            where: { id: existing.id },
-            data: {
-                inputCostPer1M: r.inputCostPer1M,
-                outputCostPer1M: r.outputCostPer1M,
-                cachedCostPer1M: r.cachedCostPer1M ?? 0,
-                kind: r.kind ?? 'token',
-                unitCostUsd: r.unitCostUsd ?? 0,
-            },
-        });
-        updated++;
+        if (Object.keys(data).length === 0) continue;
+
+        await prisma.aiPricing.update({ where: { id: existing.id }, data });
+        fixed++;
     }
-    // Drop the in-memory pricing cache so live workers pick up the
-    // new numbers on the very next LLM call without a restart.
-    invalidatePriceCache();
-    logger.info({ updated, inserted, unchanged }, '[ai-pricing] refreshed from catalog');
-    return { updated, inserted, unchanged };
+    if (fixed > 0) {
+        invalidatePriceCache();
+        logger.info({ fixed }, '[ai-pricing] repaired rows seeded without a billing kind');
+    }
+    return fixed;
 }

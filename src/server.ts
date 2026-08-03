@@ -15,7 +15,7 @@ import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
 import { startReminderScheduler } from './modules/agent/reminder.scheduler';
-import { seedAiPricing } from './lib/ai-pricing.seed';
+import { seedAiPricing, backfillPricingKinds } from './lib/ai-pricing.seed';
 import { attachVoiceBridge } from './modules/voice/voice-bridge';
 
 // Global safety nets — Baileys / socket handlers occasionally throw
@@ -165,6 +165,11 @@ server.listen(PORT, async () => {
     // than the fallback estimate. Admin-edited rows are never touched.
     try { await seedAiPricing(); } catch (e: any) {
         logger.error({ err: e.message }, '[ai-pricing] seed failed');
+    }
+    // Repairs rows an older seed wrote without a billing kind. Only
+    // touches the shape, never a rate somebody typed.
+    try { await backfillPricingKinds(); } catch (e: any) {
+        logger.error({ err: e.message }, '[ai-pricing] kind backfill failed');
     }
 });
 

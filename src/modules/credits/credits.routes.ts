@@ -14,7 +14,6 @@ const pricingCtrl = new AiPricingController();
 adminPricingRouter.use(authMiddleware, requireAdmin);
 adminPricingRouter.get('/', pricingCtrl.list.bind(pricingCtrl));
 adminPricingRouter.post('/', pricingCtrl.create.bind(pricingCtrl));
-adminPricingRouter.post('/refresh-from-catalog', pricingCtrl.refreshFromCatalog.bind(pricingCtrl));
 adminPricingRouter.put('/:id', pricingCtrl.update.bind(pricingCtrl));
 adminPricingRouter.delete('/:id', pricingCtrl.remove.bind(pricingCtrl));
 

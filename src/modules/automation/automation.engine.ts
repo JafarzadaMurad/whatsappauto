@@ -423,6 +423,40 @@ async function executeNode(node: any, ctx: AutomationContext): Promise<boolean> 
         case 'action_ai_reply':
             if (d.agentId && ctx.runAgent) await ctx.runAgent(String(d.agentId));
             return true;
+        case 'action_voice_call': {
+            // Ring the contact with a voice assistant. The number comes
+            // from the conversation unless the operator pinned one, so
+            // the common case ("call whoever just wrote in") needs no
+            // configuration at all.
+            const assistantId = String(d.assistantId || '').trim();
+            if (!assistantId || !ctx.workspaceId) return true;
+
+            const pinned = String(d.toNumber || '').trim();
+            const fromContact = (ctx.contactId || '').replace(/[^0-9]/g, '');
+            const to = pinned ? interpolate(pinned, ctx).trim() : fromContact;
+            if (!to) {
+                logger.warn({ nodeId: node.id }, '[automation] voice call skipped — no number to dial');
+                return true;
+            }
+
+            try {
+                const { placeOutboundCall } = await import('../voice/voice-outbound');
+                const res = await placeOutboundCall({
+                    workspaceId: ctx.workspaceId,
+                    assistantId,
+                    toNumber: to,
+                    brief: d.brief ? interpolate(String(d.brief), ctx) : null,
+                });
+                // Downstream nodes can branch on the call id the same way
+                // they read an HTTP response.
+                if (ctx.vars) ctx.vars[String(d.outputVariable || 'voiceCall')] = res;
+            } catch (err: any) {
+                // A call that can't be placed shouldn't abort the rest of
+                // the flow — the follow-up message still wants to send.
+                logger.warn({ err: err?.message, assistantId, to }, '[automation] voice call failed');
+            }
+            return true;
+        }
         case 'action_add_tag':
             if (d.tag && ctx.addTag) await ctx.addTag(String(d.tag));
             return true;

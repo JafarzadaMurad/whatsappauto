@@ -1993,6 +1993,22 @@ model PhoneCall {
 
   transcript    Json?   // [{role:'user'|'assistant', text, at}]
   recordingUrl  String?
+
+  // What the call was about, written by a model from the transcript
+  // once the call ends. Nobody re-reads a raw transcript to find out
+  // whether the customer agreed to anything, so the useful artifact is
+  // the summary — the transcript stays as the evidence behind it.
+  // Why the call was placed, when something other than a human started
+  // it — an automation, or (later) an agent handing off mid-chat. The
+  // assistant is given this as context for that one call.
+  brief         String?  @db.Text
+
+  summary       String?  @db.Text
+  summaryModel  String?
+  summaryAt     DateTime?
+  // 'pending' while the job is queued, 'failed' with the reason in
+  // summary when it couldn't be produced. Absent on old rows.
+  summaryStatus String?
   // Newline-separated diagnostic log the voice-bridge appends to
   // whenever the OpenAI Realtime WS emits `error`, closes with a
   // failure, or the Twilio media stream drops with an unexpected

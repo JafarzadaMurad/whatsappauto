@@ -1061,56 +1061,161 @@ type CallRow = {
 };
 
 function LogsTab({ assistantId }: { assistantId: string }) {
-    const [calls, setCalls] = useState<CallRow[]>([]);
+    const [calls, setCalls] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    useEffect(() => {
-        (async () => {
-            try {
-                const res = await api.get(`/voice/calls?assistantId=${encodeURIComponent(assistantId)}`);
-                if (res.data.success) setCalls(res.data.calls);
-            } finally { setLoading(false); }
-        })();
-    }, [assistantId]);
+    const [open, setOpen] = useState<string | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+
+    const load = async () => {
+        try {
+            const res = await api.get(`/voice/calls?assistantId=${encodeURIComponent(assistantId)}`);
+            if (res.data.success) setCalls(res.data.calls);
+        } finally { setLoading(false); }
+    };
+    useEffect(() => { load(); }, [assistantId]);
+
+    // A summary is written moments after a call ends, so a list opened
+    // right after hanging up shows "being written". Re-fetching on
+    // demand beats polling every open tab forever.
+    const pending = calls.some(c => !c.summary && (c.transcript?.length || 0) > 0);
+
+    const resummarise = async (id: string) => {
+        setBusy(id);
+        try {
+            const r = await api.post(`/voice/calls/${id}/summary`);
+            if (r.data?.success) {
+                setCalls(cs => cs.map(c => c.id === id ? { ...c, ...r.data.call } : c));
+            }
+        } catch (e: any) {
+            alert(e.response?.data?.message || e.message);
+        } finally { setBusy(null); }
+    };
+
+    const dur = (s: number | null | undefined) =>
+        s != null ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '—';
 
     if (loading) return <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+    if (calls.length === 0) return (
+        <div className="bg-card border border-border rounded-2xl text-center py-16">
+            <BookOpen className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+            <p className="mt-3 font-semibold">No calls yet</p>
+            <p className="text-sm text-muted-foreground mt-1">Calls handled by this assistant appear here, each with a written summary.</p>
+        </div>
+    );
+
     return (
-        <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            {calls.length === 0 ? (
-                <div className="text-center py-16">
-                    <BookOpen className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-                    <p className="mt-3 font-semibold">No call logs available</p>
-                    <p className="text-sm text-muted-foreground mt-1">Calls answered by this assistant will appear here.</p>
+        <div className="space-y-2">
+            {pending && (
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground px-1">
+                    <span>Summaries are written just after a call ends.</span>
+                    <button onClick={load} className="text-primary hover:underline">Refresh</button>
                 </div>
-            ) : (
-                <table className="w-full text-sm">
-                    <thead className="bg-secondary/50 text-xs uppercase text-muted-foreground">
-                        <tr>
-                            <th className="px-4 py-3 text-left">Assistant Phone</th>
-                            <th className="px-4 py-3 text-left">Customer Phone</th>
-                            <th className="px-4 py-3 text-left">Type</th>
-                            <th className="px-4 py-3 text-left">Ended Reason</th>
-                            <th className="px-4 py-3 text-left">Start Time</th>
-                            <th className="px-4 py-3 text-right">Duration</th>
-                            <th className="px-4 py-3 text-right">Cost</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {calls.map(c => (
-                            <tr key={c.id} className="border-t border-border/50 hover:bg-secondary/20">
-                                <td className="px-4 py-3 font-mono text-xs">{c.phoneNumber?.number || c.toNumber || '?'}</td>
-                                <td className="px-4 py-3 font-mono text-xs">{c.fromNumber || '?'}</td>
-                                <td className="px-4 py-3 text-xs">{c.direction}</td>
-                                <td className="px-4 py-3 text-xs text-muted-foreground">{c.endedReason || '—'}</td>
-                                <td className="px-4 py-3 text-xs">{new Date(c.startedAt).toLocaleString()}</td>
-                                <td className="px-4 py-3 text-right font-mono text-xs">
-                                    {c.durationSec != null ? `${Math.floor(c.durationSec / 60)}:${String(c.durationSec % 60).padStart(2, '0')}` : '—'}
-                                </td>
-                                <td className="px-4 py-3 text-right font-mono text-xs text-amber-400">{Math.round(Number(c.creditsUsed) || 0).toLocaleString()}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
             )}
+
+            {calls.map(c => {
+                const isOpen = open === c.id;
+                const turns: any[] = Array.isArray(c.transcript) ? c.transcript : [];
+                return (
+                    <div key={c.id} className="bg-card border border-border rounded-2xl overflow-hidden">
+                        <button onClick={() => setOpen(isOpen ? null : c.id)}
+                            className="w-full text-left px-4 py-3 hover:bg-secondary/25 transition-colors">
+                            <div className="flex items-center gap-3 flex-wrap">
+                                <ChevronRight className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                                <span className="font-mono text-xs">{c.direction === 'outbound' ? c.toNumber : c.fromNumber || '?'}</span>
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                                    c.direction === 'outbound' ? 'bg-violet-500/10 text-violet-400' : 'bg-sky-500/10 text-sky-400'
+                                }`}>{c.direction}</span>
+                                {c.status === 'failed' && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">failed</span>
+                                )}
+                                <span className="text-xs text-muted-foreground">{new Date(c.startedAt).toLocaleString()}</span>
+                                <span className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+                                    <span className="font-mono">{dur(c.durationSec)}</span>
+                                    <span className="font-mono text-amber-400">{Math.round(Number(c.creditsUsed) || 0).toLocaleString()} cai</span>
+                                </span>
+                            </div>
+                            {/* One line of the summary is what makes the list
+                                scannable — the point is to know what a call
+                                was about without opening it. */}
+                            <p className="text-xs text-muted-foreground mt-1.5 ml-7 line-clamp-2">
+                                {c.summary
+                                    ? String(c.summary).split('\n').filter(Boolean).slice(0, 2).join(' · ')
+                                    : turns.length > 0 ? 'Summary being written…' : 'Nothing was said on this call.'}
+                            </p>
+                        </button>
+
+                        {isOpen && (
+                            <div className="border-t border-border p-4 space-y-4">
+                                <div>
+                                    <div className="flex items-center justify-between gap-3 mb-1.5">
+                                        <h4 className="text-sm font-semibold flex items-center gap-2">
+                                            <FileText className="w-4 h-4 text-primary" /> Summary
+                                        </h4>
+                                        <button onClick={() => resummarise(c.id)} disabled={busy === c.id}
+                                            className="text-xs text-primary hover:underline disabled:opacity-50 flex items-center gap-1.5">
+                                            {busy === c.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                                            {c.summary ? 'Rewrite' : 'Write now'}
+                                        </button>
+                                    </div>
+                                    {c.summary ? (
+                                        <div className="bg-secondary/25 border border-border rounded-xl p-3 text-sm whitespace-pre-wrap">
+                                            {c.summary}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-muted-foreground">Not written yet.</p>
+                                    )}
+                                    {c.summaryModel && (
+                                        <p className="text-[10px] text-muted-foreground mt-1">
+                                            {c.summaryModel}{c.summaryAt ? ` · ${new Date(c.summaryAt).toLocaleString()}` : ''}
+                                        </p>
+                                    )}
+                                </div>
+
+                                {c.brief && (
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-1.5">Why this call was placed</h4>
+                                        <div className="bg-secondary/25 border border-border rounded-xl p-3 text-xs whitespace-pre-wrap">
+                                            {c.brief}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <h4 className="text-sm font-semibold mb-1.5">Transcript</h4>
+                                    {turns.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">Nothing was captured.</p>
+                                    ) : (
+                                        <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                                            {turns.map((t: any, i: number) => (
+                                                <div key={i} className={`text-xs rounded-lg px-3 py-1.5 ${
+                                                    t.role === 'assistant'
+                                                        ? 'bg-primary/5 border border-primary/20'
+                                                        : 'bg-secondary/30 border border-border'
+                                                }`}>
+                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                                        {t.role === 'assistant' ? 'Assistant' : 'Caller'}
+                                                    </span>
+                                                    <p className="mt-0.5">{t.text}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {c.errorLog && (
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-1.5 text-amber-400">Diagnostics</h4>
+                                        <pre className="bg-secondary/30 border border-border rounded-xl p-3 text-[11px] font-mono whitespace-pre-wrap overflow-x-auto">
+                                            {c.errorLog}
+                                        </pre>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
         </div>
     );
 }

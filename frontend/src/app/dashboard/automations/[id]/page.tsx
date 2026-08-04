@@ -7,7 +7,7 @@ import {
     type Node, type Edge, type Connection, type NodeProps
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History, EyeOff, Globe } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Power, Trash2, Plus, Zap, MessageSquare, Bot, Tag, Clock, GitBranch, Camera, UserPlus, Send, Image as ImageIcon, Reply, X, Paperclip, History, EyeOff, Globe, PhoneCall } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -112,6 +112,10 @@ const NODE_META: Record<string, NodeMeta & { channel?: NodeChannel }> = {
         label: "HTTP Request", category: "action", icon: Globe, channel: "generic",
         defaultData: { method: "GET", url: "", headers: "", body: "", outputVariable: "apiResponse" }
     },
+    action_voice_call: {
+        label: "Voice Call", category: "action", icon: PhoneCall, channel: "generic",
+        defaultData: { assistantId: "", toNumber: "", brief: "", outputVariable: "voiceCall" }
+    },
     condition: {
         label: "Condition", category: "logic", icon: GitBranch, channel: "generic",
         defaultData: { field: "message", operator: "contains", value: "" }
@@ -176,7 +180,7 @@ const PALETTE: PaletteGroup[] = [
     { category: "trigger", channel: "ig", label: "Instagram · Triggers", types: ["trigger_ig_dm", "trigger_ig_new_contact", "trigger_ig_post"] },
     { category: "action", channel: "wa", label: "WhatsApp · Actions", types: ["action_wa_send_message", "action_wa_send_poll"] },
     { category: "action", channel: "ig", label: "Instagram · Actions", types: ["action_ig_send_dm", "action_ig_reply_comment", "action_ig_hide_comment", "action_ig_delete_comment"] },
-    { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
+    { category: "action", channel: "generic", label: "Generic Actions", types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request", "action_voice_call"] },
     { category: "logic", channel: "generic", label: "Logic", types: ["condition"] },
 ];
 
@@ -188,7 +192,7 @@ const PALETTE: PaletteGroup[] = [
 const DEAL_PALETTE: PaletteGroup[] = [
     { category: "trigger", channel: "generic", label: "Deal · Triggers",   types: ["trigger_deal_created", "trigger_deal_stage_changed"] },
     { category: "action",  channel: "generic", label: "Messaging",         types: ["action_deal_send_message"] },
-    { category: "action",  channel: "generic", label: "Generic Actions",   types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request"] },
+    { category: "action",  channel: "generic", label: "Generic Actions",   types: ["action_ai_reply", "action_add_tag", "action_set_user_field", "action_wait", "action_http_request", "action_voice_call"] },
     { category: "logic",   channel: "generic", label: "Logic",             types: ["condition"] },
 ];
 
@@ -439,6 +443,7 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
     }
     else if (type === "action_ig_reply_comment" || type === "action_reply_comment") summary = d.text || "(empty)";
     else if (type === "action_ai_reply") summary = d.agentName || (d.agentId ? "agent set" : "(no agent)");
+    else if (type === "action_voice_call") summary = d.assistantId ? (d.toNumber || "the contact") : "(no assistant)";
     else if (type === "action_add_tag") summary = d.tag || "(no tag)";
     else if (type === "action_set_user_field") summary = d.fieldKey ? `${d.fieldKey} = ${d.value || '(empty)'}` : "(no field)";
     else if (type === "action_wait") summary = `${d.seconds || 0}s`;
@@ -552,6 +557,7 @@ function Editor({ id }: { id: string }) {
     const [pipelineId, setPipelineId] = useState<string | null>(null);
     const dealScope = !!pipelineId;
     const [agents, setAgents] = useState<any[]>([]);
+    const [voiceAssistants, setVoiceAssistants] = useState<any[]>([]);
     const [igAccounts, setIgAccounts] = useState<any[]>([]);
     const [waInstances, setWaInstances] = useState<any[]>([]);
     const [userFields, setUserFields] = useState<any[]>([]);
@@ -581,12 +587,13 @@ function Editor({ id }: { id: string }) {
     useEffect(() => {
         const load = async () => {
             try {
-                const [aRes, agRes, igRes, waRes, ufRes] = await Promise.all([
+                const [aRes, agRes, igRes, waRes, ufRes, vaRes] = await Promise.all([
                     api.get(`/automations/${id}`),
                     api.get('/agents'),
                     api.get('/instagram/accounts').catch(() => ({ data: { success: false } })),
                     api.get('/instances').catch(() => ({ data: { success: false } })),
                     api.get('/user-fields').catch(() => ({ data: { success: false } })),
+                    api.get('/voice/assistants').catch(() => ({ data: { success: false } })),
                 ]);
                 if (aRes.data.success) {
                     const a = aRes.data.automation;
@@ -609,6 +616,7 @@ function Editor({ id }: { id: string }) {
                 if (igRes.data.success) setIgAccounts(igRes.data.accounts || []);
                 if (waRes.data.success) setWaInstances(waRes.data.instances || []);
                 if (ufRes.data.success) setUserFields(ufRes.data.fields || []);
+                if (vaRes.data.success) setVoiceAssistants(vaRes.data.assistants || []);
             } catch (err) { console.error(err); }
             finally { setLoading(false); }
         };
@@ -741,7 +749,7 @@ function Editor({ id }: { id: string }) {
                                     <Trash2 className="w-4 h-4" />
                                 </button>
                             </div>
-                            <NodeConfig node={selectedNode} nodes={nodes} edges={edges} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} pipelineStages={pipelineStages} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
+                            <NodeConfig voiceAssistants={voiceAssistants} node={selectedNode} nodes={nodes} edges={edges} agents={agents} igAccounts={igAccounts} waInstances={waInstances} userFields={userFields} pipelineStages={pipelineStages} onChange={(patch) => updateNodeData(selectedNode.id, patch)} />
                         </div>
                     )}
 
@@ -1572,7 +1580,7 @@ function collectUpstreamVariables(nodeId: string, nodes: Node[], edges: Edge[]):
     return Array.from(vars);
 }
 
-function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userFields, pipelineStages = [], onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; pipelineStages?: { id: string; name: string }[]; onChange: (p: Record<string, any>) => void }) {
+function NodeConfig({ node, nodes, edges, agents, voiceAssistants = [], igAccounts, waInstances, userFields, pipelineStages = [], onChange }: { node: Node; nodes: Node[]; edges: Edge[]; agents: any[]; voiceAssistants?: any[]; igAccounts: any[]; waInstances: any[]; userFields: any[]; pipelineStages?: { id: string; name: string }[]; onChange: (p: Record<string, any>) => void }) {
     // Only variables actually reachable from this node's upstream
     // chain — no hardcoded fallback list, so a floating node's palette
     // is empty until it's wired to a trigger.
@@ -1984,6 +1992,37 @@ function NodeConfig({ node, nodes, edges, agents, igAccounts, waInstances, userF
                     </Field>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
                         The picked agent answers this trigger instead of the channel's default agent — works for both WhatsApp DMs and Instagram DMs. For Instagram comment triggers the agent reply is delivered as a private DM via the comment&nbsp;→ DM route.
+                    </p>
+                </div>
+            );
+        case 'action_voice_call':
+            return (
+                <div className="space-y-3">
+                    <Field label="Voice assistant">
+                        <select value={d.assistantId || ''} onChange={e => onChange({ assistantId: e.target.value })}
+                            className={inputCls}>
+                            <option value="">Select assistant</option>
+                            {voiceAssistants.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                        </select>
+                    </Field>
+                    {voiceAssistants.length === 0 && (
+                        <p className="text-[10px] text-amber-400/90">
+                            No voice assistants yet. Create one under <code>Voice → Assistants</code> and assign it a phone number.
+                        </p>
+                    )}
+                    <Field label="Call">
+                        <input type="text" value={d.toNumber || ''} onChange={e => onChange({ toNumber: e.target.value })}
+                            placeholder="leave empty to call whoever triggered this" className={inputCls} />
+                    </Field>
+                    <Field label="What the call is about (optional)">
+                        <textarea value={d.brief || ''} onChange={e => onChange({ brief: e.target.value })} rows={3}
+                            placeholder="Ask when they plan to pay. They said three days, that was two weeks ago."
+                            className={inputCls} />
+                    </Field>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        The assistant is given this as context for that one call — it handles it in conversation rather
+                        than reading it out. Supports <code>{'{{name}}'}</code>, <code>{'{{message}}'}</code> and any
+                        variable from an earlier node. The flow continues immediately; it does not wait for the call to end.
                     </p>
                 </div>
             );

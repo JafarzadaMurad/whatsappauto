@@ -731,6 +731,28 @@ export class VoiceAssistantController {
     // Recent call history for the call log page. Client-side paginates
     // for MVP; a `?limit=` param + cursor can come later once volumes
     // grow past a couple hundred rows.
+    // Re-run the summary for one call. Used both to retry a failure and
+    // to refresh one written before the operator tuned the prompt.
+    async resummariseCall(req: Request, res: Response) {
+        try {
+            const workspaceId = getWorkspaceId(req);
+            const id = req.params.id as string;
+            if (!workspaceId) return res.status(400).json({ success: false, message: 'No workspace' });
+            const call = await prisma.phoneCall.findFirst({ where: { id, workspaceId }, select: { id: true } });
+            if (!call) return res.status(404).json({ success: false, message: 'Call not found' });
+
+            const { summariseCall } = await import('./voice-summary');
+            const summary = await summariseCall(id, { force: true });
+            const row = await prisma.phoneCall.findUnique({
+                where: { id },
+                select: { summary: true, summaryModel: true, summaryAt: true, summaryStatus: true },
+            });
+            return res.json({ success: true, summary, call: row });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async listCalls(req: Request, res: Response) {
         try {
             const workspaceId = getWorkspaceId(req);

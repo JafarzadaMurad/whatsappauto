@@ -29,6 +29,7 @@ import { logger } from '../../utils/logger';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
 import { findLlm, loadLlmPricing, applyLlmPricing } from '../../lib/voice-catalog';
 import { buildVoiceTools, runVoiceTool, parseToolArgs, VoiceTool } from './voice-tools';
+import { queueCallSummary } from './voice-summary';
 
 // Rough audio-token conversion: OpenAI bills Realtime by tokens; ~1
 // audio second ≈ 100 audio tokens per direction on g711_ulaw. Used to
@@ -165,12 +166,16 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
     // A missing row isn't fatal — the tools simply run without a
     // contact, exactly as they would for an unknown caller.
     let counterpartyPhone: string | null = null;
+    let callBrief: string | null = null;
     if (callSid) {
         const row = await prisma.phoneCall.findFirst({
             where: { twilioCallSid: callSid },
-            select: { direction: true, fromNumber: true, toNumber: true },
+            select: { direction: true, fromNumber: true, toNumber: true, brief: true },
         });
-        if (row) counterpartyPhone = row.direction === 'outbound' ? row.toNumber : row.fromNumber;
+        if (row) {
+            counterpartyPhone = row.direction === 'outbound' ? row.toNumber : row.fromNumber;
+            callBrief = row.brief;
+        }
     }
 
     // Tools the assistant may call mid-conversation, from its own skill
@@ -335,6 +340,10 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
                     },
                 });
                 dbCallId = row.id;
+                // Written after the row is final so the summary sees the
+                // whole transcript. Queued rather than awaited: the call
+                // is already over and nothing downstream waits on it.
+                queueCallSummary(row.id);
             } else {
                 // No row match at all — log the diagnostics so `pm2 logs`
                 // still has a trace even though DB persistence failed.
@@ -368,8 +377,18 @@ async function handleConnection(twilioWs: WebSocket, req: IncomingMessage) {
         // `unknown_parameter` error — which was crashing the session
         // immediately after connect and making Twilio speak "an
         // application error has occurred".
+        // A call placed by an automation carries the reason it was
+        // placed. It goes after the assistant's own prompt so it reads
+        // as this call's assignment rather than a change of character.
+        const briefBlock = callBrief
+            ? `
+
+This call was placed for a specific reason. Handle it naturally in conversation — ` +
+              `do not read it out or mention that you were given instructions.
+${callBrief}`
+            : '';
         const instructions = (asst.systemPrompt || 'You are a helpful phone assistant. Reply in short, natural sentences.')
-            + toolPrompt;
+            + toolPrompt + briefBlock;
         oaiWs.send(JSON.stringify({
             type: 'session.update',
             session: {

@@ -33,6 +33,7 @@ router.get('/calls/:sid/status', assistants.callStatus.bind(assistants));
 router.get('/calls/:sid/twilio-events', assistants.twilioEvents.bind(assistants));
 
 router.get('/calls', assistants.listCalls.bind(assistants));
+router.post('/calls/:id/summary', assistants.resummariseCall.bind(assistants));
 
 router.get('/twilio/status', numbers.twilioStatus.bind(numbers));
 router.delete('/twilio', numbers.disconnectTwilio.bind(numbers));

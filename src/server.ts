@@ -67,7 +67,14 @@ io.use(async (socket, next) => {
         const token = (socket.handshake.auth as any)?.token
             || (socket.handshake.query as any)?.token
             || null;
-        if (!token) return next(); // let the connection through, no rooms
+        if (!token) {
+            // Allowed, but it joins no rooms and will therefore see
+            // nothing. That used to be silent; it is the exact shape of
+            // a client-side bug (wrong storage key, stale build), so it
+            // says so.
+            logger.warn('[socket] connecting without a token — this socket will receive no scoped events');
+            return next();
+        }
         const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
         // Prefer an explicit workspace hint from the client; fall back
         // to the first workspace membership. Same rule the auth

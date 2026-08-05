@@ -11,6 +11,7 @@ import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquar
 import Link from "next/link";
 import api from "@/lib/api";
 import { createSocket } from "@/lib/socket";
+import { useWorkspaceStore } from "@/store/workspaceStore";
 import { useCopilotStore } from "@/store/copilotStore";
 import { useCopilotVoice } from "./useCopilotVoice";
 
@@ -131,9 +132,13 @@ export default function Copilot() {
     }, []);
 
     // ─── Socket: listen for copilot.action + copilot.navigate ──────
+    const activeWorkspaceId = useWorkspaceStore(w => w.activeWorkspaceId);
     useEffect(() => {
         if (!config?.enabled) return;
-        const socket = createSocket({});
+        // Passing the id explicitly (rather than letting the helper read
+        // localStorage) is what makes the reconnect below meaningful —
+        // the socket has to land in the room the requests are scoped to.
+        const socket = createSocket({ workspaceId: activeWorkspaceId });
         socket.on('copilot.action', (ev: any) => {
             pushAction({
                 tool: ev.tool, entity: ev.entity, verb: ev.verb,
@@ -158,7 +163,7 @@ export default function Copilot() {
             });
         });
         return () => { socket.disconnect(); };
-    }, [config?.enabled, pushAction, router]);
+    }, [config?.enabled, activeWorkspaceId, pushAction, router]);
 
     // ─── Auto-scroll to latest message ─────────────────────────────
     useEffect(() => {

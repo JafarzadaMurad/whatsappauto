@@ -10,6 +10,7 @@
 import { z, type ZodRawShape } from 'zod';
 import { tool as aiTool } from 'ai';
 import { io } from '../../server';
+import { logger } from '../../utils/logger';
 
 import type { ToolCtx, ToolResult, RegisterToolFn } from '../mcp/mcp.server';
 import { registerAutomationTools } from '../mcp/tools/automations.tools';
@@ -281,11 +282,17 @@ function registerCopilotUiTools(reg: RegisterToolFn) {
                 return { content: [{ type: 'text' as const, text: `Rejected: path must start with /dashboard/, got "${cleaned}"` }], isError: true };
             }
             try {
-                io.to(`workspace:${ctx.workspaceId}`).emit('copilot.navigate', {
+                // Aimed at the person who asked, not the workspace. A
+                // page change belongs to one browser; broadcasting it to
+                // the room would drag every teammate along. It also
+                // sidesteps the case where the socket joined a different
+                // workspace room than the request was scoped to.
+                io.to(`user:${ctx.userId}`).emit('copilot.navigate', {
                     path: cleaned,
                     reason: reason || null,
                     at: new Date().toISOString(),
                 });
+                logger.info(`[copilot] navigate_to → ${cleaned} · user=${ctx.userId}`);
             } catch { /* best-effort */ }
             return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, path: cleaned }) }] };
         },

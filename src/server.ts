@@ -77,11 +77,23 @@ io.use(async (socket, next) => {
             || '').trim();
         let workspaceId: string | null = null;
         if (wsHint) {
-            const member = await prisma.workspaceMember.findFirst({
-                where: { workspaceId: wsHint, userId: decoded.id },
-                select: { workspaceId: true },
-            });
+            // Ownership counts as access. An owner has no WorkspaceMember
+            // row, so checking membership alone rejected the hint for the
+            // one person most likely to be sending it — the socket then
+            // silently joined a *different* workspace's room and every
+            // scoped event for the active workspace went nowhere.
+            const [member, owned] = await Promise.all([
+                prisma.workspaceMember.findFirst({
+                    where: { workspaceId: wsHint, userId: decoded.id },
+                    select: { workspaceId: true },
+                }),
+                prisma.workspace.findFirst({
+                    where: { id: wsHint, ownerId: decoded.id },
+                    select: { id: true },
+                }),
+            ]);
             if (member) workspaceId = member.workspaceId;
+            else if (owned) workspaceId = owned.id;
         }
         if (!workspaceId) {
             const owned = await prisma.workspace.findFirst({
@@ -101,6 +113,14 @@ io.use(async (socket, next) => {
         (socket.data as any).userId = decoded.id;
         (socket.data as any).workspaceId = workspaceId;
         if (workspaceId) socket.join(`workspace:${workspaceId}`);
+        // A per-user room as well. Some events belong to one person's
+        // browser rather than to the workspace — moving the page is the
+        // clear case: broadcasting it workspace-wide would yank a
+        // teammate off whatever they were reading.
+        socket.join(`user:${decoded.id}`);
+        logger.info(
+            `[socket] connected · user=${decoded.id} workspace=${workspaceId || 'none'} hint=${wsHint || 'none'}`
+        );
         next();
     } catch (e: any) {
         // Bad token — still let the socket open (so the client can

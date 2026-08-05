@@ -159,7 +159,11 @@ export function useCopilotVoice({ onEnd, onError }: Options) {
         try {
             // 1. Fetch tool schemas + mint ephemeral token in parallel
             const [tokenRes, toolsRes] = await Promise.all([
-                api.post('/copilot/voice/session'),
+                api.post('/copilot/voice/session', {
+                    // Where the user is standing. Without it the model
+                    // can't resolve "open that" or know it's already there.
+                    currentPath: typeof window !== 'undefined' ? window.location.pathname : undefined,
+                }),
                 api.get('/copilot/tool-schemas').catch(() => ({ data: { success: false } })),
             ]);
             if (!tokenRes.data.success) throw new Error(tokenRes.data.message || 'Failed to open voice session');

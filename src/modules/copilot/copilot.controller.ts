@@ -441,12 +441,23 @@ export class CopilotController {
             if (!openaiKey) return res.status(500).json({ success: false, message: 'Platform OpenAI key not configured. An admin must set PLATFORM_OPENAI_KEY in System Config.' });
 
             const adminPrompt = await loadAdminBasePrompt();
-            const runtimeCtx = buildRuntimeContext({ workspaceName: ws.name });
+            // Voice used to be told the workspace name and nothing else,
+            // so it had no idea what page the user was looking at — and
+            // "open that" had nothing to resolve against. Text mode has
+            // always had this; the gap was an oversight, not a design.
+            const currentPath = typeof req.body?.currentPath === 'string' ? req.body.currentPath.slice(0, 200) : undefined;
+            const runtimeCtx = buildRuntimeContext({ workspaceName: ws.name, currentPath });
             const instructions = [
                 adminPrompt,
                 ws.copilotCustomPrompt ? `\n\n[Workspace rules]\n${ws.copilotCustomPrompt}` : '',
                 runtimeCtx,
-                '\n\n[Voice mode]\nKeep replies short (1-2 sentences) since they will be spoken. Match the user\'s language.',
+                // Spoken answers hide failure better than written ones —
+                // there's no tool-call chip on screen to contradict a
+                // confident "done". So the rule gets restated here.
+                '\n\n[Voice mode]\nKeep replies short (1-2 sentences) since they will be spoken. '
+                + 'Match the user\'s language. Act first, then speak: when asked to open or show a page, '
+                + 'call navigate_to BEFORE saying anything about it, and never claim you have done '
+                + 'something unless the tool actually ran and returned success.',
             ].filter(Boolean).join('');
 
             const modelRow = await prisma.systemConfig.findUnique({ where: { key: 'COPILOT_VOICE_MODEL' } });

@@ -147,9 +147,15 @@ export default function Copilot() {
         // conversation in view while the destination loads.
         socket.on('copilot.navigate', (ev: any) => {
             const path = String(ev?.path || '');
-            if (path.startsWith('/dashboard')) {
-                router.push(path);
-            }
+            if (!path.startsWith('/dashboard')) return;
+            router.push(path);
+            // Leave a trace in the panel. A silent push is impossible to
+            // tell apart from a model that only claimed to navigate —
+            // which is exactly the confusion this card removes.
+            pushAction({
+                tool: 'navigate_to', entity: 'Page', verb: 'opened',
+                title: path, id: null, at: ev?.at || new Date().toISOString(),
+            });
         });
         return () => { socket.disconnect(); };
     }, [config?.enabled, pushAction, router]);
@@ -273,29 +279,6 @@ export default function Copilot() {
                                 </button>
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                            <select value={model || ''}
-                                onChange={e => {
-                                    const next = e.target.value;
-                                    setModel(next);
-                                    const found = config?.availableModels?.find(m => m.model === next);
-                                    if (found) setProvider(found.provider);
-                                }}
-                                className="bg-secondary/60 border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-                                {(config?.availableModels || []).map(m => (
-                                    <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
-                                        {m.model}
-                                    </option>
-                                ))}
-                            </select>
-                            <select value={language || ''}
-                                onChange={e => setLanguage(e.target.value || null)}
-                                className="bg-secondary/60 border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-                                {LANGUAGE_OPTIONS.map(l => (
-                                    <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
-                                ))}
-                            </select>
-                        </div>
                     </div>
 
                     {/* Messages */}
@@ -411,9 +394,32 @@ export default function Copilot() {
                                 <Send className="w-5 h-5" />
                             </button>
                         </div>
-                        <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-                            <span>Enter to send · Shift+Enter for new line</span>
-                            <Link href="/dashboard/settings/copilot" className="hover:text-foreground">
+                        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <select value={model || ''}
+                                onChange={e => {
+                                    const next = e.target.value;
+                                    setModel(next);
+                                    const found = config?.availableModels?.find(m => m.model === next);
+                                    if (found) setProvider(found.provider);
+                                }}
+                                disabled={voiceActive}
+                                title={voiceActive ? 'Voice mode runs on its own model' : 'Model for this conversation'}
+                                className="bg-secondary/60 border border-border rounded px-1.5 py-0.5 text-[10px] text-foreground max-w-[45%] truncate focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50">
+                                {(config?.availableModels || []).map(m => (
+                                    <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
+                                        {m.model}
+                                    </option>
+                                ))}
+                            </select>
+                            <select value={language || ''}
+                                onChange={e => setLanguage(e.target.value || null)}
+                                title="Reply language"
+                                className="bg-secondary/60 border border-border rounded px-1.5 py-0.5 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                {LANGUAGE_OPTIONS.map(l => (
+                                    <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
+                                ))}
+                            </select>
+                            <Link href="/dashboard/settings/copilot" className="ml-auto hover:text-foreground whitespace-nowrap">
                                 Custom prompt
                             </Link>
                         </div>

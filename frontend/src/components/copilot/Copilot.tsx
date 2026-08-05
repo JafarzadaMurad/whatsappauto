@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, ArrowUpRight, Coins, Maximize2 } from "lucide-react";
+import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, Coins, Maximize2 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { createSocket } from "@/lib/socket";
@@ -17,20 +17,6 @@ import { useCopilotVoice } from "./useCopilotVoice";
 
 // Entity → dashboard path mapping so action toasts get a "View →" link
 // aimed at a page that actually exists.
-const ENTITY_PATH: Record<string, string> = {
-    agents:       "/dashboard/ai/agents",
-    "ai-providers": "/dashboard/ai/providers",
-    instances:    "/dashboard/whatsapp",
-    messages:     "/dashboard/inbox",
-    campaigns:    "/dashboard/campaigns",
-    automations:  "/dashboard/automations",
-    tables:       "/dashboard/ai/tables",
-    "user-fields":"/dashboard/contacts",
-    clients:      "/dashboard/contacts",
-    webhooks:     "/dashboard/webhooks",
-    "api-keys":   "/dashboard/api-keys",
-    instagram:    "/dashboard/instagram",
-};
 
 type ModelOption = { provider: string; model: string };
 type CopilotConfig = {
@@ -57,7 +43,7 @@ export default function Copilot() {
     const pathname = usePathname();
     const router = useRouter();
     const {
-        isOpen, isSending, voiceActive, sessionId, messages, actions, draft,
+        isOpen, isSending, voiceActive, sessionId, messages, draft,
         provider, model, language,
         open, close, setDraft, setSending, setSession, pushMessage, pushAction,
         setProvider, setModel, setLanguage,
@@ -168,7 +154,7 @@ export default function Copilot() {
     // ─── Auto-scroll to latest message ─────────────────────────────
     useEffect(() => {
         if (isOpen) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-    }, [messages, actions, isOpen]);
+    }, [messages, isOpen]);
 
     // ─── Send ──────────────────────────────────────────────────────
     const send = async () => {
@@ -246,11 +232,6 @@ export default function Copilot() {
                 <button onClick={open}
                     className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-2xl shadow-primary/30 hover:scale-105 active:scale-95 transition-transform flex items-center justify-center group">
                     <Bot className="w-6 h-6" />
-                    {actions.length > 0 && (
-                        <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                            {actions.length}
-                        </span>
-                    )}
                 </button>
             )}
 
@@ -334,27 +315,6 @@ export default function Copilot() {
                                 </div>
                             </div>
                         ))}
-
-                        {/* Live action cards from socket broadcasts */}
-                        {actions.slice(-3).reverse().map((a, i) => {
-                            const path = ENTITY_PATH[a.entity];
-                            return (
-                                <div key={a.at + i} className="flex justify-start">
-                                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2 text-xs flex items-center gap-2 flex-wrap max-w-[85%]">
-                                        <span className="text-emerald-400">✓</span>
-                                        <span className="text-foreground">
-                                            {a.entity} {a.verb}{a.title ? `: ${a.title}` : ''}
-                                        </span>
-                                        {path && (
-                                            <Link href={path} onClick={close}
-                                                className="text-primary hover:underline flex items-center gap-0.5 ml-auto">
-                                                View <ArrowUpRight className="w-3 h-3" />
-                                            </Link>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
 
                         {isSending && (
                             <div className="flex justify-start">

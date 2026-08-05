@@ -10,7 +10,6 @@ import { useRouter } from "next/navigation";
 import { Bot, Sparkles, Send, Mic, MicOff, Loader2, ArrowUpRight, Coins, RefreshCw, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
-import { createSocket } from "@/lib/socket";
 import { useCopilotStore } from "@/store/copilotStore";
 import { useCopilotVoice } from "@/components/copilot/useCopilotVoice";
 
@@ -109,21 +108,10 @@ export default function CopilotFullPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Socket wiring — full-page also listens for copilot.action + navigate
-    // so tool-driven mutations still light up the actions column and
-    // navigate_to still moves the user to the requested page.
-    useEffect(() => {
-        if (!config?.enabled) return;
-        const socket = createSocket({});
-        socket.on('copilot.action', (ev: any) => {
-            pushAction({ tool: ev.tool, entity: ev.entity, verb: ev.verb, title: ev.title || '', id: ev.id || null, at: ev.at });
-        });
-        socket.on('copilot.navigate', (ev: any) => {
-            const path = String(ev?.path || '');
-            if (path.startsWith('/dashboard')) router.push(path);
-        });
-        return () => { socket.disconnect(); };
-    }, [config?.enabled, pushAction, router]);
+    // No socket here on purpose. The floating panel is mounted in the
+    // dashboard layout, so it is already listening on this page — a
+    // second subscription pushed every action card twice and fired
+    // navigate_to's router.push twice.
 
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });

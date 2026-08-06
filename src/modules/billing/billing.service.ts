@@ -156,6 +156,36 @@ export async function handleWebhookEvent(event: any): Promise<void> {
             break;
         }
 
+        // A refund undoes what the payment bought. Stripe reports it
+        // against the charge, not the checkout session, so the session
+        // has to be found by payment intent — that session id is what
+        // every row here was keyed on.
+        case 'charge.refunded':
+        case 'charge.dispute.created': {
+            const charge = event.data.object;
+            const paymentIntent = typeof charge.payment_intent === 'string' ? charge.payment_intent : null;
+            if (!paymentIntent) return;
+
+            let sessionId: string | null = null;
+            try {
+                const stripe = await getStripe();
+                const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntent, limit: 1 });
+                sessionId = sessions.data?.[0]?.id || null;
+            } catch (err: any) {
+                logger.warn({ err: err.message, paymentIntent }, '[Stripe] could not resolve the refunded session');
+            }
+            if (!sessionId) return;
+
+            const { reverseTopUp } = await import('./topup.service');
+            await reverseTopUp(sessionId).catch(err =>
+                logger.warn({ err: err.message, sessionId }, '[Stripe] top-up reversal failed'));
+
+            const { reverseReferralCommission } = await import('../referral/referral.service');
+            await reverseReferralCommission(sessionId).catch(err =>
+                logger.warn({ err: err.message, sessionId }, '[Stripe] commission reversal failed'));
+            return;
+        }
+
         case 'customer.subscription.created':
         case 'customer.subscription.updated':
         case 'customer.subscription.deleted': {

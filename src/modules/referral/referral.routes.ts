@@ -5,6 +5,7 @@ import { requireAdmin } from '../../middleware/admin.middleware';
 import { prisma } from '../../lib/prisma';
 import {
     getReferralSummary, loadReferralSettings, saveReferralSettings, findReferrerByCode,
+    recordReferralVisit, promoteMaturedCommissions,
 } from './referral.service';
 
 const router = Router();
@@ -29,6 +30,35 @@ router.get('/check/:code', async (req, res) => {
         });
     } catch (error: any) {
         return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// Public: someone landed on a referral link. Recorded before any
+// sign-up so a widely-shared link that converts badly is visible as
+// exactly that, rather than as silence.
+//
+// Deliberately forgiving — an unknown code just returns valid:false. A
+// visit ping that 400s would surface as a console error on a marketing
+// page, which helps nobody.
+router.post('/visit', async (req, res) => {
+    try {
+        const body = z.object({
+            code: z.string().min(1).max(32),
+            landingPath: z.string().max(255).optional(),
+            visitorId: z.string().max(64).optional(),
+        }).parse(req.body);
+
+        const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+        const result = await recordReferralVisit({
+            code: body.code,
+            ip: forwarded || req.socket.remoteAddress || null,
+            userAgent: String(req.headers['user-agent'] || ''),
+            landingPath: body.landingPath,
+            visitorId: body.visitorId,
+        });
+        return res.json({ success: true, ...result });
+    } catch {
+        return res.json({ success: true, valid: false });
     }
 });
 
@@ -62,6 +92,7 @@ adminRouter.put('/settings', async (req, res) => {
             percent: z.number().min(0).max(100).optional(),
             firstPaymentOnly: z.boolean().optional(),
             minPaymentUsd: z.number().min(0).max(10000).optional(),
+            holdbackDays: z.number().int().min(0).max(365).optional(),
             terms: z.string().max(4000).optional(),
         }).parse(req.body);
         return res.json({ success: true, settings: await saveReferralSettings(body) });
@@ -74,6 +105,7 @@ adminRouter.put('/settings', async (req, res) => {
 // Every commission, newest first, with who earned it and who paid.
 adminRouter.get('/commissions', async (req, res) => {
     try {
+        await promoteMaturedCommissions().catch(() => {});
         const status = typeof req.query.status === 'string' ? req.query.status : undefined;
         const rows = await prisma.referralCommission.findMany({
             where: status ? { status } : {},
@@ -86,12 +118,21 @@ adminRouter.get('/commissions', async (req, res) => {
                 referral: { select: { referred: { select: { id: true, name: true, email: true } } } },
             },
         });
-        const totals = rows.reduce((acc, r) => {
+        // Decimal columns arrive as Decimal objects and serialise to
+        // strings, which a frontend doing arithmetic on them would not
+        // survive. Converted once, here at the boundary.
+        const commissions = rows.map(r => ({
+            ...r,
+            paymentUsd: Number(r.paymentUsd.toString()),
+            percent: Number(r.percent.toString()),
+            amountUsd: Number(r.amountUsd.toString()),
+        }));
+        const totals = commissions.reduce((acc, r) => {
             acc.all += r.amountUsd;
             acc[r.status] = (acc[r.status] || 0) + r.amountUsd;
             return acc;
         }, { all: 0 } as Record<string, number>);
-        return res.json({ success: true, commissions: rows, totals });
+        return res.json({ success: true, commissions, totals });
     } catch (error: any) {
         return res.status(500).json({ success: false, message: error.message });
     }

@@ -15,11 +15,15 @@ type Summary = {
     enabled: boolean;
     percent: number;
     firstPaymentOnly: boolean;
+    holdbackDays: number;
     terms: string;
+    clicks: number;
+    uniqueClicks: number;
     signups: number;
     paying: number;
     earnedTotalUsd: number;
-    earnedPendingUsd: number;
+    earnedHeldUsd: number;
+    earnedAvailableUsd: number;
     earnedPaidUsd: number;
     referrals: {
         id: string; createdAt: string; source: string;
@@ -28,13 +32,14 @@ type Summary = {
     }[];
     commissions: {
         id: string; kind: string; paymentUsd: number; percent: number; amountUsd: number;
-        status: string; paidAt: string | null; createdAt: string;
+        status: string; paidAt: string | null; availableAt: string | null; createdAt: string;
     }[];
 };
 
 const STATUS_STYLE: Record<string, string> = {
     pending: "bg-amber-500/10 text-amber-400",
     approved: "bg-sky-500/10 text-sky-400",
+    reversed: "bg-zinc-500/10 text-zinc-400",
     paid: "bg-emerald-500/10 text-emerald-400",
     rejected: "bg-red-500/10 text-red-400",
 };
@@ -122,10 +127,34 @@ export default function ReferralsPage() {
 
             {/* Numbers */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Stat icon={LinkIcon} label="Link clicks" value={data.uniqueClicks}
+                    sub={data.clicks !== data.uniqueClicks ? `${data.clicks} total` : undefined} />
                 <Stat icon={Users} label="Signed up" value={data.signups} />
                 <Stat icon={Users} label="Of those, paid" value={data.paying} accent />
                 <Stat icon={Coins} label="Earned" value={`$${data.earnedTotalUsd.toFixed(2)}`} />
-                <Stat icon={Coins} label="Paid out" value={`$${data.earnedPaidUsd.toFixed(2)}`} />
+            </div>
+
+            {/* Where the money stands. "Earned" and "can be paid out"
+                are different numbers during the holdback, and saying so
+                here prevents the obvious support question. */}
+            <div className="bg-card border border-border rounded-2xl p-4 grid sm:grid-cols-3 gap-3 text-sm">
+                <div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Held</div>
+                    <div className="font-bold text-amber-400">${data.earnedHeldUsd.toFixed(2)}</div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Waiting out the {data.holdbackDays}-day window in case the payment is refunded.
+                    </p>
+                </div>
+                <div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Ready</div>
+                    <div className="font-bold text-emerald-400">${data.earnedAvailableUsd.toFixed(2)}</div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Cleared and payable.</p>
+                </div>
+                <div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid out</div>
+                    <div className="font-bold">${data.earnedPaidUsd.toFixed(2)}</div>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Already sent to you.</p>
+                </div>
             </div>
 
             {/* Who came through */}
@@ -167,8 +196,8 @@ export default function ReferralsPage() {
                 <div className="bg-card border border-border rounded-2xl overflow-hidden">
                     <div className="px-5 py-3 border-b border-border flex items-center justify-between">
                         <h2 className="font-semibold text-sm">Earnings</h2>
-                        {data.earnedPendingUsd > 0 && (
-                            <span className="text-xs text-amber-400">${data.earnedPendingUsd.toFixed(2)} awaiting approval</span>
+                        {data.earnedHeldUsd > 0 && (
+                            <span className="text-xs text-amber-400">${data.earnedHeldUsd.toFixed(2)} still held</span>
                         )}
                     </div>
                     <div className="overflow-x-auto">
@@ -207,13 +236,16 @@ export default function ReferralsPage() {
     );
 }
 
-function Stat({ icon: Icon, label, value, accent }: { icon: any; label: string; value: any; accent?: boolean }) {
+function Stat({ icon: Icon, label, value, sub, accent }: {
+    icon: any; label: string; value: any; sub?: string; accent?: boolean;
+}) {
     return (
         <div className="bg-card border border-border rounded-2xl px-4 py-3">
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
                 <Icon className="w-3.5 h-3.5" /> {label}
             </div>
             <div className={`mt-1 text-xl font-bold ${accent ? 'text-emerald-400' : ''}`}>{value}</div>
+            {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
         </div>
     );
 }

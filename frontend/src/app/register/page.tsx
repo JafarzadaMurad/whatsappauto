@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageSquare, ArrowRight, Loader2 } from "lucide-react";
 import api from "@/lib/api";
+import { captureReferral, storedReferralCode } from "@/lib/referral";
 import { useAuthStore } from "@/store/authStore";
 import GoogleSignIn from "@/components/GoogleSignIn";
 
@@ -30,13 +31,15 @@ function RegisterInner() {
         }
     }, [isAuthenticated, params, router]);
 
-    // A ?ref= code arrives pre-filled and read-only-ish; someone who
-    // typed one instead still gets validated below.
+    // The code may be in this URL, or it may be in a cookie from a click
+    // that happened days ago on a different page. Either way it lands in
+    // the field pre-filled, and the person can still overwrite it.
     useEffect(() => {
-        const ref = params.get('ref');
-        if (ref) {
-            setForm(f => ({ ...f, referralCode: ref.toUpperCase() }));
-            setRefSource('link');
+        const fromUrl = params.get('ref');
+        const code = captureReferral() || storedReferralCode();
+        if (code) {
+            setForm(f => (f.referralCode ? f : { ...f, referralCode: code.toUpperCase() }));
+            setRefSource(fromUrl ? 'link' : 'code');
         }
     }, [params]);
 

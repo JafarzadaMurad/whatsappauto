@@ -216,4 +216,37 @@ export function registerBillingTools(reg: RegisterToolFn) {
             });
         },
     );
+
+    reg(
+        'get_referral_summary',
+        'Returns the caller\'s referral position: their code and link, how many people clicked it, how many signed up, how many of those paid, and what they have earned. Use it for "how is my referral link doing" or "how much have I made".',
+        {},
+        async (_args, ctx) => {
+            const { getReferralSummary, loadReferralSettings } = await import('../../referral/referral.service');
+            const settings = await loadReferralSettings();
+            if (!settings.enabled) {
+                return ok({ enabled: false, note: 'The referral programme is switched off on this platform.' });
+            }
+            const s = await getReferralSummary(ctx.userId);
+            return ok({
+                enabled: true,
+                code: s.code,
+                link: `${baseUrl()}/register?ref=${s.code}`,
+                rules: {
+                    percent: s.percent,
+                    paysOn: s.firstPaymentOnly ? 'the first payment only' : 'every payment',
+                    holdbackDays: s.holdbackDays,
+                },
+                funnel: { clicks: s.clicks, uniqueClicks: s.uniqueClicks, signups: s.signups, paying: s.paying },
+                earnings: {
+                    totalUsd: s.earnedTotalUsd,
+                    // Earned but still inside the holdback — this is the
+                    // number people ask about when the total looks wrong.
+                    heldUsd: s.earnedHeldUsd,
+                    availableUsd: s.earnedAvailableUsd,
+                    paidOutUsd: s.earnedPaidUsd,
+                },
+            });
+        },
+    );
 }

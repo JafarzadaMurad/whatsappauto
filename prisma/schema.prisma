@@ -257,6 +257,31 @@ model Referral {
 // first-payment-only rule are snapshotted onto the row, because an
 // admin changing the rate later must not silently rewrite what someone
 // was already told they had earned.
+// One hit on a referral link, logged before anyone signs up. Without
+// this the only visible number is sign-ups, which makes a link that is
+// being shared widely and converting badly look identical to one nobody
+// has clicked.
+//
+// No raw IP is stored. The hash exists to spot one machine refreshing a
+// link a hundred times, which is all we need it for — and a salted
+// digest answers that without keeping anything about the person.
+model ReferralVisit {
+  id          String   @id @default(uuid())
+  code        String
+  referrerId  String?
+  referrer    User?    @relation("ReferralVisits", fields: [referrerId], references: [id], onDelete: SetNull)
+
+  visitorHash String?  // stable per-browser id, so refreshes don't inflate the count
+  ipHash      String?  // sha256(ip + salt)
+  userAgent   String?
+  landingPath String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([referrerId, createdAt(sort: Desc)])
+  @@index([code, createdAt(sort: Desc)])
+}
+
 model ReferralCommission {
   id         String @id @default(uuid())
   referralId String
@@ -267,9 +292,17 @@ model ReferralCommission {
 
   // The payment that produced it.
   kind          String  // 'subscription' | 'topup'
-  paymentUsd    Float
-  percent       Float   // rate applied, as a percentage
-  amountUsd     Float   // paymentUsd * percent / 100
+  // Decimal, not Float. A float can't hold 0.1 exactly, so a column of
+  // them drifts — invisibly at two commissions, visibly at two
+  // thousand, and the first person to notice is the one being underpaid.
+  paymentUsd    Decimal @db.Decimal(12, 2)
+  percent       Decimal @db.Decimal(5, 2)  // rate applied, as a percentage
+  amountUsd     Decimal @db.Decimal(12, 2) // paymentUsd * percent / 100
+
+  // When this stops being provisional. A refund inside the holdback
+  // window costs nothing to undo; one after a payout costs a
+  // conversation. Set from the holdback in force at accrual.
+  availableAt   DateTime?
   // Stripe session / Lider transaction id. Unique so a retried webhook
   // pays a referrer once.
   externalId    String? @unique
@@ -335,7 +368,7 @@ model LiderTransaction {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   kind        String   // 'plan' | 'credits'
-  amountUsd   Float
+  amountUsd   Decimal  @db.Decimal(12, 2)
   planId      String?
   credits     Int?
 
@@ -501,6 +534,7 @@ model User {
   referralsMade   Referral[]           @relation("ReferralsMade")
   referredBy      Referral?            @relation("ReferralReceived")
   referralEarnings ReferralCommission[] @relation("ReferralEarnings")
+  referralVisits   ReferralVisit[]      @relation("ReferralVisits")
 
   liderAccount    LiderAccount?
   liderLinkTokens LiderLinkToken[]
@@ -1856,7 +1890,7 @@ model CreditPurchase {
   userId      String?
   user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  amountUsd   Float
+  amountUsd   Decimal  @db.Decimal(12, 2)
   credits     Int
   currency    String   @default("USD")
 

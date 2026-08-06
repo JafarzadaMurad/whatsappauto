@@ -22,6 +22,7 @@ type Settings = {
     percent: number;
     firstPaymentOnly: boolean;
     minPaymentUsd: number;
+    holdbackDays: number;
     terms: string;
 };
 
@@ -32,12 +33,13 @@ type Commission = {
     referral: { referred: { id: string; name: string | null; email: string } };
 };
 
-const STATUSES = ['pending', 'approved', 'paid', 'rejected'] as const;
+const STATUSES = ['pending', 'approved', 'paid', 'rejected', 'reversed'] as const;
 const STATUS_STYLE: Record<string, string> = {
     pending: "bg-amber-500/10 text-amber-400 border-amber-500/25",
     approved: "bg-sky-500/10 text-sky-400 border-sky-500/25",
     paid: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
     rejected: "bg-red-500/10 text-red-400 border-red-500/25",
+    reversed: "bg-zinc-500/10 text-zinc-400 border-zinc-500/25",
 };
 
 export default function AdminReferralsPage() {
@@ -147,6 +149,21 @@ export default function AdminReferralsPage() {
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-1">
                             Payments under this earn nothing, so small top-ups don&apos;t spawn cent-sized commissions.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-medium text-muted-foreground">Holdback</label>
+                        <div className="mt-1 flex items-center gap-2">
+                            <input type="number" min={0} max={365} step="1" value={settings.holdbackDays}
+                                onChange={e => setSettings({ ...settings, holdbackDays: Number(e.target.value) })}
+                                className="w-24 bg-secondary/50 border border-border rounded-lg px-3 py-1.5 text-sm font-mono" />
+                            <span className="text-sm text-muted-foreground">days</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                            {settings.holdbackDays > 0
+                                ? `A commission stays provisional for ${settings.holdbackDays} days. If the payment is refunded in that window it is reversed automatically and costs nothing.`
+                                : 'No holdback — commissions are payable immediately, and a refund after payout has to be recovered by hand.'}
                         </p>
                     </div>
                 </div>

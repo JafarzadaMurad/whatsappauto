@@ -167,7 +167,7 @@ export async function completeTopUp(opts: {
 
 /** Purchase history for the billing page. */
 export async function listPurchases(workspaceId: string, take = 50) {
-    return prisma.creditPurchase.findMany({
+    const rows = await prisma.creditPurchase.findMany({
         where: { workspaceId },
         orderBy: { createdAt: 'desc' },
         take,
@@ -177,4 +177,49 @@ export async function listPurchases(workspaceId: string, take = 50) {
             user: { select: { id: true, name: true, email: true } },
         },
     });
+    // Decimal serialises to a string; the page does arithmetic on this.
+    return rows.map(r => ({ ...r, amountUsd: Number(r.amountUsd.toString()) }));
+}
+
+/**
+ * Undo a credit purchase whose payment came back.
+ *
+ * The credits may already be spent, which is why the balance is floored
+ * at zero rather than allowed to go negative: a workspace that used
+ * what it paid for and then charged back has taken the service, and
+ * chasing that through a negative balance would break every unrelated
+ * call they make afterwards. The purchase row records what happened;
+ * the recovery is a business conversation, not a subtraction.
+ */
+export async function reverseTopUp(externalId: string): Promise<{ reversed: boolean; reason?: string }> {
+    const purchase = await prisma.creditPurchase.findUnique({ where: { externalId } });
+    if (!purchase) return { reversed: false, reason: 'not a credit purchase' };
+    if (purchase.status === 'refunded') return { reversed: false, reason: 'already reversed' };
+    if (purchase.status !== 'paid') {
+        await prisma.creditPurchase.update({ where: { id: purchase.id }, data: { status: 'refunded' } });
+        return { reversed: true };
+    }
+
+    const ws = await prisma.workspace.findUnique({
+        where: { id: purchase.workspaceId },
+        select: { creditTopUp: true },
+    });
+    const take = Math.min(purchase.credits, ws?.creditTopUp ?? 0);
+
+    await prisma.$transaction([
+        prisma.creditPurchase.update({
+            where: { id: purchase.id },
+            data: { status: 'refunded' },
+        }),
+        prisma.workspace.update({
+            where: { id: purchase.workspaceId },
+            data: { creditTopUp: { decrement: take } },
+        }),
+    ]);
+
+    logger.info(
+        { purchaseId: purchase.id, workspaceId: purchase.workspaceId, credits: purchase.credits, clawedBack: take },
+        '[topup] purchase refunded',
+    );
+    return { reversed: true };
 }

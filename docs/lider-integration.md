@@ -1,79 +1,84 @@
-# Lider ⇄ Chatbot integration
+# Lider ⇄ Chatbot inteqrasiyası
 
-For the Lider team. Everything below is live on
-`https://chatbot.tural.ai/api/partner/lider`.
+Lider komandası üçün. Aşağıdakıların hamısı işlək vəziyyətdədir:
+`https://chatbot.tural.ai/api/partner/lider`
 
-## The split
+## İş bölgüsü
 
-Lider holds the customer's money. Lider decides whether they can afford
-something and deducts the balance. Chatbot never mirrors that balance —
-a second copy of someone's money only creates a reconciliation problem.
+Müştərinin pulu Liderdədir. Balansın kifayət edib-etmədiyinə **Lider**
+qərar verir və məbləği **Lider** çıxır. Chatbot həmin balansın nüsxəsini
+saxlamır — kiminsə pulunun ikinci nüsxəsi yalnız üzləşdirmə problemi
+yaradır və o problem ən pis anda üzə çıxır.
 
-So the flow is always: **Lider checks → Lider deducts → Lider tells
-chatbot what to apply → chatbot applies it and reports back.**
+Yəni axın həmişə belədir:
+**Lider yoxlayır → Lider çıxır → Lider chatbota nə tətbiq ediləcəyini
+deyir → chatbot tətbiq edir və nəticəni qaytarır.**
 
-If the chatbot call fails, Lider should refund the deduction. If it
-times out, retry with the same `transactionId` (see Idempotency).
+Chatbot sorğusu xəta qaytarsa, Lider tutulan məbləği geri qaytarmalıdır.
+Timeout olsa, **eyni `transactionId` ilə** yenidən göndərin (aşağıdakı
+İdempotentlik bölməsinə bax).
 
-## Authentication
+## Autentifikasiya
 
-Every partner call carries a shared key:
+Hər partnyor sorğusunda paylaşılan açar göndərilir:
 
 ```
 Authorization: Bearer <LIDER_API_KEY>
 ```
 
-The key is set by a chatbot admin under Admin → Payments and given to
-you out of band. It is compared in constant time; a wrong key returns
-`401` with `{"code":"unauthorized"}`.
+Açarı chatbot admini Admin → Payments bölməsində təyin edir və sizə
+ayrıca kanalla ötürür. Müqayisə sabit vaxtda aparılır; səhv açar `401`
+və `{"code":"unauthorized"}` qaytarır.
 
-## Idempotency
+## İdempotentlik
 
-`POST /purchase/plan` and `POST /purchase/credits` both require
-`transactionId` — Lider's own transaction id. It is stored unique.
+`POST /purchase/plan` və `POST /purchase/credits` sorğularının hər ikisi
+`transactionId` tələb edir — bu, **Liderin öz əməliyyat id-sidir** və
+bazada unikal saxlanılır.
 
-- First call: applies the purchase, returns `applied: true`.
-- Any repeat: changes nothing, returns `alreadyApplied: true`.
+- Birinci çağırış: alışı tətbiq edir, `applied: true` qaytarır.
+- Hər təkrar çağırış: heç nə dəyişmir, `alreadyApplied: true` qaytarır.
 
-This is what makes retrying safe. Never generate a fresh id for a
-retry — that would grant the plan twice.
+Təkrar göndərməni məhz bu təhlükəsiz edir. **Təkrar üçün yeni id
+yaratmayın** — o halda plan iki dəfə verilər.
 
-## Connecting an account
+## Hesabın qoşulması
 
-A chatbot user and a Lider user have to be proven to be the same person
-before anything can be bought. Neither side implements an OAuth server;
-the proof is a single-use token.
+Alış baş verməzdən əvvəl chatbot istifadəçisi ilə Lider istifadəçisinin
+eyni şəxs olduğu sübut olunmalıdır. Heç bir tərəf OAuth server qurmur —
+sual əslində birdir, ona görə birdəfəlik token kifayətdir.
 
-1. The user clicks **Connect Lider** on the chatbot billing page.
-2. Chatbot mints a token (15 minutes, single use) and redirects to the
-   configured **Lider Connect URL** with:
-   `?token=<token>&return_url=<where to send them back>`
-3. Lider signs the user in however it normally does.
-4. Lider calls, server-to-server:
+1. İstifadəçi chatbot billing səhifəsində **Connect Lider** düyməsini basır.
+2. Chatbot token yaradır (15 dəqiqə, birdəfəlik) və istifadəçini sizin
+   **Lider Connect URL**-inizə yönləndirir:
+   `?token=<token>&return_url=<geri qayıdış ünvanı>`
+3. Lider öz istifadəçisini adi qaydada tanıdır.
+4. Lider server-server sorğu göndərir:
 
 ```http
 POST /api/partner/lider/link
-Authorization: Bearer <key>
+Authorization: Bearer <açar>
 Content-Type: application/json
 
-{ "token": "<from the query string>", "liderUserId": "12345", "liderEmail": "a@b.c" }
+{ "token": "<query string-dən gələn>", "liderUserId": "12345", "liderEmail": "a@b.c" }
 ```
 
-5. Chatbot binds the accounts and burns the token. Send the user back to
-   `return_url`.
+5. Chatbot hesabları bağlayır və tokeni yandırır. İstifadəçini
+   `return_url` ünvanına geri göndərin.
 
-The token proves a specific chatbot user asked for this; the API key
-proves the callback is really Lider. Neither is sufficient alone.
+Token sübut edir ki, **məhz həmin chatbot hesabı** qoşulmaq istəyib;
+API açarı sübut edir ki, geri çağırış **həqiqətən Liderdəndir**. Tək
+başına heç biri kifayət deyil.
 
-Errors worth handling: `token_expired`, `token_used`, `already_linked`
-(that Lider account is bound to a different chatbot account).
+Nəzərə alınmalı xətalar: `token_expired`, `token_used`, `already_linked`
+(həmin Lider hesabı başqa bir chatbot hesabına bağlıdır).
 
-## Endpoints
+## Endpoint-lər
 
 ### `GET /plans`
 
-What to show on the purchase screen. Prices live here, so Lider never
-has to keep a copy in sync.
+Alış ekranında göstəriləcəklər. Qiymətlər burada saxlanılır, ona görə
+Liderin öz nüsxəsini sinxron saxlamasına ehtiyac yoxdur.
 
 ```json
 {
@@ -89,10 +94,10 @@ has to keep a copy in sync.
 
 ### `GET /account?liderUserId=12345`
 
-Current state of a linked account — use it to show "you are on Pro,
-382,140 credits left" before offering an upgrade.
+Qoşulmuş hesabın hazırkı vəziyyəti — yüksəltmə təklif etməzdən əvvəl
+"siz Pro plandasınız, 382,140 kredit qalıb" göstərmək üçün.
 
-Returns `404 not_linked` if the accounts were never connected.
+Hesablar heç vaxt qoşulmayıbsa `404 not_linked` qaytarır.
 
 ### `POST /purchase/plan`
 
@@ -100,8 +105,8 @@ Returns `404 not_linked` if the accounts were never connected.
 { "liderUserId": "12345", "planId": "uuid", "amountUsd": 49, "transactionId": "LID-88213" }
 ```
 
-Sets the plan on the user and on every workspace they own, so the
-paid-for features actually switch on.
+Planı həm istifadəçiyə, həm də onun sahib olduğu **bütün
+workspace-lərə** yazır — ödənilmiş imkanlar məhz bu səbəbdən işə düşür.
 
 ```json
 { "success": true, "applied": true, "userId": "uuid",
@@ -114,36 +119,37 @@ paid-for features actually switch on.
 { "liderUserId": "12345", "amountUsd": 25, "transactionId": "LID-88214" }
 ```
 
-Optional `workspaceId` — omit it and the credits go to the user's first
-workspace, which is the right answer for the overwhelming majority who
-have exactly one.
+`workspaceId` istəyə bağlıdır — göndərməsəniz, kreditlər istifadəçinin
+birinci workspace-inə düşür. Böyük əksəriyyətin bir dənə workspace-i
+olduğu üçün düzgün cavab elə budur.
 
 ```json
 { "success": true, "applied": true, "credits": 250000, "workspaceId": "uuid" }
 ```
 
-Credits are granted at `perUsd` from `GET /plans` (currently 10,000 per
-USD). They do not expire at the end of the month.
+Kreditlər `GET /plans` cavabındakı `perUsd` kursu ilə verilir (hazırda
+1 USD = 10,000 kredit). Ay sonunda yanmır.
 
-## Errors
+## Xətalar
 
-All errors are `{ "success": false, "code": "...", "message": "..." }`.
+Bütün xətalar bu formatdadır:
+`{ "success": false, "code": "...", "message": "..." }`
 
-| code | status | meaning |
+| code | status | mənası |
 |---|---|---|
-| `unauthorized` | 401 | missing or wrong API key |
-| `not_configured` | 503 | admin hasn't set the key on the chatbot side |
-| `not_linked` | 404 | no chatbot account bound to that `liderUserId` |
-| `no_plan` / `plan_inactive` | 404 / 400 | bad `planId` |
-| `no_workspace` | 404 | account has no workspace to credit |
-| `bad_token` / `token_expired` / `token_used` | 404 / 400 | connect handshake |
-| `already_linked` | 409 | that Lider account belongs to someone else here |
+| `unauthorized` | 401 | açar yoxdur və ya səhvdir |
+| `not_configured` | 503 | chatbot tərəfdə admin açarı təyin etməyib |
+| `not_linked` | 404 | həmin `liderUserId` heç bir chatbot hesabına bağlı deyil |
+| `no_plan` / `plan_inactive` | 404 / 400 | səhv `planId` |
+| `no_workspace` | 404 | hesabın kredit yazılacaq workspace-i yoxdur |
+| `bad_token` / `token_expired` / `token_used` | 404 / 400 | qoşulma addımı |
+| `already_linked` | 409 | həmin Lider hesabı burada başqasına bağlıdır |
 
-`message` is written to be shown to a person; `code` is what to branch
-on.
+`message` insana göstərilmək üçün yazılıb; şərtlərinizdə `code`
+üzərindən yoxlama aparın.
 
-## A note on referrals
+## Referal haqqında qeyd
 
-A purchase made through Lider earns the referrer the same commission a
-card payment would. Nothing extra to send — where the money came from
-is not the referrer's concern.
+Lider vasitəsilə edilən alış referala kart ödənişi ilə eyni komissiyanı
+qazandırır. Əlavə heç nə göndərmək lazım deyil — pulun haradan gəldiyi
+referalın işi deyil.

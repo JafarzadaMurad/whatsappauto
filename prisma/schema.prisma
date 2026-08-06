@@ -286,6 +286,64 @@ model ReferralCommission {
   @@index([status])
 }
 
+// ─── Lider integration ──────────────────────────────────────────────
+// Lider holds the customer's money. It decides whether they can afford
+// a plan and deducts the balance; this platform only hears the result
+// and applies it. So there is no balance mirrored here — a second copy
+// of someone's money is a reconciliation problem waiting to happen.
+
+// One chatbot account bound to one Lider account. Both sides unique:
+// letting two chatbot users share a Lider account would let one pay
+// and the other receive.
+model LiderAccount {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  liderUserId String   @unique
+  liderEmail  String?
+
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Short-lived proof that a specific chatbot user asked to connect.
+// The user carries it to Lider; Lider hands it back with the identity
+// of whoever was signed in there. Single-use and expiring, so a token
+// that leaks into a log or a referrer header is worth nothing for long.
+model LiderLinkToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Every purchase Lider reports. `externalId` is Lider's own transaction
+// id and is unique, which is what makes a retried call safe: the second
+// attempt finds the row and changes nothing rather than granting a plan
+// or credits twice.
+model LiderTransaction {
+  id          String   @id @default(uuid())
+  externalId  String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind        String   // 'plan' | 'credits'
+  amountUsd   Float
+  planId      String?
+  credits     Int?
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
 // Subscription plans (managed by admins)
 model Plan {
   id          String  @id @default(uuid())
@@ -443,6 +501,10 @@ model User {
   referralsMade   Referral[]           @relation("ReferralsMade")
   referredBy      Referral?            @relation("ReferralReceived")
   referralEarnings ReferralCommission[] @relation("ReferralEarnings")
+
+  liderAccount    LiderAccount?
+  liderLinkTokens LiderLinkToken[]
+  liderTransactions LiderTransaction[]
 
   creditLedger    CreditLedger[]
   creditPurchases CreditPurchase[]

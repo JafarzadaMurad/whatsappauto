@@ -35,6 +35,14 @@ type TopUpOptions = {
     }[];
 };
 
+type LiderStatus = {
+    available: boolean;
+    connected: boolean;
+    liderUserId: string | null;
+    liderEmail: string | null;
+    connectedAt: string | null;
+};
+
 type Balance = {
     monthlyCredits: number;
     topUp: number;
@@ -57,6 +65,8 @@ export default function BillingPage() {
     const [topup, setTopup] = useState<TopUpOptions | null>(null);
     const [topupAmount, setTopupAmount] = useState<string>("10");
     const [buying, setBuying] = useState(false);
+    const [lider, setLider] = useState<LiderStatus | null>(null);
+    const [linking, setLinking] = useState(false);
 
     const subscribe = async (planId: string) => {
         setSubscribing(planId);
@@ -83,6 +93,28 @@ export default function BillingPage() {
         } finally { setBuying(false); }
     };
 
+    const connectLider = async () => {
+        setLinking(true);
+        setActionError(null);
+        try {
+            const res = await api.post('/lider/connect', {});
+            if (res.data.success && res.data.url) window.location.href = res.data.url;
+            else setActionError(res.data.message || 'Could not start the connection');
+        } catch (err: any) {
+            setActionError(err.response?.data?.message || err.message);
+        } finally { setLinking(false); }
+    };
+
+    const disconnectLider = async () => {
+        if (!confirm('Disconnect your Lider account? You can reconnect at any time; nothing already bought is affected.')) return;
+        try {
+            await api.delete('/lider/connect');
+            await load();
+        } catch (err: any) {
+            setActionError(err.response?.data?.message || err.message);
+        }
+    };
+
     const manageSubscription = async () => {
         setManaging(true);
         setActionError(null);
@@ -97,16 +129,18 @@ export default function BillingPage() {
 
     const load = async () => {
         try {
-            const [me, pub, bal, top] = await Promise.all([
+            const [me, pub, bal, top, lid] = await Promise.all([
                 api.get('/plans/me'),
                 api.get('/plans/public'),
                 api.get('/credits/balance').catch(() => null),
                 api.get('/billing/topup').catch(() => null),
+                api.get('/lider/status').catch(() => null),
             ]);
             if (me.data.success) setCurrent({ plan: me.data.plan, subscription: me.data.subscription, usage: me.data.usage });
             if (pub.data.success) setPlans(pub.data.plans);
             if (bal?.data?.success) setBalance(bal.data.balance);
             if (top?.data?.success) setTopup(top.data);
+            if (lid?.data?.success) setLider(lid.data);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
@@ -195,6 +229,15 @@ export default function BillingPage() {
                                     View usage <ArrowUpRight className="w-3 h-3" />
                                 </Link>
                             </div>
+                        )}
+
+                        {lider?.available && (
+                            <LiderCard
+                                status={lider}
+                                linking={linking}
+                                onConnect={connectLider}
+                                onDisconnect={disconnectLider}
+                            />
                         )}
 
                         {topup && (
@@ -356,6 +399,55 @@ function TopUpCard({ options, amount, onAmount, buying, onBuy }: {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// Paying from a Lider balance. The purchase itself happens on Lider —
+// it holds the money and decides what the customer can afford — so this
+// card only reports whether the two accounts are linked and sends them
+// there. Hidden entirely until an admin has configured the integration,
+// because a Connect button that leads nowhere is worse than no button.
+function LiderCard({ status, linking, onConnect, onDisconnect }: {
+    status: LiderStatus;
+    linking: boolean;
+    onConnect: () => void;
+    onDisconnect: () => void;
+}) {
+    if (status.connected) {
+        return (
+            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                    <div className="text-sm font-medium text-emerald-300 flex items-center gap-1.5">
+                        <Check className="w-4 h-4" /> Lider account connected
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        You can buy a plan or credits from your Lider balance. Purchases show up here within seconds.
+                        {status.liderEmail && <> Linked to <span className="font-mono text-foreground/80">{status.liderEmail}</span>.</>}
+                    </p>
+                </div>
+                <button onClick={onDisconnect}
+                    className="text-xs text-muted-foreground hover:text-red-400 whitespace-nowrap">
+                    Disconnect
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-card border border-border rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
+            <div>
+                <div className="text-sm font-medium">Pay with your Lider balance</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Connect your Lider account and buy plans or credits from the balance you already hold there —
+                    no card needed.
+                </p>
+            </div>
+            <button onClick={onConnect} disabled={linking}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-lg px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-50">
+                {linking ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                Connect Lider
+            </button>
         </div>
     );
 }

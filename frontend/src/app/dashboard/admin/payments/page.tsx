@@ -14,7 +14,17 @@ const STRIPE_KEYS = [
         hint: 'Create a webhook endpoint in Stripe → Developers → Webhooks → Add endpoint. Use https://<your-domain>/api/billing/webhook. Subscribe to subscription + invoice events. Copy the signing secret here.' },
 ];
 
-const ALL_KEYS = STRIPE_KEYS;
+// Lider is the other way money reaches this platform: the customer's
+// balance lives there, Lider decides whether they can afford something
+// and deducts it, then calls our partner API to apply the result.
+const LIDER_KEYS = [
+    { key: 'LIDER_API_KEY', label: 'Lider Partner API Key', placeholder: 'a long random string', isSecret: true,
+        hint: 'The shared secret Lider sends as "Authorization: Bearer <key>" on every partner call. Generate something long and random, paste it here, and give the same value to the Lider team. Changing it here immediately rejects calls using the old one.' },
+    { key: 'LIDER_CONNECT_URL', label: 'Lider Connect URL', placeholder: 'https://lider.example.com/connect/chatbot', isSecret: false,
+        hint: 'Where a user is sent to link their Lider account. We append ?token=… and &return_url=… — Lider signs the user in, calls POST /api/partner/lider/link with that token plus its own user id, then sends them back.' },
+];
+
+const ALL_KEYS = [...STRIPE_KEYS, ...LIDER_KEYS];
 
 export default function AdminPaymentsPage() {
     const [values, setValues] = useState<Record<string, string>>({});
@@ -103,6 +113,55 @@ export default function AdminPaymentsPage() {
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         Save keys
                     </button>
+                </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+                <div>
+                    <h2 className="font-semibold">Lider</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Lets customers pay from their Lider balance. Leave blank to keep it switched off — the Connect
+                        button stays hidden until both fields are set.
+                    </p>
+                </div>
+                {LIDER_KEYS.map(k => (
+                    <div key={k.key}>
+                        <label className="text-sm font-medium">{k.label}</label>
+                        <input
+                            type={k.isSecret ? 'password' : 'text'}
+                            value={values[k.key] || ''}
+                            onChange={e => setValues({ ...values, [k.key]: e.target.value })}
+                            placeholder={k.placeholder}
+                            className="mt-1 w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                        <p className="text-xs text-muted-foreground mt-1">{k.hint}</p>
+                        {updatedAt[k.key] && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">last updated: {new Date(updatedAt[k.key]).toLocaleString()}</p>
+                        )}
+                    </div>
+                ))}
+                <div className="bg-secondary/30 border border-border rounded-xl p-3 text-xs space-y-1">
+                    <p className="font-medium text-foreground">What to hand the Lider team</p>
+                    <p className="text-muted-foreground">Base URL: <code className="bg-secondary px-1 rounded">https://chatbot.tural.ai/api/partner/lider</code></p>
+                    <p className="text-muted-foreground">
+                        <code className="bg-secondary px-1 rounded">GET /plans</code> · prices and limits, so Lider never keeps its own copy
+                    </p>
+                    <p className="text-muted-foreground">
+                        <code className="bg-secondary px-1 rounded">POST /link</code> · finish a connect ({'{ token, liderUserId }'})
+                    </p>
+                    <p className="text-muted-foreground">
+                        <code className="bg-secondary px-1 rounded">GET /account?liderUserId=</code> · current plan and credits
+                    </p>
+                    <p className="text-muted-foreground">
+                        <code className="bg-secondary px-1 rounded">POST /purchase/plan</code> · {'{ liderUserId, planId, amountUsd, transactionId }'}
+                    </p>
+                    <p className="text-muted-foreground">
+                        <code className="bg-secondary px-1 rounded">POST /purchase/credits</code> · {'{ liderUserId, amountUsd, transactionId }'}
+                    </p>
+                    <p className="text-muted-foreground pt-1">
+                        Lider runs the balance check and deducts before calling. <code className="bg-secondary px-1 rounded">transactionId</code> is
+                        Lider&apos;s own id and makes every call safe to retry — a repeat returns
+                        <code className="bg-secondary px-1 rounded">alreadyApplied</code> and changes nothing.
+                    </p>
                 </div>
             </div>
 

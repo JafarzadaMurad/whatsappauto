@@ -214,3 +214,39 @@ export async function mergeLidIntoPhone(instanceId: string, lid: string, phoneJi
         }
     } catch { /* best-effort */ }
 }
+
+/**
+ * The real phone behind a jid, from cache only.
+ *
+ * `resolveJid` needs a message to learn a new mapping. Everything that
+ * runs *after* delivery — the agent, routing, reminders, automations —
+ * only needs to read what the pipeline already cached, and each of them
+ * was instead deriving digits straight off the jid. On a LID
+ * conversation that yields WhatsApp's anonymous identity rather than a
+ * number, so CRM lookups keyed on phone quietly missed: no name, no
+ * assigned agent, no saved fields, and a 15-digit "phone" landing in
+ * outgoing HTTP requests.
+ *
+ * Returns the digits of a plain jid unchanged, so callers can use it
+ * everywhere without branching.
+ */
+export async function contactPhoneForJid(instanceId: string, remoteJid: string): Promise<string> {
+    const bare = digits(remoteJid.replace('@s.whatsapp.net', '').replace('@lid', ''));
+    if (!remoteJid.endsWith('@lid')) return bare;
+
+    try {
+        const cached = await prisma.lidMapping.findUnique({
+            where: { instanceId_lid: { instanceId, lid: remoteJid } },
+            select: { phone: true },
+        });
+        if (cached?.phone) return cached.phone;
+    } catch { /* fall through to the LID digits */ }
+
+    // WhatsApp has never told us this contact's number. The LID is all
+    // there is; saying so once beats every downstream caller guessing.
+    logger.warn(
+        `[lid] no phone mapping · jid=${remoteJid} instance=${instanceId} ` +
+        `— contact lookups and {{contact:phone}} will use the LID`
+    );
+    return bare;
+}

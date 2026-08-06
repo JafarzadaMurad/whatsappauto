@@ -4,6 +4,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText, zodSchema, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
+import { contactPhoneForJid } from '../whatsapp/lid-resolver';
 import { logger } from '../../utils/logger';
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { Server } from 'socket.io';
@@ -2070,7 +2071,7 @@ export class AiService {
             const inboundCount = await prisma.message.count({
                 where: { instanceId, remoteJid, isFromMe: false }
             });
-            const waPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const waPhone = await contactPhoneForJid(instanceId, remoteJid);
             const waContact = await prisma.contact.findFirst({ where: { instanceId, remoteJid } });
             const autoResult = await AutomationEngine.handleMessage({
                 userId: instance.userId,
@@ -2158,7 +2159,7 @@ export class AiService {
             //      specialised agent via handoffTo on its first turn.
             //   3. Fall back to Instance.agent (the legacy single-agent
             //      setup — most workspaces stay on this path).
-            const phoneForLookup = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const phoneForLookup = await contactPhoneForJid(instanceId, remoteJid);
             const wsLookup = instance.workspaceId
                 || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(instance.userId));
             const clientForRouting = await prisma.client.findFirst({
@@ -2260,8 +2261,20 @@ export class AiService {
             // for contacts whose only history is our own outbound msg.
             if (messages.length === 0 && !opts?.operatorTriggered) return;
 
-            // Get contact info
-            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            // Get contact info.
+            //
+            // On a LID conversation the jid carries WhatsApp's anonymous
+            // identity, not a phone number — and the CRM row was written
+            // under the resolved real phone, so deriving the phone from
+            // the jid here missed the row entirely. The agent then ran
+            // without the customer's name or history, and every
+            // {{contact:*}} placeholder in an HTTP tool came out empty
+            // while {{contact:phone}} sent the LID: a Bitrix lead with a
+            // 15-digit number nobody can call.
+            //
+            // The mapping is already cached by the message pipeline, so
+            // this is a lookup, not a resolution.
+            const phone = await contactPhoneForJid(instanceId, remoteJid);
             const contact = await prisma.contact.findFirst({
                 where: { instanceId, remoteJid }
             });
@@ -2306,9 +2319,18 @@ export class AiService {
             // Build tools based on agent skills
             const httpTools = (((agent as any).httpTools) || []) as HttpToolTemplate[];
             const skillPrompts = (((agent as any).skillPrompts) || {}) as Record<string, string>;
+            // Every contact-scoped tool derives its phone from this jid.
+            // Passing the raw LID here would put the anonymous identity
+            // into CRM writes, saved fields and outgoing HTTP requests —
+            // so they get a jid built from the resolved number instead.
+            // Messaging still uses `remoteJid`; only the identity changes.
+            const contactJid = remoteJid.endsWith('@lid') && phone
+                ? `${phone}@s.whatsapp.net`
+                : remoteJid;
+
             const { tools: skillTools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
-                agent.id, remoteJid, skillPrompts,
+                agent.id, contactJid, skillPrompts,
                 instanceId, contactName
             );
 
@@ -2830,7 +2852,7 @@ export class AiService {
             else return;
 
             // Skip when the contact is paused or has no Client row.
-            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+            const phone = await contactPhoneForJid(instanceId, remoteJid);
             const inst = await prisma.instance.findUnique({ where: { id: instanceId }, select: { workspaceId: true } });
             const wsId = inst?.workspaceId
                 || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(agent.userId));

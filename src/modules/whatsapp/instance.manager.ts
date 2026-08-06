@@ -642,6 +642,13 @@ export class InstanceManager {
                                 if (!inst) return;
                                 const wsId = inst.workspaceId
                                     || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(inst.userId));
+                                // A contact's display name comes from ONE place:
+                                // pushName on the incoming message. When WhatsApp
+                                // omits it the row is created nameless and shows
+                                // as "Unknown" forever, because nothing ever goes
+                                // back to fill it in. Logged so the question
+                                // "why is this one Unknown" has an answer on the
+                                // box instead of a guess.
                                 const c = await upsertCrmContact({
                                     userId: inst.userId,
                                     workspaceId: wsId,
@@ -651,6 +658,17 @@ export class InstanceManager {
                                     sourceLabel: inst.name,
                                     isAnonymous,
                                 });
+                                if (!msg.pushName) {
+                                    const known = await prisma.contact.findFirst({
+                                        where: { instanceId, remoteJid },
+                                        select: { name: true, pushName: true },
+                                    }).catch(() => null);
+                                    logger.info(
+                                        `[contact-name] no pushName · jid=${remoteJid} phone=${resolvedPhone} ` +
+                                        `contactRow=${known ? `name="${known.name || ''}" push="${known.pushName || ''}"` : 'none'} ` +
+                                        `clientId=${c?.id || 'none'}`
+                                    );
+                                }
                                 if (c) maybeRefreshProfilePicAsync({ instanceId, clientId: c.id, jid: remoteJid, profilePicUpdatedAt: c.profilePicUpdatedAt });
                             }).catch(() => {});
                         }

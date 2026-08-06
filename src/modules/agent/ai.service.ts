@@ -1073,7 +1073,10 @@ const CRM_PLACEHOLDER_RE = /\{\{\s*(contact|field)\s*:\s*([a-zA-Z0-9_]+)\s*\}\}/
 async function loadCrmPlaceholderValues(ctx: HttpCtx | undefined): Promise<{ contact: Record<string, string>; field: Record<string, string> }> {
     const contact: Record<string, string> = {};
     const field: Record<string, string> = {};
-    if (!ctx?.workspaceId || !ctx?.contactPhone) return { contact, field };
+    if (!ctx?.workspaceId || !ctx?.contactPhone) {
+        logger.info(`[http-tool] no contact context · workspace=${ctx?.workspaceId || 'none'} phone=${ctx?.contactPhone || 'none'}`);
+        return { contact, field };
+    }
     const cleanPhone = ctx.contactPhone.replace(/[^0-9]/g, '') || ctx.contactPhone;
     contact.phone = cleanPhone;
     try {
@@ -1081,7 +1084,13 @@ async function loadCrmPlaceholderValues(ctx: HttpCtx | undefined): Promise<{ con
             where: { workspaceId: ctx.workspaceId, phone: cleanPhone },
             select: { name: true, status: true, tags: true, summary: true, customFields: true },
         });
+        if (!client) {
+            logger.info(`[http-tool] no CRM row for placeholders · phone=${cleanPhone} workspace=${ctx.workspaceId}`);
+        }
         if (client) {
+            if (!client.name) {
+                logger.info(`[http-tool] CRM row has no name · phone=${cleanPhone}`);
+            }
             if (client.name) contact.name = client.name;
             if (client.status) contact.status = client.status;
             if (client.summary) contact.summary = client.summary;
@@ -1100,7 +1109,14 @@ function substituteCrmPlaceholders(text: string, values: { contact: Record<strin
     if (!text || typeof text !== 'string') return text;
     return text.replace(CRM_PLACEHOLDER_RE, (_, kind: string, key: string) => {
         const map = kind === 'contact' ? values.contact : values.field;
-        return map[key] ?? '';
+        const value = map[key];
+        // An unresolved placeholder becomes an empty string, which is
+        // why "the name didn't arrive" looks like a working request
+        // with a blank field. Say so, once, at the moment it happens.
+        if (value == null || value === '') {
+            logger.info(`[http-tool] placeholder empty · {{${kind}:${key}}} · known=${Object.keys(map).join(',') || 'nothing'}`);
+        }
+        return value ?? '';
     });
 }
 
@@ -2258,6 +2274,23 @@ export class AiService {
             const client = await prisma.client.findFirst({
                 where: { workspaceId: wsId, phone }
             }).catch(() => null);
+
+            // `phone` here is whatever the jid says. On a LID conversation
+            // that is the LID number, while the CRM row was written under
+            // the resolved real phone — so this lookup misses and the
+            // agent runs blind: no name, no CRM fields, and every
+            // {{contact:*}} placeholder in an HTTP tool resolves empty.
+            //
+            // Logged with the jid so the shape is unmistakable in a log:
+            // a miss on an @lid jid is that bug, a miss on a plain jid is
+            // simply a contact nobody has saved yet.
+            if (!client) {
+                logger.info(
+                    `[agent-contact] no CRM row · jid=${remoteJid} phone=${phone} ` +
+                    `isLid=${remoteJid.includes('@lid')} workspace=${wsId} ` +
+                    `contactRow=${contact ? `push="${contact.pushName || ''}"` : 'none'}`
+                );
+            }
 
             // Per-contact pause: messages keep flowing into the message table
             // (so the next time the agent unpauses it has full history via

@@ -9,6 +9,10 @@ const registerSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
     name: z.string().optional(),
+    // Optional on purpose: an unknown or mistyped code attributes
+    // nothing and is never a reason to reject the sign-up.
+    referralCode: z.string().max(32).optional(),
+    referralSource: z.enum(['code', 'link']).optional(),
 });
 
 const loginSchema = z.object({
@@ -20,7 +24,10 @@ export class AuthController {
     async register(req: Request, res: Response) {
         try {
             const data = registerSchema.parse(req.body);
-            const result = await authService.register(data.email, data.password, data.name);
+            const result = await authService.register(data.email, data.password, data.name, {
+                code: data.referralCode,
+                source: data.referralSource,
+            });
             return res.status(201).json({ success: true, ...result });
         } catch (error: any) {
             if (error instanceof z.ZodError) {

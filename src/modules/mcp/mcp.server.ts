@@ -17,6 +17,7 @@ import { registerAiProviderTools } from './tools/ai-providers.tools';
 import { registerMetaTools } from './tools/meta.tools';
 import { registerUserFieldTools } from './tools/user-fields.tools';
 import { registerWorkspaceTools } from './tools/workspaces.tools';
+import { registerBillingTools } from './tools/billing.tools';
 
 export type ToolCtx = {
     auth: McpAuthInfo;
@@ -95,6 +96,7 @@ export function buildMcpServer(ctx: ToolCtx): McpServer {
     registerAiProviderTools(register);
     registerUserFieldTools(register);
     registerWorkspaceTools(register);
+    registerBillingTools(register);
 
     return server;
 }

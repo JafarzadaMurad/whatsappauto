@@ -28,7 +28,7 @@ export async function getStripe(): Promise<any> {
     return stripe;
 }
 
-async function getOrCreateCustomer(userId: string): Promise<string> {
+export async function getOrCreateCustomer(userId: string): Promise<string> {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found');
     if (user.stripeCustomerId) return user.stripeCustomerId;
@@ -99,6 +99,28 @@ export async function handleWebhookEvent(event: any): Promise<void> {
             const session = event.data.object;
             const userId = session.metadata?.userId;
             const planId = session.metadata?.planId;
+
+            // A one-off credit purchase rides the same event as a
+            // subscription. Branch on the metadata we set at creation
+            // rather than on the session mode, so a future one-off of
+            // some other kind can't be mistaken for credits.
+            if (session.metadata?.kind === 'credit_topup') {
+                const { completeTopUp } = await import('./topup.service');
+                await completeTopUp({
+                    purchaseId: session.metadata?.purchaseId || null,
+                    externalId: session.id,
+                });
+                // Referral commission, if this payer was referred.
+                const { recordReferralCommission } = await import('../referral/referral.service');
+                await recordReferralCommission({
+                    payerUserId: userId || null,
+                    amountUsd: (session.amount_total || 0) / 100,
+                    kind: 'topup',
+                    externalId: session.id,
+                }).catch(err => logger.warn({ err: err.message }, '[referral] commission failed'));
+                return;
+            }
+
             if (!userId) return;
             const customerId = strCustomer(session.customer as any);
             const subscriptionId = typeof session.subscription === 'string' ? session.subscription : null;
@@ -120,6 +142,16 @@ export async function handleWebhookEvent(event: any): Promise<void> {
                     where: { ownerId: userId },
                     data: { planId, subscriptionStatus: 'active' },
                 });
+            }
+
+            {
+                const { recordReferralCommission } = await import('../referral/referral.service');
+                await recordReferralCommission({
+                    payerUserId: userId,
+                    amountUsd: (session.amount_total || 0) / 100,
+                    kind: 'subscription',
+                    externalId: session.id,
+                }).catch(err => logger.warn({ err: err.message }, '[referral] commission failed'));
             }
             break;
         }

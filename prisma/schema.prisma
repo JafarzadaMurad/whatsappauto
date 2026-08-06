@@ -96,6 +96,7 @@ model Workspace {
   adRoutes           AdRoute[]
   metaAdAccounts     MetaAdAccount[]
   creditLedger       CreditLedger[]
+  creditPurchases    CreditPurchase[]
   copilotSessions    CopilotSession[]
   voiceAssistants    VoiceAssistant[]
   phoneNumbers       PhoneNumber[]
@@ -222,6 +223,67 @@ model AnnouncementRead {
 
   @@unique([announcementId, userId])
   @@index([userId])
+}
+
+// ─── Referrals ──────────────────────────────────────────────────────
+// One row per person who arrived through someone else's code. Written
+// at sign-up and never changed: who referred whom is a historical fact,
+// and letting it move later would make past commissions unexplainable.
+model Referral {
+  id         String @id @default(uuid())
+
+  // Who referred. Their code lives on User.referralCode.
+  referrerId String
+  referrer   User   @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+
+  // Who signed up. One referral per person, hence unique.
+  referredId String @unique
+  referred   User   @relation("ReferralReceived", fields: [referredId], references: [id], onDelete: Cascade)
+
+  // The code as typed, and how they arrived — a typed code and a
+  // clicked link convert differently, and that's worth being able to
+  // see later.
+  code       String
+  source     String @default("code") // 'code' | 'link'
+
+  createdAt  DateTime @default(now())
+
+  commissions ReferralCommission[]
+
+  @@index([referrerId, createdAt(sort: Desc)])
+}
+
+// What a referrer earned from one payment. The percentage and the
+// first-payment-only rule are snapshotted onto the row, because an
+// admin changing the rate later must not silently rewrite what someone
+// was already told they had earned.
+model ReferralCommission {
+  id         String @id @default(uuid())
+  referralId String
+  referral   Referral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+
+  referrerId String
+  referrer   User   @relation("ReferralEarnings", fields: [referrerId], references: [id], onDelete: Cascade)
+
+  // The payment that produced it.
+  kind          String  // 'subscription' | 'topup'
+  paymentUsd    Float
+  percent       Float   // rate applied, as a percentage
+  amountUsd     Float   // paymentUsd * percent / 100
+  // Stripe session / Lider transaction id. Unique so a retried webhook
+  // pays a referrer once.
+  externalId    String? @unique
+
+  // pending → approved → paid, or 'rejected'. Payout itself is manual
+  // for now; the status is what an admin moves.
+  status     String   @default("pending")
+  paidAt     DateTime?
+  note       String?  @db.Text
+
+  createdAt  DateTime @default(now())
+
+  @@index([referrerId, createdAt(sort: Desc)])
+  @@index([status])
 }
 
 // Subscription plans (managed by admins)
@@ -374,7 +436,16 @@ model User {
   deals         Deal[]
 
   // cai — every LLM call this user triggered (for member-usage analytics)
+  // Referrals. `referralCode` is this user's own code to hand out;
+  // it's minted lazily the first time they open the referral page, so
+  // accounts that never use it don't carry one.
+  referralCode    String? @unique
+  referralsMade   Referral[]           @relation("ReferralsMade")
+  referredBy      Referral?            @relation("ReferralReceived")
+  referralEarnings ReferralCommission[] @relation("ReferralEarnings")
+
   creditLedger    CreditLedger[]
+  creditPurchases CreditPurchase[]
   copilotSessions CopilotSession[]
   voiceAssistants VoiceAssistant[]
 }
@@ -1711,6 +1782,39 @@ model AiPricing {
 // have cost us — for BYOK it still gets computed so we can show the
 // user "you saved $X by bringing your own key"). `creditsUsed` is the
 // cai actually deducted (0 for BYOK).
+// A credit purchase. Kept as its own row rather than folded into
+// Workspace.creditTopUp because "how much did they buy, when, and did
+// it actually clear" is a question the balance number alone can't
+// answer — and a refund or a duplicate webhook needs something to
+// reconcile against.
+model CreditPurchase {
+  id          String   @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  amountUsd   Float
+  credits     Int
+  currency    String   @default("USD")
+
+  // 'stripe' | 'lider' | 'admin' — where the money came from. Admin
+  // grants are recorded here too so the history is one list.
+  source      String   @default("stripe")
+  // Stripe checkout session id, Lider transaction id, or null for a
+  // manual grant. Unique so a replayed webhook can't credit twice.
+  externalId  String?  @unique
+
+  // pending → paid | failed. Credits are only added on 'paid'.
+  status      String   @default("pending")
+  paidAt      DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+}
+
 model CreditLedger {
   id            String   @id @default(uuid())
   workspaceId   String

@@ -9,7 +9,7 @@ import { sendMail, verificationEmail, resetPasswordEmail, appUrl } from '../../l
 import { logger } from '../../utils/logger';
 
 export class AuthService {
-    async register(email: string, password: string, name?: string) {
+    async register(email: string, password: string, name?: string, referral?: { code?: string | null; source?: 'code' | 'link' }) {
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
             throw new Error('User already exists');
@@ -38,6 +38,14 @@ export class AuthService {
                 } : {})
             },
         });
+
+        // Attribute the sign-up if they came through someone's code.
+        // Deliberately after the user exists and deliberately silent:
+        // a mistyped code is not a reason to refuse someone an account.
+        if (referral?.code) {
+            const { attachReferral } = await import('../referral/referral.service');
+            await attachReferral({ newUserId: user.id, code: referral.code, source: referral.source });
+        }
 
         // Fire-and-forget — registration succeeds even if SMTP isn't configured yet
         this.sendVerificationEmail(user.email, user.name, verifyToken).catch((err: any) =>

@@ -24,6 +24,7 @@ import { registerTableTools } from '../mcp/tools/tables.tools';
 import { registerWebhookTools } from '../mcp/tools/webhooks.tools';
 import { registerApiKeyTools } from '../mcp/tools/api-keys.tools';
 import { registerAiProviderTools } from '../mcp/tools/ai-providers.tools';
+import { registerBillingTools } from '../mcp/tools/billing.tools';
 import { registerUserFieldTools } from '../mcp/tools/user-fields.tools';
 
 // Which tools qualify as mutations — used for the socket broadcast.
@@ -186,6 +187,7 @@ export function buildCopilotVoiceTools(ctx: ToolCtx): {
     registerApiKeyTools(register);
     registerAiProviderTools(register);
     registerUserFieldTools(register);
+    registerBillingTools(register);
     registerCopilotUiTools(register);
 
     return { schemas, executors };
@@ -257,6 +259,7 @@ export function buildCopilotTools(ctx: ToolCtx): CopilotToolBag {
     registerApiKeyTools(register);
     registerAiProviderTools(register);
     registerUserFieldTools(register);
+    registerBillingTools(register);
     registerCopilotUiTools(register);
 
     return bag;

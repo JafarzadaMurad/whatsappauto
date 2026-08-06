@@ -23,6 +23,18 @@ type Current = {
     usage: { agents: number; whatsapp: number; instagram: number; automations: number };
 };
 
+type TopUpOptions = {
+    minimumUsd: number;
+    maximumUsd: number;
+    creditsPerUsd: number;
+    presets: { usd: number; credits: number }[];
+    purchases: {
+        id: string; amountUsd: number; credits: number; source: string;
+        status: string; paidAt: string | null; createdAt: string;
+        user?: { name?: string | null; email: string } | null;
+    }[];
+};
+
 type Balance = {
     monthlyCredits: number;
     topUp: number;
@@ -42,6 +54,9 @@ export default function BillingPage() {
     const [subscribing, setSubscribing] = useState<string | null>(null);
     const [managing, setManaging] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
+    const [topup, setTopup] = useState<TopUpOptions | null>(null);
+    const [topupAmount, setTopupAmount] = useState<string>("10");
+    const [buying, setBuying] = useState(false);
 
     const subscribe = async (planId: string) => {
         setSubscribing(planId);
@@ -53,6 +68,19 @@ export default function BillingPage() {
         } catch (err: any) {
             setActionError(err.response?.data?.message || err.message);
         } finally { setSubscribing(null); }
+    };
+
+    const buyCredits = async () => {
+        const amountUsd = Number(topupAmount);
+        setBuying(true);
+        setActionError(null);
+        try {
+            const res = await api.post('/billing/topup', { amountUsd });
+            if (res.data.success && res.data.url) window.location.href = res.data.url;
+            else setActionError(res.data.message || 'Could not start the purchase');
+        } catch (err: any) {
+            setActionError(err.response?.data?.message || err.message);
+        } finally { setBuying(false); }
     };
 
     const manageSubscription = async () => {
@@ -69,14 +97,16 @@ export default function BillingPage() {
 
     const load = async () => {
         try {
-            const [me, pub, bal] = await Promise.all([
+            const [me, pub, bal, top] = await Promise.all([
                 api.get('/plans/me'),
                 api.get('/plans/public'),
                 api.get('/credits/balance').catch(() => null),
+                api.get('/billing/topup').catch(() => null),
             ]);
             if (me.data.success) setCurrent({ plan: me.data.plan, subscription: me.data.subscription, usage: me.data.usage });
             if (pub.data.success) setPlans(pub.data.plans);
             if (bal?.data?.success) setBalance(bal.data.balance);
+            if (top?.data?.success) setTopup(top.data);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
@@ -166,6 +196,16 @@ export default function BillingPage() {
                                 </Link>
                             </div>
                         )}
+
+                        {topup && (
+                            <TopUpCard
+                                options={topup}
+                                amount={topupAmount}
+                                onAmount={setTopupAmount}
+                                buying={buying}
+                                onBuy={buyCredits}
+                            />
+                        )}
                         {usage && (
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
                                 <div className="bg-secondary/30 rounded-xl p-3"><div className="text-xs text-muted-foreground">AI agents</div><div className="font-semibold">{used(usage.agents, current.plan.maxAgents)}</div></div>
@@ -234,6 +274,88 @@ export default function BillingPage() {
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+// Credits run out mid-month, and "wait for the reset" is not an answer
+// at 2am. The amount is free-form rather than fixed packages, because
+// people top up to cover a specific shortfall, not to buy a tier.
+function TopUpCard({ options, amount, onAmount, buying, onBuy }: {
+    options: TopUpOptions;
+    amount: string;
+    onAmount: (v: string) => void;
+    buying: boolean;
+    onBuy: () => void;
+}) {
+    const value = Number(amount);
+    const valid = Number.isFinite(value) && value >= options.minimumUsd && value <= options.maximumUsd;
+    const credits = valid ? Math.round(value * options.creditsPerUsd) : 0;
+    const paid = options.purchases.filter(p => p.status === 'paid');
+
+    return (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+            <div>
+                <h3 className="font-semibold text-sm">Buy credits</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Added to your balance as soon as the payment clears, and they don&apos;t expire at the end of the
+                    month — a top-up carries over.
+                </p>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+                {options.presets.map(p => (
+                    <button key={p.usd} onClick={() => onAmount(String(p.usd))}
+                        className={`text-xs font-medium rounded-lg px-3 py-1.5 border transition-all ${
+                            Number(amount) === p.usd
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-secondary/40 border-border hover:bg-secondary'
+                        }`}>
+                        ${p.usd}
+                    </button>
+                ))}
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+                <div>
+                    <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Amount (USD)</label>
+                    <div className="relative mt-1">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                        <input type="number" min={options.minimumUsd} max={options.maximumUsd} step="1"
+                            value={amount} onChange={e => onAmount(e.target.value)}
+                            className="w-32 bg-secondary/50 border border-border rounded-lg pl-6 pr-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    </div>
+                </div>
+                <div className="text-xs text-muted-foreground pb-2">
+                    {valid
+                        ? <>= <span className="text-amber-400 font-semibold">{credits.toLocaleString()}</span> credits</>
+                        : <span className="text-amber-400">Minimum ${options.minimumUsd}</span>}
+                </div>
+                <button onClick={onBuy} disabled={!valid || buying}
+                    className="ml-auto bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-lg px-4 py-2 text-sm flex items-center gap-2 disabled:opacity-50">
+                    {buying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Coins className="w-4 h-4" />}
+                    Buy credits
+                </button>
+            </div>
+
+            {paid.length > 0 && (
+                <div className="pt-2 border-t border-border">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Past purchases</div>
+                    <div className="space-y-1">
+                        {paid.slice(0, 5).map(p => (
+                            <div key={p.id} className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">
+                                    {new Date(p.paidAt || p.createdAt).toLocaleDateString()}
+                                    {p.source !== 'stripe' && <span className="ml-1.5 opacity-60">via {p.source}</span>}
+                                </span>
+                                <span className="font-mono">
+                                    ${p.amountUsd.toFixed(2)} → <span className="text-amber-400">{p.credits.toLocaleString()}</span>
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

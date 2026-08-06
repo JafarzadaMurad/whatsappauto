@@ -15,7 +15,11 @@ function RegisterInner() {
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [form, setForm] = useState({ name: "", email: "", password: "" });
+    const [form, setForm] = useState({ name: "", email: "", password: "", referralCode: "" });
+    // Whether the code came from ?ref= or was typed. Worth recording:
+    // a clicked link and a code someone remembered convert differently.
+    const [refSource, setRefSource] = useState<"code" | "link">("code");
+    const [refCheck, setRefCheck] = useState<{ valid: boolean; referrerName: string | null } | null>(null);
 
     // Skip the register form for users who already have a session —
     // honour ?next= so accept-invite links deep-return correctly.
@@ -26,13 +30,49 @@ function RegisterInner() {
         }
     }, [isAuthenticated, params, router]);
 
+    // A ?ref= code arrives pre-filled and read-only-ish; someone who
+    // typed one instead still gets validated below.
+    useEffect(() => {
+        const ref = params.get('ref');
+        if (ref) {
+            setForm(f => ({ ...f, referralCode: ref.toUpperCase() }));
+            setRefSource('link');
+        }
+    }, [params]);
+
+    // Confirm the code belongs to someone BEFORE they commit. A typo
+    // found after paying is a support ticket; found here it's a
+    // keystroke. Debounced so it doesn't fire on every character.
+    useEffect(() => {
+        const code = form.referralCode.trim();
+        if (!code) { setRefCheck(null); return; }
+        const t = setTimeout(() => {
+            api.get(`/referrals/check/${encodeURIComponent(code)}`)
+                .then(r => {
+                    if (!r.data?.success || !r.data.enabled) { setRefCheck(null); return; }
+                    setRefCheck({ valid: !!r.data.valid, referrerName: r.data.referrerName || null });
+                })
+                .catch(() => setRefCheck(null));
+        }, 400);
+        return () => clearTimeout(t);
+    }, [form.referralCode]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError("");
 
         try {
-            const res = await api.post('/auth/register', form);
+            const res = await api.post('/auth/register', {
+                name: form.name,
+                email: form.email,
+                password: form.password,
+                // Sent only when there's something to send — an empty
+                // string would look like an attempted-and-failed code.
+                ...(form.referralCode.trim()
+                    ? { referralCode: form.referralCode.trim().toUpperCase(), referralSource: refSource }
+                    : {}),
+            });
             if (res.data.success) {
                 setAuth(res.data.user, res.data.token);
                 const next = params.get('next');
@@ -107,6 +147,26 @@ function RegisterInner() {
                                 value={form.password}
                                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-foreground ml-1">
+                                Referral code <span className="text-muted-foreground font-normal">(optional)</span>
+                            </label>
+                            <input
+                                type="text"
+                                className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-foreground font-mono tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-muted-foreground placeholder:tracking-normal placeholder:font-sans"
+                                placeholder="If someone invited you"
+                                value={form.referralCode}
+                                onChange={(e) => { setForm({ ...form, referralCode: e.target.value.toUpperCase() }); setRefSource("code"); }}
+                            />
+                            {refCheck && (
+                                <p className={`text-xs ml-1 ${refCheck.valid ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    {refCheck.valid
+                                        ? `Invited by ${refCheck.referrerName}`
+                                        : "We don't recognise that code — you can still sign up without it."}
+                                </p>
+                            )}
                         </div>
 
                         <button

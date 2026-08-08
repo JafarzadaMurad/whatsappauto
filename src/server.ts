@@ -15,6 +15,7 @@ import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
 import { startReminderScheduler } from './modules/agent/reminder.scheduler';
+import { startPoolHealthScheduler } from './lib/claude-subscription';
 import { seedAiPricing, backfillPricingKinds } from './lib/ai-pricing.seed';
 import { attachVoiceBridge } from './modules/voice/voice-bridge';
 
@@ -186,6 +187,11 @@ server.listen(PORT, async () => {
     // for at least agent.reminderHours and ask the model to draft a
     // follow-up. Per-contact lock + max-reminders cap prevent nagging.
     startReminderScheduler();
+
+    // Claude subscription pool: probe each token hourly. A signed-out
+    // account or an expired token otherwise announces itself only as a
+    // larger bill, since every call silently falls back to the API key.
+    startPoolHealthScheduler(60);
 
     // Idempotent: fill in the AiPricing table with default provider
     // rates so the first cai bill goes out with real numbers rather

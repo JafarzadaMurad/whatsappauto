@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
     Sparkles, Loader2, KeyRound, Coins, Bot, ChevronRight, Plus, Trash2, Save,
     Search, Eye, EyeOff, ExternalLink, Mic, Volume2, MessageSquare,
-    AudioLines, AlertTriangle,
+    AudioLines, AlertTriangle, Activity,
 } from "lucide-react";
 import api from "@/lib/api";
 import UnsavedChangesBar from "@/components/UnsavedChangesBar";
@@ -825,14 +825,30 @@ function Num({ value, onChange, step = "0.001", width = "w-24" }: {
 // changes bar: tokens are write-only, so folding them into the shared
 // dirty check would mean re-sending blank token fields on every
 // unrelated save.
-type SubToken = { id: string; label: string; tokenSet: boolean; cooldownUntil: number | null };
-type TokenDraft = { id?: string; label: string; token: string; tokenSet: boolean; cooldownUntil: number | null };
+type TokenHealth = { ok: boolean; checkedAt: number; error?: string };
+type SubToken = { id: string; label: string; tokenSet: boolean; cooldownUntil: number | null; health: TokenHealth | null };
+type TokenDraft = {
+    id?: string; label: string; token: string; tokenSet: boolean;
+    cooldownUntil: number | null; health: TokenHealth | null;
+};
+
+// "3 minutes ago" beats a timestamp here: the question is always how
+// stale the check is, never what o'clock it happened.
+const ago = (ms: number) => {
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+};
 
 function ClaudeSubscriptionPool() {
     const [enabled, setEnabled] = useState(false);
     const [model, setModel] = useState("");
     const [drafts, setDrafts] = useState<TokenDraft[]>([]);
     const [busy, setBusy] = useState(false);
+    const [testing, setTesting] = useState(false);
     const [saved, setSaved] = useState(false);
     const [err, setErr] = useState<string | null>(null);
 
@@ -841,7 +857,8 @@ function ClaudeSubscriptionPool() {
         setModel(data.model || "");
         const list: SubToken[] = data.tokens || [];
         setDrafts(list.map(t => ({
-            id: t.id, label: t.label, token: "", tokenSet: t.tokenSet, cooldownUntil: t.cooldownUntil,
+            id: t.id, label: t.label, token: "", tokenSet: t.tokenSet,
+            cooldownUntil: t.cooldownUntil, health: t.health,
         })));
     };
 
@@ -865,6 +882,16 @@ function ClaudeSubscriptionPool() {
         } catch (e: any) {
             setErr(e.response?.data?.message || e.message);
         } finally { setBusy(false); }
+    };
+
+    const test = async () => {
+        setTesting(true); setErr(null); setSaved(false);
+        try {
+            const r = await api.post("/admin/ai-hub/subscription/test");
+            if (r.data.success) apply(r.data);
+        } catch (e: any) {
+            setErr(e.response?.data?.message || e.message);
+        } finally { setTesting(false); }
     };
 
     return (
@@ -914,7 +941,8 @@ function ClaudeSubscriptionPool() {
                     <h4 className="text-xs font-medium text-muted-foreground">Tokens</h4>
                     <button type="button"
                         onClick={() => setDrafts([...drafts, {
-                            label: `Token ${drafts.length + 1}`, token: "", tokenSet: false, cooldownUntil: null,
+                            label: `Token ${drafts.length + 1}`, token: "", tokenSet: false,
+                            cooldownUntil: null, health: null,
                         }])}
                         className="text-xs text-primary hover:underline flex items-center gap-1">
                         <Plus className="w-3 h-3" /> Add token
@@ -923,7 +951,8 @@ function ClaudeSubscriptionPool() {
                 <p className="text-[10px] text-muted-foreground">
                     Run <code className="bg-secondary px-1 rounded">claude setup-token</code> while logged into each
                     Claude subscription and paste the token here. Tokens are stored server-side and never sent back
-                    to the browser — leave a field blank to keep the one already saved.
+                    to the browser — leave a field blank to keep the one already saved. Each token is checked
+                    automatically every hour; one that stops working is skipped until it passes again.
                 </p>
                 {drafts.length === 0 && (
                     <p className="text-xs text-muted-foreground">No tokens yet — the API key is being used.</p>
@@ -931,7 +960,8 @@ function ClaudeSubscriptionPool() {
                 {drafts.map((d, i) => {
                     const benched = d.cooldownUntil && d.cooldownUntil > Date.now();
                     return (
-                        <div key={d.id || `new-${i}`} className="flex items-center gap-2">
+                        <div key={d.id || `new-${i}`} className="space-y-1">
+                        <div className="flex items-center gap-2">
                             <input value={d.label}
                                 onChange={e => setDrafts(drafts.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
                                 placeholder="label"
@@ -951,6 +981,19 @@ function ClaudeSubscriptionPool() {
                                 <Trash2 className="w-4 h-4" />
                             </button>
                         </div>
+                        {/* A stored token proves nothing — the account can be
+                            signed out elsewhere and the token keeps existing.
+                            This line says whether it last actually worked. */}
+                        {d.health && (
+                            <div className={`text-[10px] pl-[8.5rem] ${d.health.ok ? "text-emerald-400" : "text-red-400"}`}>
+                                {d.health.ok ? "✓ working" : `✗ ${d.health.error || "not usable"}`}
+                                <span className="text-muted-foreground"> · checked {ago(d.health.checkedAt)}</span>
+                            </div>
+                        )}
+                        {!d.health && d.tokenSet && (
+                            <div className="text-[10px] pl-[8.5rem] text-muted-foreground">Never checked.</div>
+                        )}
+                        </div>
                     );
                 })}
             </div>
@@ -958,6 +1001,12 @@ function ClaudeSubscriptionPool() {
             <div className="flex items-center justify-end gap-3">
                 {err && <span className="text-xs text-red-400">{err}</span>}
                 {saved && <span className="text-xs text-emerald-400">Saved.</span>}
+                <button onClick={test} disabled={testing || busy}
+                    title="Send one tiny message on each token to see if it still works"
+                    className="border border-border hover:bg-secondary font-medium rounded-lg px-4 py-1.5 flex items-center gap-2 text-xs disabled:opacity-60">
+                    {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                    Test tokens
+                </button>
                 <button onClick={save} disabled={busy}
                     className="bg-secondary hover:bg-secondary/80 border border-border font-medium rounded-lg px-4 py-1.5 flex items-center gap-2 text-xs disabled:opacity-60">
                     {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}

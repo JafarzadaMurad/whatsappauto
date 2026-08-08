@@ -107,6 +107,19 @@ export class AiHubController {
         }
     }
 
+    // Probe every token now. Slow by nature — it makes a real call per
+    // token — but it is the only answer to "is the account still signed
+    // in?" that doesn't involve waiting for a customer to find out.
+    async testSubscription(_req: Request, res: Response) {
+        try {
+            const { checkPoolHealth, getSubscriptionSettings } = await import('../../lib/claude-subscription');
+            await checkPoolHealth();
+            return res.json({ success: true, ...(await getSubscriptionSettings()) });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async saveSubscription(req: Request, res: Response) {
         try {
             const body = z.object({

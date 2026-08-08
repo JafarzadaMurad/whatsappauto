@@ -32,7 +32,14 @@ const CONFIG_ENABLED = 'CLAUDE_SUB_ENABLED';
 const CONFIG_TOKENS = 'CLAUDE_SUB_TOKENS';   // JSON [{ id, label, token }]
 const CONFIG_MODEL = 'CLAUDE_SUB_MODEL';
 
-export type SubTokenPublic = { id: string; label: string; tokenSet: boolean; cooldownUntil: number | null };
+export type SubTokenPublic = {
+    id: string;
+    label: string;
+    tokenSet: boolean;
+    cooldownUntil: number | null;
+    /** Last probe outcome, so the page can say more than "a token exists". */
+    health: { ok: boolean; checkedAt: number; error?: string } | null;
+};
 type SubToken = { id: string; label: string; token: string };
 
 export class SubscriptionError extends Error {
@@ -87,6 +94,7 @@ async function loadRaw() {
 /** Admin view: labels and whether a token is stored, never the token. */
 export async function getSubscriptionSettings() {
     const cfg = await loadRaw();
+    const health = await loadHealth();
     return {
         enabled: cfg.enabled,
         model: cfg.model,
@@ -95,6 +103,7 @@ export async function getSubscriptionSettings() {
             label: t.label,
             tokenSet: true,
             cooldownUntil: cooldowns.get(t.id) ?? null,
+            health: health[t.id] ?? null,
         })),
     };
 }
@@ -500,4 +509,133 @@ export async function tryOnSubscription(
         if (routine) logger.debug(line); else logger.warn(line);
         return null;
     }
+}
+
+// ─── Health ─────────────────────────────────────────────────────────
+//
+// A subscription token is not a key that lives until you delete it. The
+// account can be signed out elsewhere, the token can expire, the plan can
+// change — and none of that announces itself. Without a check the first
+// sign of trouble is a warning buried in the logs while every message
+// quietly costs API money again.
+//
+// So each token gets probed: on demand from the admin page, and on a
+// timer. The result is persisted, because "when did this last work?" is
+// the question you ask after noticing the bill, often days later.
+
+const CONFIG_HEALTH = 'CLAUDE_SUB_HEALTH';
+
+export type TokenHealth = {
+    ok: boolean;
+    checkedAt: number;
+    /** Present when the last probe failed. */
+    error?: string;
+};
+
+export async function loadHealth(): Promise<Record<string, TokenHealth>> {
+    const row = await prisma.systemConfig.findUnique({ where: { key: CONFIG_HEALTH } });
+    try { return row?.value ? JSON.parse(row.value) : {}; } catch { return {}; }
+}
+
+async function saveHealth(health: Record<string, TokenHealth>) {
+    await prisma.systemConfig.upsert({
+        where: { key: CONFIG_HEALTH },
+        update: { value: JSON.stringify(health) },
+        create: { key: CONFIG_HEALTH, value: JSON.stringify(health) },
+    });
+}
+
+/**
+ * Ask one token to answer a trivial question.
+ *
+ * Deliberately the smallest real call there is — no tools, one turn, two
+ * words of output. Anything cheaper wouldn't prove the credential still
+ * works, and anything larger would spend the very quota we're protecting.
+ */
+async function probe(token: SubToken): Promise<TokenHealth> {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const run = query({
+        prompt: 'Reply with exactly: OK',
+        options: {
+            allowedTools: [],
+            permissionMode: 'dontAsk',
+            maxTurns: 1,
+            env: {
+                ...process.env,
+                ANTHROPIC_API_KEY: undefined,
+                ANTHROPIC_AUTH_TOKEN: undefined,
+                CLAUDE_CODE_OAUTH_TOKEN: token.token,
+            } as any,
+        },
+    });
+
+    try {
+        for await (const msg of run as any) {
+            if (msg.type === 'result') {
+                if (msg.subtype && msg.subtype !== 'success') {
+                    return { ok: false, checkedAt: Date.now(), error: `returned ${msg.subtype}` };
+                }
+                return { ok: true, checkedAt: Date.now() };
+            }
+        }
+        return { ok: false, checkedAt: Date.now(), error: 'no result from the harness' };
+    } catch (err: any) {
+        return { ok: false, checkedAt: Date.now(), error: String(err?.message || err).slice(0, 300) };
+    } finally {
+        try { (run as any).close?.(); } catch { /* already closed */ }
+    }
+}
+
+/**
+ * Probe every token and persist the outcome.
+ *
+ * A token that fails is benched, so a signed-out account stops being
+ * picked before a customer's message discovers it. A token that passes
+ * has its bench cleared — the whole point of checking is to notice
+ * recovery too.
+ */
+export async function checkPoolHealth(): Promise<Record<string, TokenHealth>> {
+    const cfg = await loadRaw();
+    const health = await loadHealth();
+
+    for (const t of cfg.tokens) {
+        const result = await probe(t);
+        health[t.id] = result;
+        if (result.ok) {
+            cooldowns.delete(t.id);
+        } else {
+            bench(t.id, AUTH_COOLDOWN_MS, `health check failed: ${result.error}`);
+            logger.error(`[claude-sub] token "${t.label}" is not usable — ${result.error}`);
+        }
+    }
+
+    // Health for tokens that no longer exist is just noise.
+    for (const id of Object.keys(health)) {
+        if (!cfg.tokens.some(t => t.id === id)) delete health[id];
+    }
+
+    await saveHealth(health);
+    return health;
+}
+
+/**
+ * Check the pool every `intervalMinutes`, and once shortly after boot.
+ *
+ * The boot check is delayed rather than immediate so it doesn't compete
+ * with everything else starting up, and skipped entirely when the pool is
+ * off — an admin who hasn't enabled it shouldn't see probe traffic.
+ */
+export function startPoolHealthScheduler(intervalMinutes = 60) {
+    const tick = async () => {
+        try {
+            const cfg = await loadRaw();
+            if (!cfg.enabled || !cfg.tokens.length) return;
+            await checkPoolHealth();
+        } catch (err: any) {
+            logger.error(`[claude-sub] health check failed to run: ${err.message}`);
+        }
+    };
+    setTimeout(tick, 60_000).unref?.();
+    setInterval(tick, intervalMinutes * 60_000).unref?.();
+    logger.info(`[claude-sub] pool health check every ${intervalMinutes}m`);
 }

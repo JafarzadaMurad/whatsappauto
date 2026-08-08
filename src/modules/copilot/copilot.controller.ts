@@ -26,6 +26,7 @@ import { recordUsagePostHoc, getCreditBalance } from '../../lib/credit-guard';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
 import { isModelAllowed, loadCatalog, normaliseProvider } from '../../lib/model-access';
 import { buildCopilotTools, buildCopilotVoiceTools } from './copilot.tools';
+import { runSubscriptionTurn, accountForUser, SubscriptionError } from './copilot.subscription';
 import { DEFAULT_COPILOT_PROMPT, buildRuntimeContext } from './copilot.prompt';
 
 // Which model the copilot runs on. Admin-configurable via SystemConfig
@@ -332,24 +333,68 @@ export class CopilotController {
                 { role: 'user' as const, content: body.message },
             ];
 
-            const aiModel = buildModel(provider, apiKey, model);
-            const t0 = Date.now();
-            const result: any = await generateText({
-                model: aiModel,
-                system: systemPrompt,
-                messages: messagesForLlm as any,
-                tools,
-                stopWhen: stepCountIs(15),
-            } as any);
-            const durationMs = Date.now() - t0;
+            // A user on a Claude seat runs through their own subscription
+            // rather than the platform API key: same tools, same prompt,
+            // no per-token cost and nothing deducted from the workspace
+            // pool. Anyone not on a seat takes the API path unchanged.
+            //
+            // A seat failing must not fail the request — losing the
+            // subscription should cost money, not function — so any error
+            // here falls through to the API below.
+            let reply = '';
+            let toolCalls: { name: string; args: any }[] = [];
+            let durationMs = 0;
+            let engine: 'subscription' | 'api' = 'api';
+            let servedBy: string | null = null;
+            let result: any = null;
 
-            const reply = (result.text || '').trim();
-            const toolCalls = (result.steps || []).flatMap((s: any) =>
-                (s.toolCalls || []).map((tc: any) => ({
-                    name: tc.toolName,
-                    args: tc.args ?? tc.input ?? null,
-                }))
-            );
+            const seat = await accountForUser(userId).catch(() => null);
+            if (seat) {
+                try {
+                    const turn = await runSubscriptionTurn({
+                        userId,
+                        workspaceId,
+                        systemPrompt,
+                        message: body.message,
+                        history: history.map((m: any) => ({ role: m.role, content: m.content })),
+                    });
+                    reply = turn.text;
+                    toolCalls = turn.toolCalls;
+                    durationMs = turn.durationMs;
+                    engine = 'subscription';
+                    servedBy = turn.accountId;
+                    logger.info(
+                        `[copilot] served by subscription · user=${userId} account=${turn.accountId} ` +
+                        `tools=${turn.toolCalls.length} ${turn.durationMs}ms`
+                    );
+                } catch (err: any) {
+                    const code = err instanceof SubscriptionError ? err.code : 'error';
+                    logger.warn(
+                        `[copilot] subscription turn failed (${code}: ${err.message}) — falling back to the API key`
+                    );
+                }
+            }
+
+            if (engine === 'api') {
+                const aiModel = buildModel(provider, apiKey, model);
+                const t0 = Date.now();
+                result = await generateText({
+                    model: aiModel,
+                    system: systemPrompt,
+                    messages: messagesForLlm as any,
+                    tools,
+                    stopWhen: stepCountIs(15),
+                } as any);
+                durationMs = Date.now() - t0;
+
+                reply = (result.text || '').trim();
+                toolCalls = (result.steps || []).flatMap((s: any) =>
+                    (s.toolCalls || []).map((tc: any) => ({
+                        name: tc.toolName,
+                        args: tc.args ?? tc.input ?? null,
+                    }))
+                );
+            }
 
             // 6. Persist the turn
             const updatedMessages = [
@@ -365,15 +410,19 @@ export class CopilotController {
                 data: { messages: updatedMessages, title, updatedAt: new Date() },
             });
 
-            // 7. Bill cai
-            void recordUsagePostHoc({
-                workspaceId,
-                userId,
-                agentId: null,
-                providerInfo: { provider, apiKey: '', useOwnKey: false },
-                model,
-                cause: 'other',
-            }, result);
+            // 7. Bill cai — API turns only. A subscription turn costs the
+            // platform nothing per token, so deducting from the workspace
+            // pool would be charging for something nobody paid for.
+            if (engine === 'api' && result) {
+                void recordUsagePostHoc({
+                    workspaceId,
+                    userId,
+                    agentId: null,
+                    providerInfo: { provider, apiKey: '', useOwnKey: false },
+                    model,
+                    cause: 'other',
+                }, result);
+            }
 
             return res.json({
                 success: true,
@@ -381,7 +430,12 @@ export class CopilotController {
                 reply,
                 toolCalls,
                 durationMs,
-                usage: result.usage,
+                // Which rail served this turn. Surfaced so a seat that
+                // silently stopped working shows up as an unexpected
+                // "api" instead of as a larger bill next month.
+                engine,
+                servedBy,
+                usage: result?.usage ?? null,
             });
         } catch (error: any) {
             // Anthropic/OpenAI SDK errors expose status + a nested `error`
@@ -643,6 +697,73 @@ export class CopilotController {
 
 // ─── Admin sub-controller ──────────────────────────────────────────
 export class AdminCopilotController {
+    // Which people hold a Claude seat, and which account serves each.
+    //
+    // Tokens are never returned — only whether one is present. A seat is
+    // a credential, and an endpoint that reads credentials back is one
+    // XSS away from handing them out.
+    async getSubscription(_req: Request, res: Response) {
+        try {
+            const { loadSubscriptionConfig } = await import('./copilot.subscription');
+            const cfg = await loadSubscriptionConfig();
+
+            // Only admins can hold a seat: this rail exists for the people
+            // who run the platform, and listing every customer here would
+            // invite assigning one to a customer by accident.
+            const admins = await prisma.user.findMany({
+                where: { role: 'ADMIN' },
+                orderBy: { createdAt: 'asc' },
+                select: { id: true, name: true, email: true },
+            });
+
+            return res.json({
+                success: true,
+                enabled: cfg.enabled,
+                model: cfg.model,
+                accounts: cfg.accounts.map(a => ({
+                    id: a.id, label: a.label, configKey: a.configKey, tokenSet: a.tokenSet,
+                })),
+                userMap: cfg.userMap,
+                users: admins,
+            });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async saveSubscription(req: Request, res: Response) {
+        try {
+            const body = z.object({
+                enabled: z.boolean().optional(),
+                model: z.string().max(120).nullable().optional(),
+                userMap: z.record(z.string(), z.string()).optional(),
+                // Only non-empty values are written, so an untouched
+                // password field can't blank a working token.
+                tokens: z.record(z.string(), z.string()).optional(),
+            }).parse(req.body);
+
+            const tokens = Object.fromEntries(
+                Object.entries(body.tokens || {}).filter(([, v]) => v && v.trim())
+            );
+
+            const { saveSubscriptionConfig, loadSubscriptionConfig } = await import('./copilot.subscription');
+            await saveSubscriptionConfig({ ...body, tokens });
+            const cfg = await loadSubscriptionConfig();
+            return res.json({
+                success: true,
+                enabled: cfg.enabled,
+                model: cfg.model,
+                accounts: cfg.accounts.map(a => ({
+                    id: a.id, label: a.label, configKey: a.configKey, tokenSet: a.tokenSet,
+                })),
+                userMap: cfg.userMap,
+            });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async getSettings(_req: Request, res: Response) {
         try {
             const [rows, pricing] = await Promise.all([

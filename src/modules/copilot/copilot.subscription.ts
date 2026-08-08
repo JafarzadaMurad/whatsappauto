@@ -13,6 +13,7 @@ import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
 import { runOnSubscription, shouldUseSubscription, SubscriptionError } from '../../lib/claude-subscription';
+import { buildCopilotUiToolsForBridge } from './copilot.tools';
 
 export { SubscriptionError };
 
@@ -75,6 +76,14 @@ export async function runCopilotSubscriptionTurn(opts: {
         label: 'copilot',
         model: opts.model,
         system: opts.systemPrompt,
+        // Browser-facing tools can't come over MCP — they act on this
+        // one person's browser, not on the workspace — so they are
+        // bridged in-process alongside it.
+        tools: buildCopilotUiToolsForBridge({
+            userId: opts.userId,
+            workspaceId: opts.workspaceId,
+            auth: { userId: opts.userId, workspaceId: opts.workspaceId, authKind: 'oauth' } as any,
+        }),
         messages: [...opts.history, { role: 'user', content: opts.message }],
         mcpServers: {
             chatbot: {

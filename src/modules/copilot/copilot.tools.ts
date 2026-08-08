@@ -301,3 +301,34 @@ function registerCopilotUiTools(reg: RegisterToolFn) {
         },
     );
 }
+
+/**
+ * The browser-facing tools, in the shape the subscription rail bridges.
+ *
+ * The subscription rail reaches this platform's tools over MCP, and
+ * `navigate_to` isn't an MCP tool — it acts on one person's browser, not
+ * on the workspace, so it has no business being offered to Claude Desktop
+ * and the other MCP clients. The result was a copilot that could navigate
+ * on the API key and apologised for being unable to on the subscription.
+ *
+ * So these are handed over in-process instead, alongside the MCP server:
+ * same tool, same handler, without widening what MCP exposes.
+ */
+export function buildCopilotUiToolsForBridge(ctx: ToolCtx): Record<string, any> {
+    const bag: Record<string, any> = {};
+
+    const register: RegisterToolFn = (name, description, inputShape, handler) => {
+        bag[name] = {
+            description,
+            _zod: z.object(inputShape as any),
+            execute: async (args: any) => {
+                const result = await handler(args as any, ctx);
+                // The harness wants a value, not MCP's envelope.
+                return result.content?.map(c => c.text).join('\n') ?? '';
+            },
+        };
+    };
+
+    registerCopilotUiTools(register);
+    return bag;
+}

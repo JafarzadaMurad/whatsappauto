@@ -20,7 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-    Sparkles, Loader2, KeyRound, Coins, Bot, ChevronRight, Plus, Trash2,
+    Sparkles, Loader2, KeyRound, Coins, Bot, ChevronRight, Plus, Trash2, Save,
     Search, Eye, EyeOff, ExternalLink, Mic, Volume2, MessageSquare,
     AudioLines, AlertTriangle,
 } from "lucide-react";
@@ -406,6 +406,8 @@ export default function AdminAiProvidersPage() {
                                             } catch (e: any) { setError(e.response?.data?.message || e.message); }
                                         }}
                                     />
+
+                                    {p.catalogueBucket === "CLAUDE" && <ClaudeSubscriptionPool />}
 
                                     <VoiceCatalogue provider={p} />
                                 </div>
@@ -812,5 +814,156 @@ function Num({ value, onChange, step = "0.001", width = "w-24" }: {
                 onChange={e => onChange(Number(e.target.value))}
                 className={`${width} bg-secondary/30 border border-border rounded px-2 py-1 text-right text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/40`} />
         </td>
+    );
+}
+
+// A Claude subscription is an alternative to this provider's API key,
+// not a separate feature — so it lives inside the provider that owns
+// that decision, not on some other screen.
+//
+// It saves on its own button rather than through the page's unsaved-
+// changes bar: tokens are write-only, so folding them into the shared
+// dirty check would mean re-sending blank token fields on every
+// unrelated save.
+type SubToken = { id: string; label: string; tokenSet: boolean; cooldownUntil: number | null };
+type TokenDraft = { id?: string; label: string; token: string; tokenSet: boolean; cooldownUntil: number | null };
+
+function ClaudeSubscriptionPool() {
+    const [enabled, setEnabled] = useState(false);
+    const [model, setModel] = useState("");
+    const [drafts, setDrafts] = useState<TokenDraft[]>([]);
+    const [busy, setBusy] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    const apply = (data: any) => {
+        setEnabled(!!data.enabled);
+        setModel(data.model || "");
+        const list: SubToken[] = data.tokens || [];
+        setDrafts(list.map(t => ({
+            id: t.id, label: t.label, token: "", tokenSet: t.tokenSet, cooldownUntil: t.cooldownUntil,
+        })));
+    };
+
+    useEffect(() => {
+        api.get("/admin/ai-hub/subscription")
+            .then(r => { if (r.data.success) apply(r.data); })
+            .catch(() => { /* the pool is optional — the API key path works without it */ });
+    }, []);
+
+    const save = async () => {
+        setBusy(true); setSaved(false); setErr(null);
+        try {
+            const r = await api.put("/admin/ai-hub/subscription", {
+                enabled,
+                model: model || null,
+                tokens: drafts.map(d => ({ id: d.id, label: d.label, token: d.token })),
+            });
+            // Rebuild from the server so a saved token is never left
+            // sitting in the DOM.
+            if (r.data.success) { apply(r.data); setSaved(true); }
+        } catch (e: any) {
+            setErr(e.response?.data?.message || e.message);
+        } finally { setBusy(false); }
+    };
+
+    return (
+        <div className="border border-border rounded-xl p-4 space-y-4 bg-secondary/10">
+            <div className="flex items-start gap-3">
+                <div className="p-2 bg-primary/10 text-primary rounded-lg"><KeyRound className="w-4 h-4" /></div>
+                <div className="flex-1">
+                    <h3 className="font-semibold text-sm">Subscription pool</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Run Claude on subscription tokens instead of the API key above — copilot, WhatsApp agents,
+                        Instagram, campaign openers and oversight all use it. Turns served from the pool cost nothing
+                        per token and no cai is deducted for them.
+                    </p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                        A workspace on its own Anthropic key is never diverted here — they are paying their own
+                        provider bill. Everyone else uses the pool when it is on, and the API key when it is off
+                        or exhausted.
+                    </p>
+                </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}
+                    className="rounded border-border" />
+                Use the subscription pool instead of the API key
+            </label>
+
+            <div className="flex items-start gap-2 text-[11px] text-amber-400 bg-amber-400/5 border border-amber-400/20 rounded-lg p-3">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+                <span>
+                    A subscription's rate limit is sized for one person's day of work, and the agents answer around
+                    the clock. Expect the pool to run out under real traffic — when it does, that token is benched
+                    for a while and everything falls back to the API key on its own. Nothing breaks; it just costs
+                    money again until the limit resets.
+                </span>
+            </div>
+
+            <div>
+                <label className="text-xs font-medium text-muted-foreground">Model override (optional)</label>
+                <input value={model} onChange={e => setModel(e.target.value)}
+                    placeholder="leave blank for the subscription's default"
+                    className="mt-1 w-full bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-sm font-mono" />
+            </div>
+
+            <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-medium text-muted-foreground">Tokens</h4>
+                    <button type="button"
+                        onClick={() => setDrafts([...drafts, {
+                            label: `Token ${drafts.length + 1}`, token: "", tokenSet: false, cooldownUntil: null,
+                        }])}
+                        className="text-xs text-primary hover:underline flex items-center gap-1">
+                        <Plus className="w-3 h-3" /> Add token
+                    </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                    Run <code className="bg-secondary px-1 rounded">claude setup-token</code> while logged into each
+                    Claude subscription and paste the token here. Tokens are stored server-side and never sent back
+                    to the browser — leave a field blank to keep the one already saved.
+                </p>
+                {drafts.length === 0 && (
+                    <p className="text-xs text-muted-foreground">No tokens yet — the API key is being used.</p>
+                )}
+                {drafts.map((d, i) => {
+                    const benched = d.cooldownUntil && d.cooldownUntil > Date.now();
+                    return (
+                        <div key={d.id || `new-${i}`} className="flex items-center gap-2">
+                            <input value={d.label}
+                                onChange={e => setDrafts(drafts.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                                placeholder="label"
+                                className="w-32 shrink-0 bg-secondary/40 border border-border rounded-lg px-2 py-1.5 text-xs" />
+                            <input type="password" autoComplete="new-password" spellCheck={false}
+                                value={d.token}
+                                onChange={e => setDrafts(drafts.map((x, j) => j === i ? { ...x, token: e.target.value } : x))}
+                                placeholder={d.tokenSet ? "•••••••• saved" : "sk-ant-oat01-..."}
+                                className="flex-1 bg-secondary/40 border border-border rounded-lg px-3 py-1.5 text-xs font-mono" />
+                            {benched && (
+                                <span className="text-[10px] text-amber-400 shrink-0" title="Skipped until the limit resets">
+                                    benched
+                                </span>
+                            )}
+                            <button type="button" onClick={() => setDrafts(drafts.filter((_, j) => j !== i))}
+                                className="text-muted-foreground hover:text-red-400 shrink-0" title="Remove">
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+                {err && <span className="text-xs text-red-400">{err}</span>}
+                {saved && <span className="text-xs text-emerald-400">Saved.</span>}
+                <button onClick={save} disabled={busy}
+                    className="bg-secondary hover:bg-secondary/80 border border-border font-medium rounded-lg px-4 py-1.5 flex items-center gap-2 text-xs disabled:opacity-60">
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Save pool
+                </button>
+            </div>
+        </div>
     );
 }

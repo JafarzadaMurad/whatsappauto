@@ -41,4 +41,9 @@ router.put('/ai-models', aiModelsController.set.bind(aiModelsController));
 // + pricing, one object per provider.
 router.get('/ai-hub', aiHubController.overview.bind(aiHubController));
 
+// The Claude subscription pool sits with the provider keys, because
+// that is the same decision: what credential Claude calls run on.
+router.get('/ai-hub/subscription', aiHubController.getSubscription.bind(aiHubController));
+router.put('/ai-hub/subscription', aiHubController.saveSubscription.bind(aiHubController));
+
 export default router;

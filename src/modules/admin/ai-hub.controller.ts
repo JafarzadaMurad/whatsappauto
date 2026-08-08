@@ -15,6 +15,7 @@
 // shows up here without anyone editing this file.
 
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { PLATFORM_KEY_FOR } from '../../lib/ai-pricing';
 import { TRANSCRIBERS, LLMS, VOICES, VOICE_MODELS } from '../../lib/voice-catalog';
@@ -92,6 +93,45 @@ const fallbackMeta = (id: string) => ({
 });
 
 export class AiHubController {
+    // The Claude subscription pool.
+    //
+    // Tokens are never returned — only labels and whether one is stored.
+    // A token is a credential, and an endpoint that reads credentials
+    // back is one XSS away from handing them out.
+    async getSubscription(_req: Request, res: Response) {
+        try {
+            const { getSubscriptionSettings } = await import('../../lib/claude-subscription');
+            return res.json({ success: true, ...(await getSubscriptionSettings()) });
+        } catch (error: any) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async saveSubscription(req: Request, res: Response) {
+        try {
+            const body = z.object({
+                enabled: z.boolean().optional(),
+                model: z.string().max(120).nullable().optional(),
+                tokens: z.array(z.object({
+                    id: z.string().optional(),
+                    label: z.string().max(80).optional(),
+                    // Blank means "keep what is stored" — the browser is
+                    // never sent a token, so it cannot echo one back.
+                    token: z.string().optional(),
+                    remove: z.boolean().optional(),
+                })).optional(),
+            }).parse(req.body);
+
+            const { saveSubscriptionSettings, getSubscriptionSettings } =
+                await import('../../lib/claude-subscription');
+            await saveSubscriptionSettings(body);
+            return res.json({ success: true, ...(await getSubscriptionSettings()) });
+        } catch (error: any) {
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
     async overview(_req: Request, res: Response) {
         try {
             // Every provider the platform knows about, from any source.

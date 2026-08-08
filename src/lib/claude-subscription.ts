@@ -217,30 +217,84 @@ export type SubscriptionRunOpts = {
 };
 
 /**
- * Flatten a conversation to a single prompt.
+ * Turn an AI SDK image part into an Anthropic image block.
  *
- * Returns null when any message carries something other than text —
- * images, audio, files. The harness takes a text prompt, and quietly
- * dropping an image would make the agent answer about a picture it never
- * saw, which is worse than paying for the API. Callers treat null as
- * "not eligible" and take the API path.
+ * Claude reads images on this rail exactly as it does on the API — the
+ * harness carries content blocks, not just a string. What it can't carry
+ * is audio or arbitrary files, so those still send the turn to the API.
  */
-function flattenMessages(messages: { role: string; content: any }[]): string | null {
-    const lines: string[] = [];
-    for (const m of messages) {
-        let text: string;
-        if (typeof m.content === 'string') {
-            text = m.content;
-        } else if (Array.isArray(m.content)) {
-            if (m.content.some((part: any) => part?.type && part.type !== 'text')) return null;
-            text = m.content.map((part: any) => part?.text || '').join('');
-        } else {
-            return null;
+function toImageBlock(part: any): any | null {
+    const img = part?.image ?? part?.data;
+    if (!img) return null;
+
+    if (img instanceof URL) return { type: 'image', source: { type: 'url', url: img.href } };
+    if (typeof img === 'string') {
+        if (/^https?:\/\//i.test(img)) return { type: 'image', source: { type: 'url', url: img } };
+        // A data: URI carries its own media type; a bare string is base64
+        // whose type we only know if the part told us.
+        const m = img.match(/^data:([^;]+);base64,(.*)$/);
+        if (m) return { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } };
+        if (part.mediaType || part.mimeType) {
+            return { type: 'image', source: { type: 'base64', media_type: part.mediaType || part.mimeType, data: img } };
         }
-        const who = m.role === 'assistant' ? 'Assistant' : m.role === 'system' ? 'System' : 'User';
-        lines.push(`${who}: ${text}`);
+        return null;
     }
-    return lines.join('\n\n');
+    if (img instanceof Uint8Array || Buffer.isBuffer(img)) {
+        const mediaType = part.mediaType || part.mimeType;
+        if (!mediaType) return null;   // guessing the type would corrupt the block
+        return {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: Buffer.from(img).toString('base64') },
+        };
+    }
+    return null;
+}
+
+/**
+ * Fold the conversation into the content blocks of a single user turn.
+ *
+ * The harness drives its own session, while our history lives in the
+ * database — this is the one place the two meet. Speaker labels keep the
+ * dialogue legible, and images stay inline at the point they were sent so
+ * "what is the price of this one?" still has a picture attached to "this
+ * one".
+ *
+ * Returns null when a part can't be represented — audio, documents, an
+ * image with no discoverable media type. Dropping it silently would make
+ * the agent answer about something it never saw, which is worse than
+ * paying for the API call.
+ */
+function buildContentBlocks(messages: { role: string; content: any }[]): any[] | null {
+    const blocks: any[] = [];
+    const pushText = (t: string) => {
+        const last = blocks[blocks.length - 1];
+        if (last?.type === 'text') last.text += t;
+        else blocks.push({ type: 'text', text: t });
+    };
+
+    for (const m of messages) {
+        const who = m.role === 'assistant' ? 'Assistant' : m.role === 'system' ? 'System' : 'User';
+        pushText(`${blocks.length ? '\n\n' : ''}${who}: `);
+
+        if (typeof m.content === 'string') {
+            pushText(m.content);
+            continue;
+        }
+        if (!Array.isArray(m.content)) return null;
+
+        for (const part of m.content) {
+            if (!part?.type || part.type === 'text') {
+                pushText(String(part?.text || ''));
+            } else if (part.type === 'image') {
+                const block = toImageBlock(part);
+                if (!block) return null;
+                blocks.push(block);
+            } else {
+                return null;
+            }
+        }
+    }
+    return blocks.length ? blocks : null;
 }
 
 /** Bridge AI SDK tools into an in-process MCP server the subprocess can call. */
@@ -281,8 +335,14 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
     const available = healthyTokens(cfg.tokens);
     if (!available.length) throw new SubscriptionError('no_token', 'No healthy subscription token.');
 
-    const prompt = flattenMessages(opts.messages);
-    if (prompt === null) throw new SubscriptionError('non_text', 'Conversation contains non-text parts.');
+    const blocks = buildContentBlocks(opts.messages);
+    if (blocks === null) throw new SubscriptionError('unsupported_content', 'Conversation carries a part this rail cannot send.');
+
+    // Streaming-input mode: one user turn whose content blocks hold the
+    // whole conversation, images included.
+    const prompt = (async function* () {
+        yield { type: 'user' as const, message: { role: 'user' as const, content: blocks }, parent_tool_use_id: null };
+    })();
 
     // Round-robin so a two-token pool actually spreads load rather than
     // exhausting the first token and then discovering the second.
@@ -409,10 +469,9 @@ export async function tryOnSubscription(
         return await runOnSubscription(opts);
     } catch (err: any) {
         const code = err instanceof SubscriptionError ? err.code : 'error';
-        // 'non_text' and 'untranslatable_tool' are routine — an image
-        // arrived, or a tool this rail can't express. Not worth a warning
-        // every time.
-        const routine = code === 'non_text' || code === 'untranslatable_tool' || code === 'disabled';
+        // Routine: a voice note or document arrived, or a tool this rail
+        // can't express. Not worth a warning every time.
+        const routine = code === 'unsupported_content' || code === 'untranslatable_tool' || code === 'disabled';
         const line = `[claude-sub] ${opts.label || 'turn'} not served (${code}: ${err.message}) — using the API key`;
         if (routine) logger.debug(line); else logger.warn(line);
         return null;

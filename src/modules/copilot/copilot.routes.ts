@@ -22,7 +22,5 @@ const adminController = new AdminCopilotController();
 adminRouter.use(authMiddleware, requireAdmin);
 adminRouter.get('/', adminController.getSettings.bind(adminController));
 adminRouter.put('/', adminController.saveSettings.bind(adminController));
-adminRouter.get('/subscription', adminController.getSubscription.bind(adminController));
-adminRouter.put('/subscription', adminController.saveSubscription.bind(adminController));
 
 export { userRouter as copilotUserRouter, adminRouter as adminCopilotRouter };

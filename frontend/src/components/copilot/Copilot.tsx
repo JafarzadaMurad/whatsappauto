@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, Coins, Maximize2 } from "lucide-react";
+import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, Coins, Maximize2, History, Plus } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { createSocket } from "@/lib/socket";
@@ -51,7 +51,44 @@ export default function Copilot() {
 
     const [config, setConfig] = useState<CopilotConfig | null>(null);
     const [balance, setBalance] = useState<{ remaining: number; totalBudget: number } | null>(null);
+    // Past conversations. Loaded on demand — the list is only worth a
+    // request when somebody actually opens it.
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [sessions, setSessions] = useState<{ id: string; title: string | null; totalCredits: number; updatedAt: string }[]>([]);
+    const [historyBusy, setHistoryBusy] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    const { setMessages } = useCopilotStore();
+
+    const openHistory = async () => {
+        setHistoryOpen(o => !o);
+        if (historyOpen) return;
+        setHistoryBusy(true);
+        try {
+            const r = await api.get('/copilot/sessions');
+            if (r.data.success) setSessions(r.data.sessions || []);
+        } catch { /* an unreachable list is not worth an alert */ }
+        finally { setHistoryBusy(false); }
+    };
+
+    const loadSession = async (id: string) => {
+        setHistoryBusy(true);
+        try {
+            const r = await api.get(`/copilot/sessions/${id}`);
+            if (r.data.success) {
+                setMessages(r.data.session.messages || []);
+                setSession(id);
+                setHistoryOpen(false);
+            }
+        } catch { /* leave the current conversation alone */ }
+        finally { setHistoryBusy(false); }
+    };
+
+    const newChat = () => {
+        setMessages([]);
+        setSession(null);
+        setHistoryOpen(false);
+    };
 
     // Voice mode WebRTC — split into its own hook to keep this file focused.
     // Errors land as an assistant-role message in the transcript so the user
@@ -178,8 +215,8 @@ export default function Copilot() {
                     role: 'assistant',
                     content: res.data.reply || '(no reply)',
                     toolCalls: res.data.toolCalls,
-                    servedModel: res.data.model,
-                    engine: res.data.engine,
+                    model: res.data.model,
+                    credits: res.data.credits,
                     at: new Date().toISOString(),
                 });
                 // Refresh balance
@@ -256,6 +293,14 @@ export default function Copilot() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
+                                <button onClick={newChat} title="New chat"
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                                <button onClick={openHistory} title="Past chats"
+                                    className={`p-1.5 rounded-lg hover:bg-secondary/50 ${historyOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+                                    <History className="w-4 h-4" />
+                                </button>
                                 <button onClick={() => { close(); router.push('/dashboard/copilot'); }}
                                     title="Open full page"
                                     className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
@@ -268,6 +313,27 @@ export default function Copilot() {
                             </div>
                         </div>
                     </div>
+
+                    {historyOpen && (
+                        <div className="border-b border-border max-h-64 overflow-y-auto">
+                            {historyBusy && (
+                                <div className="p-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+                            )}
+                            {!historyBusy && sessions.length === 0 && (
+                                <p className="p-4 text-xs text-muted-foreground text-center">No past chats yet.</p>
+                            )}
+                            {!historyBusy && sessions.map(sn => (
+                                <button key={sn.id} onClick={() => loadSession(sn.id)}
+                                    className={`w-full text-left px-4 py-2 hover:bg-secondary/50 border-b border-border/50 last:border-0 ${sn.id === sessionId ? 'bg-secondary/30' : ''}`}>
+                                    <div className="text-xs truncate">{sn.title || 'Untitled chat'}</div>
+                                    <div className="text-[10px] text-muted-foreground flex items-center gap-2">
+                                        <span>{new Date(sn.updatedAt).toLocaleString()}</span>
+                                        {sn.totalCredits > 0 && <span>· {sn.totalCredits} cai</span>}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
 
                     {/* Messages */}
                     <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -314,14 +380,15 @@ export default function Copilot() {
                                             ))}
                                         </div>
                                     )}
-                                    {/* Which model answered. The picker states
-                                        an intent; this states what happened —
-                                        they differ when the pool is pinned to
-                                        an override or a rail falls back. */}
-                                    {m.role === 'assistant' && m.servedModel && (
+                                    {/* What answered and what it cost. The
+                                        picker states an intent; this states
+                                        what happened. Which credential we
+                                        used is our business, not the user's,
+                                        so it isn't shown. */}
+                                    {m.role === 'assistant' && (m.model || m.credits != null) && (
                                         <div className="mt-1.5 text-[10px] font-mono text-muted-foreground/70">
-                                            {m.servedModel}
-                                            {m.engine === 'subscription' && ' · subscription'}
+                                            {m.model}
+                                            {m.credits != null && `${m.model ? ' · ' : ''}${m.credits} cai`}
                                         </div>
                                     )}
                                 </div>

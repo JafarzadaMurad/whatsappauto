@@ -221,7 +221,7 @@ export async function recordUsagePostHoc(
         cause: CreditCause;
     },
     aiResult: any
-): Promise<void> {
+): Promise<number | null> {
     const { workspaceId, userId, agentId, providerInfo, model, cause } = opts;
 
     // Turns served by the Claude subscription pool are billed exactly like
@@ -230,7 +230,7 @@ export async function recordUsagePostHoc(
     // not theirs. The subscription changes our cost, not their price.
     if (!workspaceId) {
         logger.warn({ providerInfo: providerInfo.provider, model, cause }, '[credit-guard] skipped — no workspaceId');
-        return;
+        return null;
     }
     try {
         // Fetch plan settings to know if BYOK is allowed (governs
@@ -285,6 +285,9 @@ export async function recordUsagePostHoc(
                 })]
                 : []),
         ]);
+        // Handed back so a caller that wants to show the user what a
+        // turn cost doesn't have to price it a second time.
+        return chargedCredits;
     } catch (err: any) {
         logger.error({
             err: err.message,
@@ -294,6 +297,7 @@ export async function recordUsagePostHoc(
             model,
             cause,
         }, '[credit-guard] post-hoc ledger write failed');
+        return null;
     }
 }
 

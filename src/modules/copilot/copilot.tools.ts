@@ -274,7 +274,44 @@ export function buildCopilotTools(ctx: ToolCtx): CopilotToolBag {
 function registerCopilotUiTools(reg: RegisterToolFn) {
     reg(
         'navigate_to',
-        'Navigate the user to a page inside the alChatBot dashboard. Use this whenever the user asks you to open, show, or take them to something (e.g. "open my agents", "show me the inbox"). `path` must start with /dashboard/. Common paths: /dashboard, /dashboard/inbox, /dashboard/whatsapp, /dashboard/instagram, /dashboard/ai/agents, /dashboard/ai/providers, /dashboard/campaigns, /dashboard/contacts, /dashboard/crm/deals, /dashboard/automations, /dashboard/webhooks, /dashboard/api-keys, /dashboard/usage, /dashboard/copilot, /dashboard/settings/copilot, /dashboard/admin/plans (admin only).',
+        'Navigate the user to a page inside the alChatBot dashboard. Use this whenever the user asks to open, ' +
+        'show, or be taken to something ("open my agents", "show me the inbox"). `path` must start with /dashboard. ' +
+        'Pick from this list — it is every page that exists, so do not invent paths and do not substitute a ' +
+        'near-match (analytics and usage are different pages):\n' +
+        '/dashboard — home overview\n' +
+        '/dashboard/analytics — charts: messages, conversations, agent performance over time\n' +
+        '/dashboard/usage — cai credit consumption and per-model spend\n' +
+        '/dashboard/billing — plan, invoices, top-ups\n' +
+        '/dashboard/inbox — live conversations across every channel\n' +
+        '/dashboard/whatsapp — WhatsApp instances and QR pairing\n' +
+        '/dashboard/instagram — Instagram accounts\n' +
+        '/dashboard/meta — Facebook / Meta connections\n' +
+        '/dashboard/connectors — third-party integrations\n' +
+        '/dashboard/ai/agents — AI agents list\n' +
+        '/dashboard/ai/routers — routing rules between agents\n' +
+        '/dashboard/ai/tables — custom data tables agents can read\n' +
+        '/dashboard/ai/providers — the workspace\'s own AI provider keys\n' +
+        '/dashboard/oversight — oversight agents reviewing other agents\n' +
+        '/dashboard/voice/assistants — voice assistants\n' +
+        '/dashboard/voice/calls — call history and AI summaries\n' +
+        '/dashboard/voice/numbers — phone numbers\n' +
+        '/dashboard/campaigns — outbound campaigns\n' +
+        '/dashboard/contacts — contact list\n' +
+        '/dashboard/crm — CRM overview\n' +
+        '/dashboard/crm/deals — deal pipelines\n' +
+        '/dashboard/automations — automation flows\n' +
+        '/dashboard/webhooks — outgoing webhooks\n' +
+        '/dashboard/api-keys — API keys\n' +
+        '/dashboard/mcp — MCP server connection details\n' +
+        '/dashboard/copilot — the full-page copilot\n' +
+        '/dashboard/settings/copilot — this workspace\'s copilot rules\n' +
+        '/dashboard/workspace — workspace members and settings\n' +
+        '/dashboard/profile — the signed-in user\'s profile\n' +
+        '/dashboard/referrals — referral programme\n' +
+        'Admin only: /dashboard/admin/users, /dashboard/admin/plans, /dashboard/admin/payments, ' +
+        '/dashboard/admin/ai-providers, /dashboard/admin/ai-models, /dashboard/admin/ai-pricing, ' +
+        '/dashboard/admin/announcements, /dashboard/admin/email, /dashboard/admin/auth, ' +
+        '/dashboard/admin/copilot, /dashboard/admin/referrals, /dashboard/admin/user-access.',
         {
             path: z.string().min(1).max(200),
             reason: z.string().max(200).optional(),

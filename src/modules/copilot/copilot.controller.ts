@@ -416,35 +416,54 @@ export class CopilotController {
                 );
             }
 
-            // 6. Persist the turn
-            const updatedMessages = [
-                ...history,
-                { role: 'user', content: body.message, at: new Date().toISOString() },
-                { role: 'assistant', content: reply, toolCalls, at: new Date().toISOString() },
-            ];
-            // Auto-derive a title from the first user turn if the session
-            // doesn't have one yet — the future history sidebar shows it.
-            const title = existing.title || body.message.slice(0, 60);
-            await prisma.copilotSession.update({
-                where: { id: sessionId },
-                data: { messages: updatedMessages, title, updatedAt: new Date() },
-            });
-
-            // 7. Bill cai. Both rails are billed the same: the customer
+            // 6. Bill cai. Both rails are billed the same: the customer
             // bought the work, priced by the model they picked. Where the
             // capacity came from is our side of the ledger.
+            //
+            // Awaited rather than fired-and-forgotten because the turn's
+            // cost is shown next to the reply, and a number that only
+            // appears on some turns reads as a bug.
             const billable = result || {
                 usage: subUsage,
                 providerMetadata: subMeta,
             };
-            void recordUsagePostHoc({
+            const credits = await recordUsagePostHoc({
                 workspaceId,
                 userId,
                 agentId: null,
                 providerInfo: { provider, apiKey: '', useOwnKey: false },
                 model,
                 cause: 'other',
-            }, billable);
+            }, billable).catch(() => null);
+
+            const servedWith = servedModel || model;
+
+            // 7. Persist the turn. The model and cost are stored on the
+            // message, not derived at render time — reopening a session
+            // months later should show what that turn actually ran on,
+            // not what the picker happens to say today.
+            const updatedMessages = [
+                ...history,
+                { role: 'user', content: body.message, at: new Date().toISOString() },
+                {
+                    role: 'assistant', content: reply, toolCalls,
+                    model: servedWith,
+                    credits,
+                    at: new Date().toISOString(),
+                },
+            ];
+            // Auto-derive a title from the first user turn if the session
+            // doesn't have one yet — the history sidebar shows it.
+            const title = existing.title || body.message.slice(0, 60);
+            await prisma.copilotSession.update({
+                where: { id: sessionId },
+                data: {
+                    messages: updatedMessages,
+                    title,
+                    updatedAt: new Date(),
+                    ...(credits ? { totalCredits: { increment: credits } } : {}),
+                },
+            });
 
             return res.json({
                 success: true,
@@ -452,12 +471,13 @@ export class CopilotController {
                 reply,
                 toolCalls,
                 durationMs,
-                // Which rail served this turn. Surfaced so a seat that
-                // silently stopped working shows up as an unexpected
-                // "api" instead of as a larger bill next month.
+                model: servedWith,
+                credits,
+                // Which rail served this turn. Not shown to the user —
+                // which credential we used is our business, not theirs —
+                // but logged and available for debugging.
                 engine,
                 servedBy,
-                model: servedModel || model,
                 usage: result?.usage ?? subUsage,
             });
         } catch (error: any) {

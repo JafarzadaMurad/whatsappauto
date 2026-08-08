@@ -224,12 +224,10 @@ export async function recordUsagePostHoc(
 ): Promise<void> {
     const { workspaceId, userId, agentId, providerInfo, model, cause } = opts;
 
-    // A turn served by a Claude subscription cost no tokens against any
-    // API key, so there is nothing to price. Charging the workspace pool
-    // for it would invent a cost that never existed. Checked here rather
-    // than at each callsite so no future callsite can forget.
-    if (aiResult?.__subscription) return;
-
+    // Turns served by the Claude subscription pool are billed exactly like
+    // API turns. What the customer buys is the work, priced by the model
+    // they picked — how we sourced the capacity is our side of the ledger,
+    // not theirs. The subscription changes our cost, not their price.
     if (!workspaceId) {
         logger.warn({ providerInfo: providerInfo.provider, model, cause }, '[credit-guard] skipped — no workspaceId');
         return;

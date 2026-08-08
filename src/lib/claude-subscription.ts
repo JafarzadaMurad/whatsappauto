@@ -198,6 +198,8 @@ export type SubscriptionResult = {
     /** Same shape the AI SDK produces, so callers read it unchanged. */
     steps: { toolCalls: { toolName: string; args: any }[]; toolResults: any[] }[];
     usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    /** Shaped like the AI SDK's, so pricing reads cache hits the same way. */
+    providerMetadata: { anthropic: { cacheReadInputTokens: number } };
     tokenId: string;
     durationMs: number;
 };
@@ -361,6 +363,7 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
     const text: string[] = [];
     const toolCalls: { toolName: string; args: any }[] = [];
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    let cacheReadTokens = 0;
 
     const run = query({
         prompt,
@@ -419,6 +422,10 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
                     outputTokens: Number(u.output_tokens || 0),
                     totalTokens: Number(u.input_tokens || 0) + Number(u.output_tokens || 0),
                 };
+                // Cache hits are billed at a fraction of input, and the
+                // harness caches aggressively — dropping this number would
+                // overcharge the customer for tokens that were cheap.
+                cacheReadTokens = Number(u.cache_read_input_tokens || 0);
             }
         }
     } catch (err: any) {
@@ -448,6 +455,7 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
         // and the harness doesn't expose its own step boundaries.
         steps: [{ toolCalls, toolResults: [] }],
         usage,
+        providerMetadata: { anthropic: { cacheReadInputTokens: cacheReadTokens } },
         tokenId: picked.id,
         durationMs,
     };

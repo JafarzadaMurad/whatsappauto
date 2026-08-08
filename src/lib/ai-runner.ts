@@ -87,8 +87,10 @@ export async function runAgentGenerate<T = any>(opts: RunAgentGenerateOpts): Pro
  *
  * Callers pass exactly what they passed generateText, plus the
  * providerInfo they already had. The returned object is shaped the same
- * either way — `.text`, `.steps`, `.usage` — with `__subscription: true`
- * on the free path so billing knows to stay out of it.
+ * either way — `.text`, `.steps`, `.usage`, `.providerMetadata` — so
+ * billing prices a pooled turn exactly like an API one. The subscription
+ * changes what the capacity costs us, not what the work costs the
+ * customer. `__subscription` is there for logging, not for billing.
  *
  * Anything the subscription can't serve (a workspace on its own key, an
  * image in the conversation, an exhausted pool) simply falls through to
@@ -110,6 +112,7 @@ export async function generateTextRouted(
             text: sub.text,
             steps: sub.steps,
             usage: sub.usage,
+            providerMetadata: sub.providerMetadata,
             __subscription: true,
             __subscriptionToken: sub.tokenId,
         };

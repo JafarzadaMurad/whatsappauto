@@ -353,6 +353,8 @@ export class CopilotController {
             let engine: 'subscription' | 'api' = 'api';
             let servedBy: string | null = null;
             let result: any = null;
+            let subUsage: any = null;
+            let subMeta: any = null;
 
             if (canUseSub) {
                 try {
@@ -368,6 +370,8 @@ export class CopilotController {
                     durationMs = turn.durationMs;
                     engine = 'subscription';
                     servedBy = turn.tokenId;
+                    subUsage = turn.usage;
+                    subMeta = turn.providerMetadata;
                 } catch (err: any) {
                     const code = err instanceof SubscriptionError ? err.code : 'error';
                     logger.warn(
@@ -421,19 +425,21 @@ export class CopilotController {
                 data: { messages: updatedMessages, title, updatedAt: new Date() },
             });
 
-            // 7. Bill cai — API turns only. A subscription turn costs the
-            // platform nothing per token, so deducting from the workspace
-            // pool would be charging for something nobody paid for.
-            if (engine === 'api' && result) {
-                void recordUsagePostHoc({
-                    workspaceId,
-                    userId,
-                    agentId: null,
-                    providerInfo: { provider, apiKey: '', useOwnKey: false },
-                    model,
-                    cause: 'other',
-                }, result);
-            }
+            // 7. Bill cai. Both rails are billed the same: the customer
+            // bought the work, priced by the model they picked. Where the
+            // capacity came from is our side of the ledger.
+            const billable = result || {
+                usage: subUsage,
+                providerMetadata: subMeta,
+            };
+            void recordUsagePostHoc({
+                workspaceId,
+                userId,
+                agentId: null,
+                providerInfo: { provider, apiKey: '', useOwnKey: false },
+                model,
+                cause: 'other',
+            }, billable);
 
             return res.json({
                 success: true,
@@ -446,7 +452,7 @@ export class CopilotController {
                 // "api" instead of as a larger bill next month.
                 engine,
                 servedBy,
-                usage: result?.usage ?? null,
+                usage: result?.usage ?? subUsage,
             });
         } catch (error: any) {
             // Anthropic/OpenAI SDK errors expose status + a nested `error`

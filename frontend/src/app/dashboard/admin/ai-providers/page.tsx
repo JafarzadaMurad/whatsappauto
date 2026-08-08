@@ -875,8 +875,8 @@ function ClaudeSubscriptionPool() {
                     <h3 className="font-semibold text-sm">Subscription pool</h3>
                     <p className="text-xs text-muted-foreground mt-1">
                         Run Claude on subscription tokens instead of the API key above — copilot, WhatsApp agents,
-                        Instagram, campaign openers and oversight all use it. Turns served from the pool cost nothing
-                        per token and no cai is deducted for them.
+                        Instagram, campaign openers and oversight all use it. Customers are billed cai exactly as
+                        before; what changes is our cost, not their price.
                     </p>
                     <p className="text-[10px] text-muted-foreground mt-1">
                         A workspace on its own Anthropic key is never diverted here — they are paying their own

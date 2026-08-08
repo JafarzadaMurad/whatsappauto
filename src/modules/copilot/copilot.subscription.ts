@@ -44,6 +44,9 @@ export type CopilotSubscriptionTurn = {
     toolCalls: { name: string; args: any }[];
     durationMs: number;
     tokenId: string;
+    /** Pooled turns are billed like API ones — the customer bought the work. */
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    providerMetadata: { anthropic: { cacheReadInputTokens: number } };
 };
 
 /** Is the copilot allowed to use the pool for this workspace's provider? */
@@ -88,5 +91,7 @@ export async function runCopilotSubscriptionTurn(opts: {
         }))),
         durationMs: res.durationMs,
         tokenId: res.tokenId,
+        usage: res.usage,
+        providerMetadata: res.providerMetadata,
     };
 }

@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 import { recordUsagePostHoc } from '../../lib/credit-guard';
+import { generateTextRouted } from '../../lib/ai-runner';
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -205,7 +206,7 @@ export async function runOversightAgent(oversightId: string): Promise<{ ok: bool
         const prompt = await buildAnalysisPrompt(oversight, agents, oversight.lookbackDays);
         const model = buildOversightModel(oversight.provider.provider, oversight.provider.apiKey, oversight.model);
 
-        const result = await generateText({
+        const result = await generateTextRouted(oversight.provider as any, 'oversight', {
             model,
             system: prompt,
             messages: [{ role: 'user', content: 'Now produce the JSON.' }],

@@ -26,7 +26,7 @@ import { recordUsagePostHoc, getCreditBalance } from '../../lib/credit-guard';
 import { resolvePlatformKey } from '../../lib/ai-pricing';
 import { isModelAllowed, loadCatalog, normaliseProvider } from '../../lib/model-access';
 import { buildCopilotTools, buildCopilotVoiceTools } from './copilot.tools';
-import { runSubscriptionTurn, accountForUser, SubscriptionError } from './copilot.subscription';
+import { runCopilotSubscriptionTurn, copilotCanUseSubscription, SubscriptionError } from './copilot.subscription';
 import { DEFAULT_COPILOT_PROMPT, buildRuntimeContext } from './copilot.prompt';
 
 // Which model the copilot runs on. Admin-configurable via SystemConfig
@@ -348,10 +348,10 @@ export class CopilotController {
             let servedBy: string | null = null;
             let result: any = null;
 
-            const seat = await accountForUser(userId).catch(() => null);
-            if (seat) {
+            const useSub = await copilotCanUseSubscription({ provider, useOwnKey: false }).catch(() => false);
+            if (useSub) {
                 try {
-                    const turn = await runSubscriptionTurn({
+                    const turn = await runCopilotSubscriptionTurn({
                         userId,
                         workspaceId,
                         systemPrompt,
@@ -362,11 +362,7 @@ export class CopilotController {
                     toolCalls = turn.toolCalls;
                     durationMs = turn.durationMs;
                     engine = 'subscription';
-                    servedBy = turn.accountId;
-                    logger.info(
-                        `[copilot] served by subscription · user=${userId} account=${turn.accountId} ` +
-                        `tools=${turn.toolCalls.length} ${turn.durationMs}ms`
-                    );
+                    servedBy = turn.tokenId;
                 } catch (err: any) {
                     const code = err instanceof SubscriptionError ? err.code : 'error';
                     logger.warn(
@@ -697,35 +693,15 @@ export class CopilotController {
 
 // ─── Admin sub-controller ──────────────────────────────────────────
 export class AdminCopilotController {
-    // Which people hold a Claude seat, and which account serves each.
+    // The shared Claude subscription pool, used platform-wide.
     //
-    // Tokens are never returned — only whether one is present. A seat is
-    // a credential, and an endpoint that reads credentials back is one
-    // XSS away from handing them out.
+    // Tokens are never returned — only labels and whether one is stored.
+    // A token is a credential, and an endpoint that reads credentials
+    // back is one XSS away from handing them out.
     async getSubscription(_req: Request, res: Response) {
         try {
-            const { loadSubscriptionConfig } = await import('./copilot.subscription');
-            const cfg = await loadSubscriptionConfig();
-
-            // Only admins can hold a seat: this rail exists for the people
-            // who run the platform, and listing every customer here would
-            // invite assigning one to a customer by accident.
-            const admins = await prisma.user.findMany({
-                where: { role: 'ADMIN' },
-                orderBy: { createdAt: 'asc' },
-                select: { id: true, name: true, email: true },
-            });
-
-            return res.json({
-                success: true,
-                enabled: cfg.enabled,
-                model: cfg.model,
-                accounts: cfg.accounts.map(a => ({
-                    id: a.id, label: a.label, configKey: a.configKey, tokenSet: a.tokenSet,
-                })),
-                userMap: cfg.userMap,
-                users: admins,
-            });
+            const { getSubscriptionSettings } = await import('../../lib/claude-subscription');
+            return res.json({ success: true, ...(await getSubscriptionSettings()) });
         } catch (error: any) {
             return res.status(500).json({ success: false, message: error.message });
         }
@@ -736,28 +712,20 @@ export class AdminCopilotController {
             const body = z.object({
                 enabled: z.boolean().optional(),
                 model: z.string().max(120).nullable().optional(),
-                userMap: z.record(z.string(), z.string()).optional(),
-                // Only non-empty values are written, so an untouched
-                // password field can't blank a working token.
-                tokens: z.record(z.string(), z.string()).optional(),
+                tokens: z.array(z.object({
+                    id: z.string().optional(),
+                    label: z.string().max(80).optional(),
+                    // Blank means "keep what is stored" — the browser is
+                    // never sent a token, so it cannot echo one back.
+                    token: z.string().optional(),
+                    remove: z.boolean().optional(),
+                })).optional(),
             }).parse(req.body);
 
-            const tokens = Object.fromEntries(
-                Object.entries(body.tokens || {}).filter(([, v]) => v && v.trim())
-            );
-
-            const { saveSubscriptionConfig, loadSubscriptionConfig } = await import('./copilot.subscription');
-            await saveSubscriptionConfig({ ...body, tokens });
-            const cfg = await loadSubscriptionConfig();
-            return res.json({
-                success: true,
-                enabled: cfg.enabled,
-                model: cfg.model,
-                accounts: cfg.accounts.map(a => ({
-                    id: a.id, label: a.label, configKey: a.configKey, tokenSet: a.tokenSet,
-                })),
-                userMap: cfg.userMap,
-            });
+            const { saveSubscriptionSettings, getSubscriptionSettings } =
+                await import('../../lib/claude-subscription');
+            await saveSubscriptionSettings(body);
+            return res.json({ success: true, ...(await getSubscriptionSettings()) });
         } catch (error: any) {
             if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });

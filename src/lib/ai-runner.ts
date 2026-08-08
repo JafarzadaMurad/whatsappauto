@@ -17,6 +17,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
 import { runWithCredits, CreditCause } from './credit-guard';
+import { tryOnSubscription } from './claude-subscription';
 
 export type ProviderInfoLike = {
     provider: string;      // 'OPENAI' | 'CLAUDE' | 'GEMINI' | 'GLM' | 'ANTHROPIC' | 'GOOGLE'
@@ -78,4 +79,40 @@ export async function runAgentGenerate<T = any>(opts: RunAgentGenerateOpts): Pro
         }
     );
     return result;
+}
+
+/**
+ * `generateText`, but routed: a Claude request that qualifies for the
+ * subscription pool runs there instead, free of charge.
+ *
+ * Callers pass exactly what they passed generateText, plus the
+ * providerInfo they already had. The returned object is shaped the same
+ * either way — `.text`, `.steps`, `.usage` — with `__subscription: true`
+ * on the free path so billing knows to stay out of it.
+ *
+ * Anything the subscription can't serve (a workspace on its own key, an
+ * image in the conversation, an exhausted pool) simply falls through to
+ * the original call. Failure here costs money, never a reply.
+ */
+export async function generateTextRouted(
+    providerInfo: ProviderInfoLike,
+    label: string,
+    genOpts: any
+): Promise<any> {
+    const sub = await tryOnSubscription(providerInfo, {
+        label,
+        system: genOpts.system,
+        messages: genOpts.messages || (genOpts.prompt ? [{ role: 'user', content: genOpts.prompt }] : []),
+        tools: genOpts.tools,
+    });
+    if (sub) {
+        return {
+            text: sub.text,
+            steps: sub.steps,
+            usage: sub.usage,
+            __subscription: true,
+            __subscriptionToken: sub.tokenId,
+        };
+    }
+    return generateText(genOpts);
 }

@@ -11,6 +11,7 @@ import { AutomationEngine, type RichDmPayload, type MediaPayload } from '../auto
 import { upsertCrmContact } from '../client/client.service';
 import { extractIgReferrer } from '../ads/ad-referrer';
 import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
+import { generateTextRouted } from '../../lib/ai-runner';
 
 // makeTool used only for IG-specific tools (polls fallback). The
 // universal skill builder is imported from ai.service.ts so IG picks
@@ -18,7 +19,10 @@ import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
 // http, live_operator) automatically — no duplication.
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
     const wrapped = zodSchema(schema);
-    return { description, parameters: wrapped, inputSchema: wrapped, execute };
+    // `_zod` keeps the original object around: the AI SDK only needs the
+    // wrapped form, but the subscription rail has to re-express each tool
+    // for a different harness and cannot recover a zod shape from it.
+    return { description, parameters: wrapped, inputSchema: wrapped, execute, _zod: schema };
 }
 
 // Instagram DMs have no native poll type — closest analogue is
@@ -749,7 +753,7 @@ export class InstagramAiService {
             messages.push({ role: 'user', content: messageText });
         }
 
-        const result = await generateText({
+        const result = await generateTextRouted(providerInfo, 'instagram_dm', {
             model: aiModel,
             system: systemPrompt,
             messages: applyAnthropicCacheControl(providerInfo.provider, messages),

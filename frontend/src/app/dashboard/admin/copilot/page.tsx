@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, Loader2, Save, RotateCcw, Cpu, KeyRound, Check } from "lucide-react";
+import { Bot, Loader2, Save, RotateCcw, Cpu, KeyRound, Plus, Trash2, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
 import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 
@@ -24,15 +24,16 @@ type Settings = {
     voiceModels: string[];
 };
 
-type SubAccount = { id: string; label: string; configKey: string; tokenSet: boolean };
-type SubUser = { id: string; name: string | null; email: string };
-type SubCfg = {
-    enabled: boolean;
-    model: string | null;
-    accounts: SubAccount[];
-    userMap: Record<string, string>;
-    users: SubUser[];
+type SubToken = {
+    id: string;
+    label: string;
+    tokenSet: boolean;
+    /** Epoch ms until which the pool is skipping this token, if any. */
+    cooldownUntil: number | null;
 };
+type SubCfg = { enabled: boolean; model: string | null; tokens: SubToken[] };
+/** A row being edited. `token` is only ever filled in by the admin. */
+type TokenDraft = { id?: string; label: string; token: string; tokenSet: boolean; cooldownUntil: number | null };
 
 export default function AdminCopilotPage() {
     const [cfg, setCfg] = useState<Settings | null>(null);
@@ -47,7 +48,7 @@ export default function AdminCopilotPage() {
     // write-only, so folding them into the shared dirty-check would mean
     // re-sending blank token fields on every unrelated save.
     const [sub, setSub] = useState<SubCfg | null>(null);
-    const [tokens, setTokens] = useState<Record<string, string>>({});
+    const [drafts, setDrafts] = useState<TokenDraft[]>([]);
     const [subSaving, setSubSaving] = useState(false);
     const [subSaved, setSubSaved] = useState(false);
     const fingerprint = (c: Settings | null) => c ? JSON.stringify({
@@ -78,14 +79,14 @@ export default function AdminCopilotPage() {
     const loadSub = async () => {
         try {
             const res = await api.get('/admin/copilot/subscription');
-            if (res.data.success) setSub({
-                enabled: res.data.enabled,
-                model: res.data.model,
-                accounts: res.data.accounts || [],
-                userMap: res.data.userMap || {},
-                users: res.data.users || [],
-            });
-        } catch { /* seats are optional — the API path still works without them */ }
+            if (res.data.success) {
+                const list: SubToken[] = res.data.tokens || [];
+                setSub({ enabled: res.data.enabled, model: res.data.model, tokens: list });
+                setDrafts(list.map(t => ({
+                    id: t.id, label: t.label, token: '', tokenSet: t.tokenSet, cooldownUntil: t.cooldownUntil,
+                })));
+            }
+        } catch { /* the pool is optional — the API key path works without it */ }
     };
     useEffect(() => { load(); loadSub(); }, []);
 
@@ -97,14 +98,16 @@ export default function AdminCopilotPage() {
             const res = await api.put('/admin/copilot/subscription', {
                 enabled: sub.enabled,
                 model: sub.model || null,
-                userMap: sub.userMap,
-                tokens,
+                tokens: drafts.map(d => ({ id: d.id, label: d.label, token: d.token })),
             });
             if (res.data.success) {
-                setSub({ ...sub, accounts: res.data.accounts, userMap: res.data.userMap });
-                // Clear the inputs so a stored token is never sitting in
-                // the DOM after it has been saved.
-                setTokens({});
+                const list: SubToken[] = res.data.tokens || [];
+                setSub({ ...sub, tokens: list });
+                // Rebuild from the server so a saved token is never left
+                // sitting in the DOM.
+                setDrafts(list.map(t => ({
+                    id: t.id, label: t.label, token: '', tokenSet: t.tokenSet, cooldownUntil: t.cooldownUntil,
+                })));
                 setSubSaved(true);
             }
         } catch (err: any) {
@@ -203,15 +206,16 @@ export default function AdminCopilotPage() {
                     <div className="flex items-start gap-3">
                         <div className="p-2 bg-primary/10 text-primary rounded-lg"><KeyRound className="w-4 h-4" /></div>
                         <div className="flex-1">
-                            <h2 className="font-semibold">Claude subscription seats</h2>
+                            <h2 className="font-semibold">Claude subscription pool</h2>
                             <p className="text-xs text-muted-foreground mt-1">
-                                Run the copilot on a Claude subscription instead of the platform API key. A user with a
-                                seat costs nothing per token and no cai is deducted for their turns. Anyone without a
-                                seat — and any turn a seat fails to serve — falls back to the API key automatically.
+                                One shared pool of subscription tokens, used platform-wide — copilot, WhatsApp agents,
+                                Instagram, campaign openers and oversight. Turns served from the pool cost nothing per
+                                token and no cai is deducted for them.
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
-                                Copilot only. WhatsApp and voice agents stay on the API: a subscription's rate limit is
-                                sized for one person's day, not for round-the-clock traffic.
+                                A workspace on its own Anthropic key is never diverted here — they are paying their own
+                                provider bill. Everyone else uses the pool when it is on, and the platform API key when
+                                it is off or exhausted.
                             </p>
                         </div>
                     </div>
@@ -220,8 +224,18 @@ export default function AdminCopilotPage() {
                         <input type="checkbox" checked={sub.enabled}
                             onChange={e => setSub({ ...sub, enabled: e.target.checked })}
                             className="rounded border-border" />
-                        Use subscription seats when available
+                        Use the subscription pool instead of the platform API key
                     </label>
+
+                    <div className="flex items-start gap-2 text-[11px] text-amber-400 bg-amber-400/5 border border-amber-400/20 rounded-lg p-3">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+                        <span>
+                            A subscription's rate limit is sized for one person's day of work, and the agents answer
+                            around the clock. Expect the pool to run out under real traffic — when it does, a token is
+                            benched for a while and everything falls back to the API key on its own. Nothing breaks;
+                            it just costs money again until the limit resets.
+                        </span>
+                    </div>
 
                     <div>
                         <label className="text-xs font-medium text-muted-foreground">Model override (optional)</label>
@@ -231,46 +245,49 @@ export default function AdminCopilotPage() {
                     </div>
 
                     <div className="space-y-2">
-                        <h3 className="text-xs font-medium text-muted-foreground">OAuth tokens</h3>
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-medium text-muted-foreground">Tokens</h3>
+                            <button type="button"
+                                onClick={() => setDrafts([...drafts, {
+                                    label: `Token ${drafts.length + 1}`, token: '', tokenSet: false, cooldownUntil: null,
+                                }])}
+                                className="text-xs text-primary hover:underline flex items-center gap-1">
+                                <Plus className="w-3 h-3" /> Add token
+                            </button>
+                        </div>
                         <p className="text-[10px] text-muted-foreground">
-                            Run <code className="font-mono">claude setup-token</code> while logged into each
-                            subscription and paste the token here. Tokens are stored server-side and never sent back
-                            to the browser — leave a field blank to keep the one already saved.
+                            Run <code className="font-mono">claude setup-token</code> while logged into each Claude
+                            subscription and paste the token here. Tokens are stored server-side and never sent back to
+                            the browser — leave a field blank to keep the one already saved.
                         </p>
-                        {sub.accounts.map(a => (
-                            <div key={a.id} className="flex items-center gap-2">
-                                <span className="text-xs w-20 shrink-0">{a.label}</span>
-                                <input type="password" autoComplete="new-password"
-                                    value={tokens[a.id] ?? ''}
-                                    onChange={e => setTokens({ ...tokens, [a.id]: e.target.value })}
-                                    placeholder={a.tokenSet ? '•••••••• saved' : 'not set'}
-                                    className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-1.5 text-xs font-mono" />
-                                {a.tokenSet && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="space-y-2">
-                        <h3 className="text-xs font-medium text-muted-foreground">Who uses which seat</h3>
-                        {sub.users.length === 0 ? (
-                            <p className="text-xs text-muted-foreground">No admin users found.</p>
-                        ) : sub.users.map(u => (
-                            <div key={u.id} className="flex items-center gap-2">
-                                <span className="text-xs flex-1 truncate">{u.name || u.email}</span>
-                                <select value={sub.userMap[u.id] || ''}
-                                    onChange={e => {
-                                        const next = { ...sub.userMap };
-                                        if (e.target.value) next[u.id] = e.target.value; else delete next[u.id];
-                                        setSub({ ...sub, userMap: next });
-                                    }}
-                                    className="bg-card border border-border rounded-lg px-2 py-1 text-xs">
-                                    <option value="" className="bg-card">API key</option>
-                                    {sub.accounts.map(a => (
-                                        <option key={a.id} value={a.id} className="bg-card">{a.label}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        ))}
+                        {drafts.length === 0 && (
+                            <p className="text-xs text-muted-foreground">No tokens yet — the API key is being used.</p>
+                        )}
+                        {drafts.map((d, i) => {
+                            const benched = d.cooldownUntil && d.cooldownUntil > Date.now();
+                            return (
+                                <div key={d.id || `new-${i}`} className="flex items-center gap-2">
+                                    <input value={d.label}
+                                        onChange={e => setDrafts(drafts.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                                        placeholder="label"
+                                        className="w-32 shrink-0 bg-secondary/30 border border-border rounded-lg px-2 py-1.5 text-xs" />
+                                    <input type="password" autoComplete="new-password"
+                                        value={d.token}
+                                        onChange={e => setDrafts(drafts.map((x, j) => j === i ? { ...x, token: e.target.value } : x))}
+                                        placeholder={d.tokenSet ? '•••••••• saved' : 'sk-ant-oat01-...'}
+                                        className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-1.5 text-xs font-mono" />
+                                    {benched && (
+                                        <span className="text-[10px] text-amber-400 shrink-0" title="Skipped until the limit resets">
+                                            benched
+                                        </span>
+                                    )}
+                                    <button type="button" onClick={() => setDrafts(drafts.filter((_, j) => j !== i))}
+                                        className="text-muted-foreground hover:text-red-400 shrink-0" title="Remove">
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            );
+                        })}
                     </div>
 
                     <div className="flex items-center justify-end gap-3">
@@ -278,7 +295,7 @@ export default function AdminCopilotPage() {
                         <button onClick={saveSub} disabled={subSaving}
                             className="bg-secondary hover:bg-secondary/80 border border-border font-medium rounded-xl px-4 py-2 flex items-center gap-2 text-sm disabled:opacity-60">
                             {subSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                            Save seats
+                            Save pool
                         </button>
                     </div>
                 </div>

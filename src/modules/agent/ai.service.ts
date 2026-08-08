@@ -11,11 +11,15 @@ import type { Server } from 'socket.io';
 import { AutomationEngine } from '../automation/automation.engine';
 import { emitToWorkspaceSync, emitToIgWorkspaceSync } from '../../lib/socket-rooms';
 import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
+import { generateTextRouted } from '../../lib/ai-runner';
 
 // ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
     const wrapped = zodSchema(schema);
-    return { description, parameters: wrapped, inputSchema: wrapped, execute };
+    // `_zod` keeps the original object around: the AI SDK only needs the
+    // wrapped form, but the subscription rail has to re-express each tool
+    // for a different harness and cannot recover a zod shape from it.
+    return { description, parameters: wrapped, inputSchema: wrapped, execute, _zod: schema };
 }
 
 // ─── Activity-log helpers ───────────────────────────────────────
@@ -2412,7 +2416,7 @@ export class AiService {
 
             // Generate AI response
             const t0 = Date.now();
-            const result = await generateText({
+            const result = await generateTextRouted(providerInfo, 'whatsapp_reply', {
                 model: aiModel,
                 system: systemPrompt,
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
@@ -2677,7 +2681,7 @@ export class AiService {
             { role: 'user' as const, content: userMessage },
         ];
 
-        const result = await generateText({
+        const result = await generateTextRouted(providerInfo, 'agent_session', {
             model: aiModel,
             system: systemPrompt,
             messages: applyAnthropicCacheControl(providerInfo.provider, messages as any),
@@ -2778,7 +2782,7 @@ export class AiService {
         try {
             const aiModel = this.buildAiModel(agent);
             const _providerInfo = (agent as any).provider;
-            const result = await generateText({
+            const result = await generateTextRouted(_providerInfo, 'compose_reply', {
                 model: aiModel,
                 system: composePrompt,
                 // Give the model the actual recent dialog so it can see
@@ -2894,7 +2898,7 @@ export class AiService {
             );
             const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
 
-            const result = await generateText({
+            const result = await generateTextRouted(providerInfo, 'whatsapp_reply', {
                 model: aiModel,
                 system: systemPrompt,
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
@@ -3011,7 +3015,7 @@ export class AiService {
             const igMediaCatalogue = await buildAgentMediaCatalogue(agent.id);
             const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful Instagram assistant.', { channel: 'instagram', timezone: (agent as any).timezone }) + contactContext + skillPrompt + igMediaCatalogue;
 
-            const result = await generateText({
+            const result = await generateTextRouted(providerInfo, 'instagram_reply', {
                 model: aiModel,
                 system: systemPrompt,
                 messages: applyAnthropicCacheControl(providerInfo.provider, messages),
@@ -3159,7 +3163,7 @@ export class AiService {
 
         try {
             const aiModel = this.buildAiModel(agent);
-            const result = await generateText({
+            const result = await generateTextRouted((agent as any).provider, 'operator_assistant', {
                 model: aiModel,
                 system,
                 messages: [
@@ -3468,7 +3472,7 @@ The operator gives you instructions in plain language. Decide what to do:
 
 Your text reply is for the operator. The customer never sees it. Keep it short and concrete — say what you did, not why.${contactContext}${notesBlock}${customerTranscript}${skillPrompt}`;
 
-        const result = await generateText({
+        const result = await generateTextRouted(providerInfo, 'operator_chat', {
             model: aiModel,
             system: systemPrompt,
             messages: chatMessages,

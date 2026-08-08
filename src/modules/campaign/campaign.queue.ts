@@ -8,6 +8,7 @@ import { prisma } from '../../lib/prisma';
 import { config } from '../../config';
 import { sessions } from '../whatsapp/instance.manager';
 import { recordUsagePostHoc } from '../../lib/credit-guard';
+import { generateTextRouted } from '../../lib/ai-runner';
 import IORedis from 'ioredis';
 
 const connection = new IORedis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -115,7 +116,7 @@ export const startCampaignWorker = () => {
                 }
                 const systemPrompt = (agent.systemPrompt || 'You are a helpful assistant.') +
                     '\n\nYou are starting a new conversation. Send your opening message to the contact.';
-                result = await generateText({
+                result = await generateTextRouted(providerInfo, 'campaign_opener', {
                     model: aiModel,
                     system: systemPrompt,
                     messages: [{ role: 'user' as const, content: 'Start the conversation.' }],

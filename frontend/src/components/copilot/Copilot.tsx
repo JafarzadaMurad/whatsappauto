@@ -178,6 +178,8 @@ export default function Copilot() {
                     role: 'assistant',
                     content: res.data.reply || '(no reply)',
                     toolCalls: res.data.toolCalls,
+                    servedModel: res.data.model,
+                    engine: res.data.engine,
                     at: new Date().toISOString(),
                 });
                 // Refresh balance
@@ -310,6 +312,16 @@ export default function Copilot() {
                                                     <span className="text-primary">▸</span> {tc.name}
                                                 </div>
                                             ))}
+                                        </div>
+                                    )}
+                                    {/* Which model answered. The picker states
+                                        an intent; this states what happened —
+                                        they differ when the pool is pinned to
+                                        an override or a rail falls back. */}
+                                    {m.role === 'assistant' && m.servedModel && (
+                                        <div className="mt-1.5 text-[10px] font-mono text-muted-foreground/70">
+                                            {m.servedModel}
+                                            {m.engine === 'subscription' && ' · subscription'}
                                         </div>
                                     )}
                                 </div>

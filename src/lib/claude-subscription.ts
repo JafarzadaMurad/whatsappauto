@@ -200,6 +200,8 @@ export type SubscriptionResult = {
     usage: { inputTokens: number; outputTokens: number; totalTokens: number };
     /** Shaped like the AI SDK's, so pricing reads cache hits the same way. */
     providerMetadata: { anthropic: { cacheReadInputTokens: number } };
+    /** What the harness reported running — not necessarily what was asked for. */
+    model: string | null;
     tokenId: string;
     durationMs: number;
 };
@@ -214,6 +216,8 @@ export type SubscriptionRunOpts = {
     mcpServers?: Record<string, any>;
     allowedTools?: string[];
     maxTurns?: number;
+    /** The model the caller wants. Falls back to the pool's override. */
+    model?: string;
     /** Shows up in logs so a slow rail can be traced to a feature. */
     label?: string;
 };
@@ -364,11 +368,18 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
     const toolCalls: { toolName: string; args: any }[] = [];
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let cacheReadTokens = 0;
+    // What the harness reports actually running, which is the only
+    // trustworthy answer to "which model served this?".
+    let actualModel: string | null = null;
 
     const run = query({
         prompt,
         options: {
-            ...(cfg.model ? { model: cfg.model } : {}),
+            // The model the caller asked for wins. Someone who picks Opus
+            // in the copilot must get Opus, not whatever the pool happens
+            // to default to — the pool override only fills the gap when
+            // the caller has no opinion.
+            ...(opts.model || cfg.model ? { model: (opts.model || cfg.model) as string } : {}),
             ...(opts.system ? { systemPrompt: opts.system } : {}),
             mcpServers,
             // Only the tools we hand over. The harness's own file and bash
@@ -408,6 +419,8 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
                         });
                     }
                 }
+            } else if (msg.type === 'system' && msg.subtype === 'init') {
+                if (typeof msg.model === 'string') actualModel = msg.model;
             } else if (msg.type === 'result') {
                 if (msg.subtype && msg.subtype !== 'success') {
                     throw new SubscriptionError('run_failed', `Claude Code returned ${msg.subtype}.`);
@@ -446,6 +459,8 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
     const durationMs = Date.now() - t0;
     logger.info(
         `[claude-sub] ${opts.label || 'turn'} served by ${picked.label} · ` +
+        `model=${actualModel || opts.model || cfg.model || 'default'} ` +
+        `in=${usage.inputTokens} out=${usage.outputTokens} cached=${cacheReadTokens} ` +
         `tools=${toolCalls.length} ${durationMs}ms`
     );
 
@@ -456,6 +471,7 @@ export async function runOnSubscription(opts: SubscriptionRunOpts): Promise<Subs
         steps: [{ toolCalls, toolResults: [] }],
         usage,
         providerMetadata: { anthropic: { cacheReadInputTokens: cacheReadTokens } },
+        model: actualModel,
         tokenId: picked.id,
         durationMs,
     };

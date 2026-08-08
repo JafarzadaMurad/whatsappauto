@@ -13,6 +13,9 @@ export type CopilotMessage = {
     role: "user" | "assistant";
     content: string;
     toolCalls?: CopilotToolCall[];
+    /** Which model actually answered, and on which rail. */
+    servedModel?: string;
+    engine?: "subscription" | "api";
     at: string;
 };
 

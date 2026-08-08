@@ -355,6 +355,9 @@ export class CopilotController {
             let result: any = null;
             let subUsage: any = null;
             let subMeta: any = null;
+            // What actually ran, which can differ from what was picked if
+            // the pool is pinned to an override.
+            let servedModel: string | null = null;
 
             if (canUseSub) {
                 try {
@@ -364,6 +367,7 @@ export class CopilotController {
                         systemPrompt,
                         message: body.message,
                         history: history.map((m: any) => ({ role: m.role, content: m.content })),
+                        model,
                     });
                     reply = turn.text;
                     toolCalls = turn.toolCalls;
@@ -372,6 +376,7 @@ export class CopilotController {
                     servedBy = turn.tokenId;
                     subUsage = turn.usage;
                     subMeta = turn.providerMetadata;
+                    servedModel = turn.model;
                 } catch (err: any) {
                     const code = err instanceof SubscriptionError ? err.code : 'error';
                     logger.warn(
@@ -452,6 +457,7 @@ export class CopilotController {
                 // "api" instead of as a larger bill next month.
                 engine,
                 servedBy,
+                model: servedModel || model,
                 usage: result?.usage ?? subUsage,
             });
         } catch (error: any) {

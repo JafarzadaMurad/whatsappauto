@@ -44,6 +44,8 @@ export type CopilotSubscriptionTurn = {
     toolCalls: { name: string; args: any }[];
     durationMs: number;
     tokenId: string;
+    /** What the harness actually ran. */
+    model: string | null;
     /** Pooled turns are billed like API ones — the customer bought the work. */
     usage: { inputTokens: number; outputTokens: number; totalTokens: number };
     providerMetadata: { anthropic: { cacheReadInputTokens: number } };
@@ -63,12 +65,15 @@ export async function runCopilotSubscriptionTurn(opts: {
     message: string;
     /** Prior turns, oldest first. */
     history: { role: string; content: string }[];
+    /** What the user picked in the copilot's model dropdown. */
+    model?: string;
 }): Promise<CopilotSubscriptionTurn> {
     const mcpKey = await internalMcpKey(opts.userId, opts.workspaceId);
     const base = (config.FRONTEND_URL || 'https://chatbot.tural.ai').replace(/\/$/, '');
 
     const res = await runOnSubscription({
         label: 'copilot',
+        model: opts.model,
         system: opts.systemPrompt,
         messages: [...opts.history, { role: 'user', content: opts.message }],
         mcpServers: {
@@ -91,6 +96,7 @@ export async function runCopilotSubscriptionTurn(opts: {
         }))),
         durationMs: res.durationMs,
         tokenId: res.tokenId,
+        model: res.model,
         usage: res.usage,
         providerMetadata: res.providerMetadata,
     };

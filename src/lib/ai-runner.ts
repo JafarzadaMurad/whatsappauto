@@ -103,6 +103,9 @@ export async function generateTextRouted(
 ): Promise<any> {
     const sub = await tryOnSubscription(providerInfo, {
         label,
+        // `genOpts.model` is a built AI SDK model object; its `modelId` is
+        // the string the harness needs.
+        model: genOpts.model?.modelId || undefined,
         system: genOpts.system,
         messages: genOpts.messages || (genOpts.prompt ? [{ role: 'user', content: genOpts.prompt }] : []),
         tools: genOpts.tools,
@@ -114,6 +117,7 @@ export async function generateTextRouted(
             usage: sub.usage,
             providerMetadata: sub.providerMetadata,
             __subscription: true,
+            __subscriptionModel: sub.model,
             __subscriptionToken: sub.tokenId,
         };
     }

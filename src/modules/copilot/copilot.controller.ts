@@ -297,10 +297,16 @@ export class CopilotController {
                 });
             }
             const apiKey = await resolvePlatformKey(provider);
-            if (!apiKey) {
+            // The subscription pool is a credential in its own right, so a
+            // missing API key is only fatal when the pool can't serve this
+            // request either. Demanding a key we would never call was
+            // turning a working setup into an error.
+            const canUseSub = await copilotCanUseSubscription({ provider, useOwnKey: false }).catch(() => false);
+            if (!apiKey && !canUseSub) {
                 return res.status(500).json({
                     success: false,
-                    message: `Platform ${provider} key is not configured. Ask an admin to set it in System Config.`,
+                    message: `Platform ${provider} key is not configured, and no Claude subscription token is available. ` +
+                        `Set one under Admin → AI Providers & Pricing.`,
                 });
             }
 
@@ -348,8 +354,7 @@ export class CopilotController {
             let servedBy: string | null = null;
             let result: any = null;
 
-            const useSub = await copilotCanUseSubscription({ provider, useOwnKey: false }).catch(() => false);
-            if (useSub) {
+            if (canUseSub) {
                 try {
                     const turn = await runCopilotSubscriptionTurn({
                         userId,
@@ -372,6 +377,16 @@ export class CopilotController {
             }
 
             if (engine === 'api') {
+                // Reachable when the pool was eligible but the turn failed
+                // on it and there is no key to fall back to. Say which
+                // half is missing rather than letting the SDK raise a
+                // generic "no API key" from three layers down.
+                if (!apiKey) {
+                    return res.status(503).json({
+                        success: false,
+                        message: `The Claude subscription could not serve this message and no platform ${provider} key is set as a fallback. Check the pool under Admin → AI Providers & Pricing.`,
+                    });
+                }
                 const aiModel = buildModel(provider, apiKey, model);
                 const t0 = Date.now();
                 result = await generateText({

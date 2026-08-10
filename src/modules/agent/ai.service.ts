@@ -1812,13 +1812,21 @@ export function buildToolsForSkills(
     skillPrompts: Record<string, string> = {},
     instanceId: string = '',
     contactName: string | null = null,
-    // The contact's real phone, already resolved by the caller.
+    // Two different things that both used to be called "the phone".
     //
-    // Deriving it from the jid works for a normal @s.whatsapp.net
-    // address and is wrong for a LID, whose digits are an identity and
-    // not a number anyone can dial. When the caller knows the answer —
-    // including knowing that there isn't one — it says so here, and the
-    // empty string means "unknown", never "use the jid".
+    // `contactKeyOverride` identifies the contact to us. It is the phone
+    // when we know it and the LID otherwise — a LID is a perfectly good
+    // primary key, which is why Client carries an `isAnonymous` flag for
+    // exactly this case. CRM rows, saved fields and the pause flag hang
+    // off it, and they must keep working for a contact whose number
+    // WhatsApp withholds.
+    //
+    // `contactPhoneOverride` is the number we may hand to the outside
+    // world — Bitrix, an SMS gateway, a {{contact:phone}} placeholder. It
+    // is '' when there isn't one, and a LID must never be substituted for
+    // it: the digits look like a phone number, so a salesperson dials
+    // them and reaches nobody.
+    contactKeyOverride?: string,
     contactPhoneOverride?: string,
     // Channel-specific overrides. When set, take precedence over the
     // built-in Baileys/WhatsApp implementations. Lets Instagram (or
@@ -1844,7 +1852,7 @@ export function buildToolsForSkills(
     if (skills.includes('user_fields') && remoteJid) {
         // For WA the phone is the digits before @s.whatsapp.net; for IG it's
         // the IGSID. upsertCrmContact + buildCrmTools normalise both to digits.
-        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
+        const contactPhone = contactKeyOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildUserFieldTools(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('user_fields', skillPrompts));
     }
@@ -1855,13 +1863,13 @@ export function buildToolsForSkills(
     }
 
     if (skills.includes('self_pause') && remoteJid) {
-        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
+        const contactPhone = contactKeyOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildSelfPauseTool(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('self_pause', skillPrompts));
     }
 
     if (skills.includes('live_operator') && agentId && remoteJid && instanceId) {
-        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
+        const contactPhone = contactKeyOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildLiveOperatorTools(agentId, instanceId, remoteJid, contactName, contactPhone, workspaceId) };
         prompts.push(resolveSkillPrompt('live_operator', skillPrompts));
     }
@@ -2489,14 +2497,17 @@ export class AiService {
                 ? `${phone}@s.whatsapp.net`
                 : remoteJid;
 
+            // Falls back to the LID's digits, which is what Client rows for
+            // anonymous contacts are already keyed on (see isAnonymous).
+            const contactKey = phone || remoteJid.replace(/[^0-9]/g, '');
+
             const { tools: skillTools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, contactJid, skillPrompts,
                 instanceId, contactName,
-                // `phone` is '' when WhatsApp has never told us the number.
-                // Passed through rather than re-derived, so an unknown phone
-                // stays visibly unknown instead of becoming the LID again.
-                phone
+                // Key: whatever identifies this contact to us.
+                // Phone: only a real one, '' when WhatsApp withheld it.
+                contactKey, phone
             );
 
             // Router agents pick up the handoffTo / unassignAgent tools and
@@ -3073,9 +3084,9 @@ export class AiService {
             const { tools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, remoteJid, skillPrompts, instanceId, contactName,
-                // Same rule as the main reply path: the resolved phone, or
-                // '' when there isn't one. Never the LID.
-                phone,
+                // Same split as the main reply path: key first, then the
+                // number we are allowed to send outwards.
+                phone || remoteJid.replace(/[^0-9]/g, ''), phone,
             );
             const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
 

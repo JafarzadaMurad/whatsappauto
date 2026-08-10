@@ -676,9 +676,9 @@ export class InstagramAiService {
             skills, agent.allowedTableIds || [], userId, workspaceId, httpTools,
             agent.id, remoteJid, skillPrompts,
             opts?.accountId || '', null,
-            // Instagram has no LID problem — the IGSID is the identity and
-            // the phone is derived from it as before.
-            undefined,
+            // Instagram has no LID problem — the IGSID is both the key and
+            // the identifier, exactly as before.
+            undefined, undefined,
             pollsOverride ? { pollsTools: pollsOverride } : undefined,
         );
         const tools = skillTools || {};

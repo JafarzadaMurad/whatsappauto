@@ -60,6 +60,19 @@ const createAgentSchema = z.object({
     routableAgentIds: z.array(z.string().uuid()).optional(),
 });
 
+// A ZodError's `issues` array is precise and unreadable. The UI shows a
+// message, so a 400 that carried only issues surfaced as axios's generic
+// "Request failed with status code 400" — true, and useless to the person
+// who has to fix the field.
+function zodMessage(error: z.ZodError): string {
+    const parts = error.issues.slice(0, 4).map(i => {
+        const path = i.path.join('.') || 'body';
+        return `${path}: ${i.message}`;
+    });
+    const more = error.issues.length > 4 ? ` (+${error.issues.length - 4} more)` : '';
+    return `Invalid input — ${parts.join('; ')}${more}`;
+}
+
 export class AgentController {
     async getAgents(req: Request, res: Response) {
         try {
@@ -152,7 +165,7 @@ export class AgentController {
             return res.status(201).json({ success: true, agent });
         } catch (error: any) {
             if (error instanceof PlanLimitError) return res.status(403).json({ success: false, message: error.message, code: error.code });
-            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: zodMessage(error), errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }
@@ -373,7 +386,7 @@ export class AgentController {
 
             return res.json({ success: true, agent });
         } catch (error: any) {
-            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: zodMessage(error), errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }
@@ -622,7 +635,7 @@ export class AgentController {
             const result = await executor(args);
             return res.json({ success: true, result });
         } catch (error: any) {
-            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: zodMessage(error), errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }
@@ -661,7 +674,7 @@ export class AgentController {
 
             return res.json({ success: true, ...result });
         } catch (error: any) {
-            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: zodMessage(error), errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }
@@ -714,7 +727,7 @@ export class AgentController {
 
             return res.json({ success: true, message: log });
         } catch (error: any) {
-            if (error instanceof z.ZodError) return res.status(400).json({ success: false, errors: error.issues });
+            if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: zodMessage(error), errors: error.issues });
             return res.status(500).json({ success: false, message: error.message });
         }
     }

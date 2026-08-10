@@ -840,7 +840,14 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
             // save — a model the plan doesn't allow, most often — looked
             // exactly like a successful one until the page was reloaded
             // and the old value came back.
-            setSaveError(err.response?.data?.message || err.message || 'Could not save.');
+            const data = err.response?.data;
+            // Fall through to the raw issue list if the server sent one
+            // without a summary — anything beats axios's status-code text.
+            const detail = data?.message
+                || (Array.isArray(data?.errors) && data.errors.length
+                    ? data.errors.map((e: any) => `${(e.path || []).join('.') || 'body'}: ${e.message}`).join('; ')
+                    : null);
+            setSaveError(detail || err.message || 'Could not save.');
         }
         finally { setSaving(false); }
     };

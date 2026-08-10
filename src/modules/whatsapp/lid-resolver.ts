@@ -240,13 +240,56 @@ export async function contactPhoneForJid(instanceId: string, remoteJid: string):
             select: { phone: true },
         });
         if (cached?.phone) return cached.phone;
-    } catch { /* fall through to the LID digits */ }
+    } catch { /* fall through to asking Baileys */ }
 
-    // WhatsApp has never told us this contact's number. The LID is all
-    // there is; saying so once beats every downstream caller guessing.
+    // Our table only learns a mapping when a message happens to carry the
+    // phone alongside the LID. Baileys keeps its own store, populated from
+    // the encryption layer, which knows about contacts ours has never seen
+    // a suitable message from — so ask it before giving up.
+    const fromSignal = await phoneFromSignalStore(instanceId, remoteJid);
+    if (fromSignal) {
+        // Cache it so the next lookup is a local read, and so everything
+        // keyed on the phone converges on the same value.
+        await prisma.lidMapping.upsert({
+            where: { instanceId_lid: { instanceId, lid: remoteJid } },
+            update: { phone: fromSignal },
+            create: { instanceId, lid: remoteJid, phone: fromSignal },
+        }).catch(() => { /* the value is already in hand; caching is a bonus */ });
+        logger.info(`[lid] resolved from the signal store · ${remoteJid} → ${fromSignal}`);
+        return fromSignal;
+    }
+
+    // Nobody knows this contact's number.
+    //
+    // Returning the LID digits here is what put a 15-digit non-number into
+    // a Bitrix lead: a salesperson sees a phone field, dials it, and it
+    // rings nowhere. An empty field is visibly missing; a plausible-looking
+    // wrong one is not. Callers get '' and decide for themselves.
     logger.warn(
         `[lid] no phone mapping · jid=${remoteJid} instance=${instanceId} ` +
-        `— contact lookups and {{contact:phone}} will use the LID`
+        `— contact phone will be empty rather than the LID`
     );
-    return bare;
+    return '';
+}
+
+/**
+ * Ask Baileys' own LID store for the phone behind a LID.
+ *
+ * Best-effort by design: the socket may be down, and the API has moved
+ * between versions. A failure here is a miss, never an error — the caller
+ * already has a path for "we don't know".
+ */
+async function phoneFromSignalStore(instanceId: string, lidJid: string): Promise<string | null> {
+    try {
+        const { sessions } = await import('./instance.manager');
+        const sock: any = sessions.get(instanceId);
+        const store = sock?.signalRepository?.lidMapping;
+        if (!store?.getPNForLID) return null;
+
+        const pn = await store.getPNForLID(lidJid);
+        const d = digits(String(pn || '').replace('@s.whatsapp.net', ''));
+        return d.length >= 7 ? d : null;
+    } catch {
+        return null;
+    }
 }

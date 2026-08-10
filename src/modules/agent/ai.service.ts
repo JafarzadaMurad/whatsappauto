@@ -1692,6 +1692,14 @@ export function buildToolsForSkills(
     skillPrompts: Record<string, string> = {},
     instanceId: string = '',
     contactName: string | null = null,
+    // The contact's real phone, already resolved by the caller.
+    //
+    // Deriving it from the jid works for a normal @s.whatsapp.net
+    // address and is wrong for a LID, whose digits are an identity and
+    // not a number anyone can dial. When the caller knows the answer —
+    // including knowing that there isn't one — it says so here, and the
+    // empty string means "unknown", never "use the jid".
+    contactPhoneOverride?: string,
     // Channel-specific overrides. When set, take precedence over the
     // built-in Baileys/WhatsApp implementations. Lets Instagram (or
     // any future channel) plug in its own poll / operator-request
@@ -1716,7 +1724,7 @@ export function buildToolsForSkills(
     if (skills.includes('user_fields') && remoteJid) {
         // For WA the phone is the digits before @s.whatsapp.net; for IG it's
         // the IGSID. upsertCrmContact + buildCrmTools normalise both to digits.
-        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildUserFieldTools(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('user_fields', skillPrompts));
     }
@@ -1727,19 +1735,19 @@ export function buildToolsForSkills(
     }
 
     if (skills.includes('self_pause') && remoteJid) {
-        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildSelfPauseTool(workspaceId, userId, contactPhone) };
         prompts.push(resolveSkillPrompt('self_pause', skillPrompts));
     }
 
     if (skills.includes('live_operator') && agentId && remoteJid && instanceId) {
-        const contactPhone = remoteJid.replace(/[^0-9]/g, '') || remoteJid;
+        const contactPhone = contactPhoneOverride ?? (remoteJid.replace(/[^0-9]/g, '') || remoteJid);
         tools = { ...tools, ...buildLiveOperatorTools(agentId, instanceId, remoteJid, contactName, contactPhone, workspaceId) };
         prompts.push(resolveSkillPrompt('live_operator', skillPrompts));
     }
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {
-        const contactPhone = remoteJid ? (remoteJid.replace(/[^0-9]/g, '') || remoteJid) : undefined;
+        const contactPhone = contactPhoneOverride ?? (remoteJid ? (remoteJid.replace(/[^0-9]/g, '') || remoteJid) : undefined);
         tools = { ...tools, ...buildHttpTools(httpTools, { workspaceId, contactPhone }) };
         const list = httpTools
             .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
@@ -2359,7 +2367,11 @@ export class AiService {
             const { tools: skillTools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, contactJid, skillPrompts,
-                instanceId, contactName
+                instanceId, contactName,
+                // `phone` is '' when WhatsApp has never told us the number.
+                // Passed through rather than re-derived, so an unknown phone
+                // stays visibly unknown instead of becoming the LID again.
+                phone
             );
 
             // Router agents pick up the handoffTo / unassignAgent tools and
@@ -2934,6 +2946,9 @@ export class AiService {
             const { tools, skillPrompt } = buildToolsForSkills(
                 skills, agent.allowedTableIds, agent.userId, wsId, httpTools,
                 agent.id, remoteJid, skillPrompts, instanceId, contactName,
+                // Same rule as the main reply path: the resolved phone, or
+                // '' when there isn't one. Never the LID.
+                phone,
             );
             const systemPrompt = interpolateAgentPrompt(agent.systemPrompt || 'You are a helpful WhatsApp assistant.', { channel: 'whatsapp', timezone: (agent as any).timezone }) + contactContext + skillPrompt;
 

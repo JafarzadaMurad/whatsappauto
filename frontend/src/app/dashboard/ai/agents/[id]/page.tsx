@@ -6,6 +6,7 @@ import { ArrowLeft, Bot, Loader2, MessageSquare, BarChart3, Settings, Database, 
 import AgentMediaSection from "@/components/agent/AgentMediaSection";
 import Link from "next/link";
 import api from "@/lib/api";
+import UnsavedChangesBar from "@/components/UnsavedChangesBar";
 import { motion } from "framer-motion";
 
 type Tab = "conversations" | "usage" | "activity" | "test" | "settings";
@@ -490,6 +491,8 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     // the Skills section stays scannable.
     const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
     const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [baseline, setBaseline] = useState<string>('');
 
     useEffect(() => {
         const load = async () => {
@@ -538,6 +541,28 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                     setIsRouter(!!a.isRouter);
                     setRouterDescription(a.routerDescription || "");
                     setRoutableAgentIds((a.routableAgentIds || []) as string[]);
+                    // Deferred a tick: the setters above are batched, so
+                    // fingerprinting now would capture the pre-load values
+                    // and every field would read as changed.
+                    setTimeout(() => setBaseline(JSON.stringify({
+                        name: a.name, providerId: a.providerId, model: a.model,
+                        systemPrompt: a.systemPrompt || "",
+                        allowedTableIds: a.allowedTableIds || [],
+                        skills: a.skills || [],
+                        httpTools: ((a.httpTools as HttpToolTemplate[]) || [])
+                            .map(({ id: _drop, ...t }: any) => t),
+                        skillPrompts: (a.skillPrompts as Record<string, string>) || {},
+                        audioEnabled: a.audioEnabled !== false,
+                        visionEnabled: a.visionEnabled !== false,
+                        historyDepth: Number(a.historyDepth) || 10,
+                        reminderHours: Number(a.reminderHours) || 24,
+                        whisperLanguage: a.whisperLanguage || "",
+                        whisperModel: a.whisperModel || "whisper-1",
+                        timezone: (a as any).timezone || "UTC",
+                        isRouter: !!a.isRouter,
+                        routerDescription: a.routerDescription || "",
+                        routableAgentIds: (a.routableAgentIds || []) as string[],
+                    })), 0);
                     // Load the rest of the workspace's AI agents so we can
                     // render a "Targets" picker if this agent is a router.
                     try {
@@ -782,16 +807,41 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         });
     };
 
+    // Compared as one string rather than field by field: the payload is
+    // twenty-odd values and a missed one would silently disable the save
+    // bar for whatever it controls.
+    const fingerprint = () => JSON.stringify({
+        name, providerId, model, systemPrompt, allowedTableIds, skills,
+        // `id` is generated in the browser for tools that arrive without
+        // one, so it differs on every load and would read as a change.
+        httpTools: httpTools.map(({ id: _drop, ...t }: any) => t),
+        skillPrompts, audioEnabled, visionEnabled, historyDepth,
+        reminderHours, whisperLanguage, whisperModel, timezone,
+        isRouter, routerDescription, routableAgentIds,
+    });
+    const dirty = !!baseline && fingerprint() !== baseline;
+
     const handleSave = async () => {
         setSaving(true);
+        setSaveError(null);
         try {
             await api.put(`/agents/${id}`, {
                 name, providerId, model, systemPrompt, allowedTableIds, skills,
                 httpTools, skillPrompts, audioEnabled, visionEnabled, historyDepth, reminderHours, whisperLanguage: whisperLanguage || null, whisperModel, timezone, isRouter, routerDescription: routerDescription || null, routableAgentIds,
             });
             const res = await api.get(`/agents/${id}`);
-            if (res.data.success) setAgent(res.data.agent);
-        } catch (err) { console.error(err); }
+            if (res.data.success) {
+                setAgent(res.data.agent);
+                setSaveError(null);
+                setBaseline(fingerprint());
+            }
+        } catch (err: any) {
+            // This used to be console.error and nothing else. A rejected
+            // save — a model the plan doesn't allow, most often — looked
+            // exactly like a successful one until the page was reloaded
+            // and the old value came back.
+            setSaveError(err.response?.data?.message || err.message || 'Could not save.');
+        }
         finally { setSaving(false); }
     };
 
@@ -2480,16 +2530,18 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                 </motion.div>
             )}
 
+            {/* A round button pinned to the bottom-right sat underneath the
+                copilot bubble, which lives in the same corner. The bar the
+                admin pages use spans the width instead, so nothing can
+                cover it — and it appears only when there is something to
+                save, rather than being a permanent icon. */}
             {tab === 'settings' && (
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    title="Save Changes (Ctrl+S)"
-                    aria-label="Save Changes"
-                    className="fixed bottom-6 right-6 z-40 w-12 h-12 bg-primary hover:bg-primary/90 text-primary-foreground rounded-full flex items-center justify-center shadow-lg shadow-primary/30 transition-all disabled:opacity-70"
-                >
-                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                </button>
+                <UnsavedChangesBar
+                    dirty={dirty || !!saveError}
+                    saving={saving}
+                    onSave={handleSave}
+                    label={saveError ? `Not saved — ${saveError}` : 'Unsaved agent settings'}
+                />
             )}
         </div>
     );

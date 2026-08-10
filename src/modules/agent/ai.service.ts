@@ -826,17 +826,39 @@ function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: 
             }
         ),
         setUserField: makeTool(
-            'Write a value to a custom field on the current contact. Creates the contact if it does not exist yet. Use for things like saving age, city, purpose, budget, etc.',
+            'Write one or several custom fields on the current contact. Creates the contact if it does not exist yet. ' +
+            'Use for saving age, city, purpose, budget, etc. When a message tells you more than one thing, pass them ' +
+            'together in `fields` in a single call rather than calling this tool repeatedly — it is one write and it ' +
+            'is faster. Use `key`/`value` only for a single field.',
             z.object({
-                key: z.string().describe('The field key (slug) you got from listUserFields'),
-                value: z.union([z.string(), z.number(), z.boolean(), z.null()]).describe('The value to store. Match the field\'s type.'),
+                key: z.string().optional().describe('A single field key (slug) from listUserFields. Omit when using `fields`.'),
+                value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional()
+                    .describe('The value to store for `key`. Match the field\'s type.'),
+                fields: z.array(z.object({
+                    key: z.string(),
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                })).optional().describe('Several fields at once. Preferred whenever you have more than one to save.'),
             }),
-            async ({ key, value }) => {
+            async ({ key, value, fields }) => {
                 const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
-                // Reject keys with anything other than [a-zA-Z0-9_] so the
-                // raw jsonb_set path can't be abused for SQL injection.
-                if (!/^[A-Za-z0-9_]+$/.test(key)) {
-                    return { success: false, error: 'Invalid field key. Use letters, digits and underscores only.' };
+
+                // Both shapes collapse into one list, so the write below
+                // doesn't care which the model chose.
+                const list: { key: string; value: any }[] = [
+                    ...(fields || []),
+                    ...(key !== undefined ? [{ key, value: value ?? null }] : []),
+                ];
+                if (list.length === 0) {
+                    return { success: false, error: 'Nothing to write — pass `key` and `value`, or a `fields` array.' };
+                }
+
+                // Reject keys with anything other than [a-zA-Z0-9_]. The
+                // patch below is parameterised, but a key is also a path
+                // into the stored document, and loose keys make the shape
+                // unpredictable for everything that reads it later.
+                const badKey = list.find(f => !/^[A-Za-z0-9_]+$/.test(f.key));
+                if (badKey) {
+                    return { success: false, error: `Invalid field key "${badKey.key}". Use letters, digits and underscores only.` };
                 }
 
                 // Ensure a Client row exists; capture its id.
@@ -854,26 +876,28 @@ function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: 
                     clientId = created.id;
                 }
 
-                // Atomic per-key update. With multiple parallel setUserField
-                // calls in the same agent turn the previous read-merge-write
-                // pattern raced — each call read the same starting object,
-                // merged its key, and wrote back; the last writer won and
-                // earlier keys silently disappeared. jsonb_set on a single
-                // sub-path is atomic in Postgres, so concurrent calls each
-                // touch their own key without clobbering siblings.
+                // One statement whatever the field count. The merge happens
+                // inside the UPDATE against the row's current value, so two
+                // concurrent calls in the same turn each apply their own
+                // patch instead of both writing back a stale copy — which
+                // is how earlier keys used to vanish.
+                const patch = Object.fromEntries(list.map(f => [f.key, f.value]));
                 await prisma.$executeRaw`
                     UPDATE "Client"
-                    SET "customFields" = jsonb_set(
-                        COALESCE("customFields", '{}'::jsonb),
-                        ARRAY[${key}]::text[],
-                        ${JSON.stringify(value)}::jsonb,
-                        true
-                    ),
-                    "updatedAt" = NOW()
+                    SET "customFields" = COALESCE("customFields", '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb,
+                        "updatedAt" = NOW()
                     WHERE id = ${clientId}
                 `;
 
-                return { success: true, key, value, clientId };
+                return {
+                    success: true,
+                    written: list.length,
+                    fields: patch,
+                    clientId,
+                    // Single-field callers still read `key`/`value` back the
+                    // way they always did.
+                    ...(list.length === 1 ? { key: list[0].key, value: list[0].value } : {}),
+                };
             }
         ),
         searchContactsByField: makeTool(
@@ -1636,7 +1660,7 @@ export function interpolateAgentPrompt(
 export const DEFAULT_SKILL_PROMPTS: Record<string, string> = {
     tables: 'Tables: call listTables first, then searchTable or getTableRows.',
     crm: 'CRM: upsertClient saves/updates, getClient looks up, searchClients finds existing.',
-    user_fields: 'User fields: listUserFields first to see schema, setUserField to save, getUserField to recall, searchContactsByField to filter across contacts.',
+    user_fields: 'User fields: listUserFields first to see the schema, setUserField to save — pass several at once in `fields` when a message tells you more than one thing — getUserField to recall, searchContactsByField to filter across contacts.',
     http: 'HTTP: call the dedicated tools listed below.',
     memory: 'Memory: conversationStats (overview), searchMessages, getMessages (range), getMessagesAround (context). Only call when older context is actually needed.',
     self_pause: 'Self-pause: pauseAgent({reason}) stops auto-replies for this contact until a human resumes from the inbox.',

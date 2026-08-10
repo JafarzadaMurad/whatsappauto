@@ -183,12 +183,20 @@ function buildTableTools(allowedTableIds: string[]) {
 }
 
 // ─── SKILL: CRM ───
-function buildCrmTools(workspaceId: string, userId: string) {
+// `currentContactKey` is how we already identify whoever the agent is
+// talking to — their phone, or their LID when WhatsApp withholds one. The
+// model shouldn't have to supply it: it was passing the empty string it
+// got from an unknown-phone placeholder and having the write refused,
+// which is the tool asking the model for something the tool already knew.
+function buildCrmTools(workspaceId: string, userId: string, currentContactKey?: string) {
     return {
         upsertClient: makeTool(
             'Create or update a client in the CRM. Use this to save contact info, update status, add tags, or write a summary about the conversation.',
             z.object({
-                phone: z.string().describe('Phone number of the client (digits only, e.g. 994551234567)'),
+                phone: z.string().optional().describe(
+                    'Phone number of the client (digits only, e.g. 994551234567). ' +
+                    'Omit it to save against the contact you are currently talking to — ' +
+                    'do NOT guess, and do not pass an empty string.'),
                 name: z.string().optional().describe('Client name if known'),
                 status: z.string().optional().describe('CRM status: NEW, LEAD, INTERESTED, PURCHASED, SPAM, etc.'),
                 tags: z.array(z.string()).optional().describe('Tags like ["VIP", "wholesale", "returning"]'),
@@ -196,15 +204,15 @@ function buildCrmTools(workspaceId: string, userId: string) {
                 customFields: z.record(z.string(), z.any()).optional().describe('Any additional key-value data about the client')
             }),
             async ({ phone, name, status, tags, summary, customFields }) => {
-                // The model supplies this one, so it can be blank, a LID, or
-                // whatever it inferred. Anything that isn't a plausible
-                // number is refused rather than written.
-                const cleanPhone = crmPhone(phone);
+                // Fall back to the contact in front of us before judging the
+                // value: an omitted or blank phone means "this customer",
+                // not "no customer".
+                const cleanPhone = crmPhone(phone) || crmPhone(currentContactKey);
                 if (!cleanPhone) {
                     return {
                         success: false,
-                        error: `"${phone}" is not a usable phone number. If you do not have the customer's ` +
-                            `number, ask them for it before saving the record.`,
+                        error: `"${phone ?? ''}" is not a usable phone number, and there is no current contact ` +
+                            `to fall back on. Ask the customer for their number before saving the record.`,
                     };
                 }
                 const existing = await prisma.client.findFirst({ where: { workspaceId, phone: cleanPhone } });
@@ -1845,7 +1853,7 @@ export function buildToolsForSkills(
     }
 
     if (skills.includes('crm')) {
-        tools = { ...tools, ...buildCrmTools(workspaceId, userId) };
+        tools = { ...tools, ...buildCrmTools(workspaceId, userId, contactKeyOverride ?? (remoteJid ? (remoteJid.replace(/[^0-9]/g, '') || undefined) : undefined)) };
         prompts.push(resolveSkillPrompt('crm', skillPrompts));
     }
 

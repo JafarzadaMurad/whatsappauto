@@ -1283,6 +1283,50 @@ function redactHeadersForDisplay(headers: Record<string, string>): Record<string
     return out;
 }
 
+
+// A JSON body the model wrote by hand, made safe to send — or refused.
+//
+// When a template's body is `raw` and the model fills it in, the model is
+// authoring JSON as text. It gets the structure right and the escaping
+// wrong: a multi-line summary goes in with real newlines inside a quoted
+// string, which is invalid JSON. We used to ship that anyway. Bitrix
+// answered 200 and created a lead with every field blank — the worst
+// possible outcome, because it looks like success everywhere: the tool
+// call is green, the agent moves on, and the salesperson gets an empty
+// card.
+//
+// So: parse it. If it fails, escape the control characters that are only
+// ever illegal inside a string and parse again. If it still fails, return
+// an error the model can see and retry, rather than sending something we
+// know is broken.
+function coerceJsonBody(body: string): { data?: any; repaired: boolean; error?: string } {
+    try {
+        return { data: JSON.parse(body), repaired: false };
+    } catch { /* fall through to the repair */ }
+
+    // Walk the text tracking whether we are inside a string, and escape
+    // raw control characters found there. Outside strings they are just
+    // whitespace and must be left alone.
+    let out = '';
+    let inString = false;
+    let escaped = false;
+    for (const ch of body) {
+        if (escaped) { out += ch; escaped = false; continue; }
+        if (ch === '\\' && inString) { out += ch; escaped = true; continue; }
+        if (ch === '\"') { inString = !inString; out += ch; continue; }
+        if (inString && ch === '\n') { out += '\\n'; continue; }
+        if (inString && ch === '\r') { out += '\\r'; continue; }
+        if (inString && ch === '\t') { out += '\\t'; continue; }
+        out += ch;
+    }
+
+    try {
+        return { data: JSON.parse(out), repaired: true };
+    } catch (err: any) {
+        return { repaired: false, error: String(err?.message || err) };
+    }
+}
+
 export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, stepResults: Record<string, any> = {}) {
     return async (args: Record<string, any>) => {
         // CRM placeholders ({{contact:*}} / {{field:*}}) get filled in
@@ -1306,7 +1350,19 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
                 if (parsed.body) {
                     const ct = Object.entries(parsed.headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] || '';
                     if (ct.toLowerCase().includes('application/json')) {
-                        try { data = JSON.parse(parsed.body); } catch { data = parsed.body; }
+                        const coerced = coerceJsonBody(parsed.body);
+                        if (coerced.error) {
+                            logger.warn(`[http-tool] ${tpl.name}: raw body is not valid JSON — not sending · ${coerced.error}`);
+                            return {
+                                error: `The request body is not valid JSON (${coerced.error}). ` +
+                                    `Most likely a value contains a real line break or an unescaped quote — ` +
+                                    `write \n inside strings instead. Fix it and call the tool again.`,
+                            };
+                        }
+                        if (coerced.repaired) {
+                            logger.info(`[http-tool] ${tpl.name}: repaired unescaped control characters in the raw JSON body`);
+                        }
+                        data = coerced.data;
                     } else {
                         data = parsed.body;
                     }
@@ -1390,6 +1446,23 @@ export function buildTemplateExecutor(tpl: HttpToolTemplate, ctx?: HttpCtx, step
             } else if (tpl.bodyType === 'raw' && tpl.rawBody) {
                 const rawBodyResolved = tpl.rawBody.mode === 'fixed' ? tpl.rawBody.value : (args.body || '');
                 data = await applyAllPlaceholders(rawBodyResolved, crmValues, stepResults, ctx);
+
+                const ct = Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] || '';
+                if (typeof data === 'string' && ct.toLowerCase().includes('application/json')) {
+                    const coerced = coerceJsonBody(data);
+                    if (coerced.error) {
+                        logger.warn(`[http-tool] ${tpl.name}: body is not valid JSON — not sending · ${coerced.error}`);
+                        return {
+                            error: `The request body you wrote is not valid JSON (${coerced.error}). ` +
+                                `Most likely a value contains a real line break or an unescaped quote — ` +
+                                `write \n inside strings instead. Fix it and call the tool again.`,
+                        };
+                    }
+                    if (coerced.repaired) {
+                        logger.info(`[http-tool] ${tpl.name}: repaired unescaped control characters in the JSON body`);
+                    }
+                    data = coerced.data;
+                }
             }
 
             const finalUrl = Object.keys(params).length

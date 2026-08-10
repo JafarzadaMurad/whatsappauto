@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog, Coins, KeyRound, Phone, Sparkles, Gift } from "lucide-react";
+import { LogOut, LayoutDashboard, MessageSquare, Key, Link as LinkIcon, ChevronDown, ChevronRight, Network, Bot, Database, Server, Users, PanelLeftClose, PanelLeft, Send, Camera, Workflow, Inbox, Shield, CreditCard, LogIn, Mail, Plug, Brain, GitBranch, BarChart3, Megaphone, Blocks, BookOpen, ExternalLink, Briefcase, Lock, EyeOff, UserCog, Coins, KeyRound, Phone, Sparkles, Gift, Monitor } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,6 +14,7 @@ import AnnouncementBell from "@/components/AnnouncementBell";
 import AnnouncementModal from "@/components/AnnouncementModal";
 import Copilot from "@/components/copilot/Copilot";
 import api from "@/lib/api";
+import { createSocket } from "@/lib/socket";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -62,6 +63,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             router.replace('/login');
         }
     }, [isAuthenticated, hasHydrated, router]);
+
+    // Tell the server which page this tab is on, so admins can see who is
+    // where. One socket for the whole dashboard, kept across route
+    // changes — reconnecting per navigation would cost more than the
+    // feature is worth and would make everyone look like they keep
+    // leaving.
+    const presenceSocket = useMemo(() => (isAuthenticated ? createSocket() : null), [isAuthenticated]);
+    useEffect(() => {
+        if (!presenceSocket) return;
+        return () => { presenceSocket.disconnect(); };
+    }, [presenceSocket]);
+    useEffect(() => {
+        if (!presenceSocket || !pathname) return;
+        const send = () => presenceSocket.emit('presence.page', { path: pathname });
+        if (presenceSocket.connected) send();
+        else presenceSocket.once('connect', send);
+        // A tab left open all day must not decay into "stale" and vanish
+        // from the list while somebody is still sitting in front of it.
+        const id = setInterval(() => presenceSocket.emit('presence.ping'), 60_000);
+        return () => clearInterval(id);
+    }, [presenceSocket, pathname]);
 
     // Permissions for the active workspace come down with the workspaces
     // list — see WorkspaceSwitcher → /workspaces. Owners get null perms
@@ -154,6 +176,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isGroup: true,
             children: [
                 { name: 'Users', href: '/dashboard/admin/users', icon: Users },
+                { name: "Who's online", href: '/dashboard/admin/presence', icon: Monitor },
                 { name: 'User Access', href: '/dashboard/admin/user-access', icon: UserCog },
                 { name: 'Plans', href: '/dashboard/admin/plans', icon: CreditCard },
                 { name: 'Payments', href: '/dashboard/admin/payments', icon: CreditCard },

@@ -15,6 +15,10 @@ import { startAgentActivityCleanup } from './modules/agent/activity-cleanup';
 import { startOperatorTimeoutSweeper } from './modules/operator/operator.service';
 import { startOversightScheduler } from './modules/oversight/oversight.service';
 import { startReminderScheduler } from './modules/agent/reminder.scheduler';
+import {
+    presenceConnect, presenceDisconnect, presencePage, presenceHeartbeat,
+    startPresenceSweeper,
+} from './lib/presence';
 import { startPoolHealthScheduler } from './lib/claude-subscription';
 import { seedAiPricing, backfillPricingKinds } from './lib/ai-pricing.seed';
 import { attachVoiceBridge } from './modules/voice/voice-bridge';
@@ -141,8 +145,31 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
     logger.info(`Socket connected: ${socket.id} ws=${(socket.data as any)?.workspaceId || '-'}`);
 
+    // Presence. Only tracked for sockets that authenticated — an
+    // anonymous socket has no person behind it to show.
+    const userId = (socket.data as any)?.userId as string | undefined;
+    if (userId) {
+        presenceConnect({
+            socketId: socket.id,
+            userId,
+            workspaceId: (socket.data as any)?.workspaceId || null,
+            userAgent: String(socket.handshake.headers['user-agent'] || '').slice(0, 200) || null,
+            // Behind Caddy the socket address is the proxy, so prefer the
+            // forwarded header when it is present.
+            ip: String(
+                (socket.handshake.headers['x-forwarded-for'] as string || '').split(',')[0].trim()
+                || socket.handshake.address || ''
+            ).slice(0, 60) || null,
+        });
+        socket.on('presence.page', (payload: any) => {
+            presencePage(socket.id, String(payload?.path || ''));
+        });
+        socket.on('presence.ping', () => presenceHeartbeat(socket.id));
+    }
+
     socket.on('disconnect', () => {
         logger.info(`Socket disconnected: ${socket.id}`);
+        presenceDisconnect(socket.id);
     });
 });
 
@@ -187,6 +214,10 @@ server.listen(PORT, async () => {
     // for at least agent.reminderHours and ask the model to draft a
     // follow-up. Per-contact lock + max-reminders cap prevent nagging.
     startReminderScheduler();
+
+    // Drops sockets that died without saying so, which would otherwise
+    // show somebody as online days after they closed the laptop.
+    startPresenceSweeper();
 
     // Claude subscription pool: probe each token hourly. A signed-out
     // account or an expired token otherwise announces itself only as a

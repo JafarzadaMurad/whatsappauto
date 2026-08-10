@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { AdminController } from './admin.controller';
 import { AiModelsController } from '../aiprovider/aimodels.controller';
 import { AiHubController } from './ai-hub.controller';
+import { PresenceController } from './presence.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { requireAdmin } from '../../middleware/admin.middleware';
 
@@ -9,8 +10,15 @@ const router = Router();
 const controller = new AdminController();
 const aiModelsController = new AiModelsController();
 const aiHubController = new AiHubController();
+const presenceController = new PresenceController();
 
 router.use(authMiddleware, requireAdmin);
+
+// Live presence — who is on the platform and where. In-memory, so it
+// answers instantly and disappears with the process, which is the right
+// lifetime for "who is online".
+router.get('/presence', presenceController.live.bind(presenceController));
+router.get('/presence/:id', presenceController.user.bind(presenceController));
 
 router.get('/users', controller.listUsers.bind(controller));
 router.post('/users', controller.createUser.bind(controller));

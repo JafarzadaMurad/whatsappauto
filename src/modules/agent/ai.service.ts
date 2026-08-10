@@ -13,6 +13,21 @@ import { emitToWorkspaceSync, emitToIgWorkspaceSync } from '../../lib/socket-roo
 import { recordUsagePostHoc, CreditCause } from '../../lib/credit-guard';
 import { generateTextRouted } from '../../lib/ai-runner';
 
+
+// A phone we can actually key a CRM row on, or null.
+//
+// An unknown phone is now the empty string (see contactPhoneForJid), and
+// '' is a perfectly good value to a database: `where: { phone: '' }`
+// matched a stray row that happened to have an empty phone, so every
+// contact whose number WhatsApp withheld collapsed onto that one client —
+// including its paused flag, which silenced the agent for all of them.
+//
+// Reads must miss and writes must refuse rather than share a phantom row.
+function crmPhone(phone: string | null | undefined): string | null {
+    const cleaned = String(phone || '').replace(/[^0-9]/g, '');
+    return cleaned.length >= 7 ? cleaned : null;
+}
+
 // ─── Tool Helper ───
 function makeTool(description: string, schema: z.ZodObject<any>, execute: (params: any) => Promise<any>) {
     const wrapped = zodSchema(schema);
@@ -181,7 +196,17 @@ function buildCrmTools(workspaceId: string, userId: string) {
                 customFields: z.record(z.string(), z.any()).optional().describe('Any additional key-value data about the client')
             }),
             async ({ phone, name, status, tags, summary, customFields }) => {
-                const cleanPhone = phone.replace(/[^0-9]/g, '');
+                // The model supplies this one, so it can be blank, a LID, or
+                // whatever it inferred. Anything that isn't a plausible
+                // number is refused rather than written.
+                const cleanPhone = crmPhone(phone);
+                if (!cleanPhone) {
+                    return {
+                        success: false,
+                        error: `"${phone}" is not a usable phone number. If you do not have the customer's ` +
+                            `number, ask them for it before saving the record.`,
+                    };
+                }
                 const existing = await prisma.client.findFirst({ where: { workspaceId, phone: cleanPhone } });
                 const client = existing
                     ? await prisma.client.update({
@@ -710,7 +735,19 @@ function buildSelfPauseTool(workspaceId: string, userId: string, contactPhone: s
                 reason: z.string().describe('Short reason for the pause, in English. Saved for the operator. Example: "Lead qualified and sent to Bitrix" / "Customer asked to speak with a person" / "Customer is frustrated".'),
             }),
             async ({ reason }) => {
-                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                // Pausing an unknown number would create a client keyed on
+                // '' — and then every other contact WhatsApp withholds a
+                // number for would find that row and be paused too. That is
+                // exactly how the agent went silent for a whole class of
+                // customers, so this refuses instead.
+                const cleanPhone = crmPhone(contactPhone);
+                if (!cleanPhone) {
+                    return {
+                        success: false,
+                        error: 'This contact has no phone number, so there is no record to pause. ' +
+                            'A human can still take over from the inbox.',
+                    };
+                }
                 const existing = await prisma.client.findFirst({
                     where: { workspaceId, phone: cleanPhone },
                     select: { id: true, summary: true },
@@ -816,7 +853,8 @@ function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: 
                 key: z.string().describe('The field key (slug). Use listUserFields if unsure.'),
             }),
             async ({ key }) => {
-                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                const cleanPhone = crmPhone(contactPhone);
+                if (!cleanPhone) return { value: null };
                 const client = await prisma.client.findFirst({
                     where: { workspaceId, phone: cleanPhone },
                     select: { customFields: true },
@@ -840,7 +878,16 @@ function buildUserFieldTools(workspaceId: string, userId: string, contactPhone: 
                 })).optional().describe('Several fields at once. Preferred whenever you have more than one to save.'),
             }),
             async ({ key, value, fields }) => {
-                const cleanPhone = contactPhone.replace(/[^0-9]/g, '') || contactPhone;
+                // Writing under '' would create one shared contact that
+                // every unknown-number customer then reads and overwrites.
+                const cleanPhone = crmPhone(contactPhone);
+                if (!cleanPhone) {
+                    return {
+                        success: false,
+                        error: 'This contact has no phone number yet, so there is nothing to save it against. ' +
+                            'Ask the customer for their number first, then call this again.',
+                    };
+                }
 
                 // Both shapes collapse into one list, so the write below
                 // doesn't care which the model chose.
@@ -2393,9 +2440,14 @@ export class AiService {
             const wsId = inst?.workspaceId
                 || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(agent.userId));
 
-            const client = await prisma.client.findFirst({
-                where: { workspaceId: wsId, phone }
-            }).catch(() => null);
+            // No phone, no CRM row. Looking one up by '' would find
+            // somebody else's.
+            const crmKey = crmPhone(phone);
+            const client = crmKey
+                ? await prisma.client.findFirst({
+                    where: { workspaceId: wsId, phone: crmKey },
+                }).catch(() => null)
+                : null;
 
             // `phone` here is whatever the jid says. On a LID conversation
             // that is the LID number, while the CRM row was written under
@@ -2984,7 +3036,9 @@ export class AiService {
             const inst = await prisma.instance.findUnique({ where: { id: instanceId }, select: { workspaceId: true } });
             const wsId = inst?.workspaceId
                 || (await (await import('../../lib/workspace-migration')).getOrCreatePersonalWorkspace(agent.userId));
-            const client = await prisma.client.findFirst({ where: { workspaceId: wsId, phone } });
+            const client = crmPhone(phone)
+                ? await prisma.client.findFirst({ where: { workspaceId: wsId, phone: crmPhone(phone)! } })
+                : null;
             if (client?.agentPaused) {
                 logger.info(`[${instanceId}] reminder skipped: contact paused`);
                 return;

@@ -1150,30 +1150,51 @@ function resolveValue(spec: ValueSpec, aiVal: string | undefined): string {
 // resolve to an empty string. Regular {{description}} AI placeholders
 // are unaffected — they only match raw-mode parser braces that don't
 // carry a `kind:` prefix.
-export type HttpCtx = { workspaceId?: string; contactPhone?: string };
+export type HttpCtx = {
+    workspaceId?: string;
+    /** Only a real, dialable number. Empty when WhatsApp withheld it. */
+    contactPhone?: string;
+    /** How we identify this contact: their phone, or their LID. */
+    contactKey?: string;
+    /** From the WhatsApp profile — available even with no phone at all. */
+    contactName?: string | null;
+};
 
 const CRM_PLACEHOLDER_RE = /\{\{\s*(contact|field)\s*:\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 
 async function loadCrmPlaceholderValues(ctx: HttpCtx | undefined): Promise<{ contact: Record<string, string>; field: Record<string, string> }> {
     const contact: Record<string, string> = {};
     const field: Record<string, string> = {};
-    if (!ctx?.workspaceId || !ctx?.contactPhone) {
-        logger.info(`[http-tool] no contact context · workspace=${ctx?.workspaceId || 'none'} phone=${ctx?.contactPhone || 'none'}`);
+    // The row is found by the key — phone when we have one, LID otherwise.
+    // Keying on the phone alone meant a contact whose number WhatsApp
+    // withheld lost everything else too: no name, no status, no saved
+    // fields, so the lead arrived blank even though we knew who they were.
+    const lookupKey = (ctx?.contactKey || ctx?.contactPhone || '').replace(/[^0-9]/g, '');
+    if (!ctx?.workspaceId || !lookupKey) {
+        logger.info(`[http-tool] no contact context · workspace=${ctx?.workspaceId || 'none'} key=${lookupKey || 'none'}`);
         return { contact, field };
     }
-    const cleanPhone = ctx.contactPhone.replace(/[^0-9]/g, '') || ctx.contactPhone;
-    contact.phone = cleanPhone;
+
+    // Only a real number goes into `phone`. A LID is our internal
+    // identity; substituted here it would reach Bitrix looking dialable.
+    const realPhone = (ctx.contactPhone || '').replace(/[^0-9]/g, '');
+    if (realPhone) contact.phone = realPhone;
+
+    // The WhatsApp profile name is a fallback, not an override — a name
+    // somebody typed into the CRM beats whatever the handset advertises.
+    if (ctx.contactName) contact.name = ctx.contactName;
+
     try {
         const client = await prisma.client.findFirst({
-            where: { workspaceId: ctx.workspaceId, phone: cleanPhone },
+            where: { workspaceId: ctx.workspaceId, phone: lookupKey },
             select: { name: true, status: true, tags: true, summary: true, customFields: true },
         });
         if (!client) {
-            logger.info(`[http-tool] no CRM row for placeholders · phone=${cleanPhone} workspace=${ctx.workspaceId}`);
+            logger.info(`[http-tool] no CRM row for placeholders · key=${lookupKey} workspace=${ctx.workspaceId}`);
         }
         if (client) {
-            if (!client.name) {
-                logger.info(`[http-tool] CRM row has no name · phone=${cleanPhone}`);
+            if (!client.name && !contact.name) {
+                logger.info(`[http-tool] CRM row has no name · key=${lookupKey}`);
             }
             if (client.name) contact.name = client.name;
             if (client.status) contact.status = client.status;
@@ -1884,7 +1905,11 @@ export function buildToolsForSkills(
 
     if (skills.includes('http') && httpTools && httpTools.length > 0) {
         const contactPhone = contactPhoneOverride ?? (remoteJid ? (remoteJid.replace(/[^0-9]/g, '') || remoteJid) : undefined);
-        tools = { ...tools, ...buildHttpTools(httpTools, { workspaceId, contactPhone }) };
+        const contactKey = contactKeyOverride ?? contactPhone;
+        tools = {
+            ...tools,
+            ...buildHttpTools(httpTools, { workspaceId, contactPhone, contactKey, contactName }),
+        };
         const list = httpTools
             .map((t, i) => `- ${sanitizeName(t.name, `httpTool${i + 1}`)}: ${t.description || ''}`)
             .join('\n');

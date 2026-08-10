@@ -2428,6 +2428,21 @@ export class AiService {
                 ...(tools ? { tools, stopWhen: stepCountIs(10) } : {}),
             } as any);
             const durationMs = Date.now() - t0;
+
+            // A turn this slow is a customer staring at a silent chat, so
+            // it is worth a line in the log whether or not debug is on.
+            // Without this the only trace of a six-minute reply was the
+            // gap between two timestamps, and nobody reads a log for
+            // things that aren't there.
+            if (durationMs > 20_000) {
+                logger.warn(
+                    `[${instanceId}] slow turn · ${Math.round(durationMs / 1000)}s ` +
+                    `model=${agent.model} steps=${(result.steps || []).length} ` +
+                    `tools=${(result.steps || []).flatMap((s: any) => s.toolCalls || []).length} ` +
+                    `jid=${remoteJid}`
+                );
+            }
+
             void recordUsagePostHoc({
                 workspaceId: (agent as any).workspaceId || null,
                 userId: (agent as any).userId || null,

@@ -1,7 +1,11 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../utils/logger';
 
-const RETENTION_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+// 15 days. Three was too short to be useful: a customer reports a slow or
+// missing reply days later, and by the time anyone looks the evidence has
+// already been pruned — which is exactly what happened while diagnosing a
+// six-minute delay. Fifteen covers a normal reporting lag.
+const RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
 const RUN_EVERY_MS = 6 * 60 * 60 * 1000;      // every 6h
 
 async function pruneOnce() {

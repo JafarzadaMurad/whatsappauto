@@ -7,26 +7,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Sparkles, Send, AudioLines, Square, Loader2, ArrowUpRight, Coins, RefreshCw, MessageSquare } from "lucide-react";
+import { Bot, Sparkles, Send, AudioLines, Square, Loader2, ArrowUpRight, Coins, RefreshCw, Plus, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { useCopilotStore } from "@/store/copilotStore";
 import { useCopilotVoice } from "@/components/copilot/useCopilotVoice";
 
-const ENTITY_PATH: Record<string, string> = {
-    agents: "/dashboard/ai/agents",
-    "ai-providers": "/dashboard/ai/providers",
-    instances: "/dashboard/whatsapp",
-    messages: "/dashboard/inbox",
-    campaigns: "/dashboard/campaigns",
-    automations: "/dashboard/automations",
-    tables: "/dashboard/ai/tables",
-    "user-fields": "/dashboard/contacts",
-    clients: "/dashboard/contacts",
-    webhooks: "/dashboard/webhooks",
-    "api-keys": "/dashboard/api-keys",
-    instagram: "/dashboard/instagram",
-};
 
 const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
     { code: "", label: "Auto (match user)" },
@@ -35,6 +21,14 @@ const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
     { code: "Russian", label: "Русский" },
     { code: "Turkish", label: "Türkçe" },
 ];
+
+type CopilotSessionRow = {
+    id: string;
+    title: string | null;
+    mode: string;
+    totalCredits: number;
+    updatedAt: string;
+};
 
 type ModelOption = { provider: string; model: string };
 type CopilotConfig = {
@@ -49,15 +43,45 @@ type CopilotConfig = {
 export default function CopilotFullPage() {
     const router = useRouter();
     const {
-        isSending, voiceActive, sessionId, messages, actions, draft,
+        isSending, voiceActive, sessionId, messages, draft,
         provider, model, language,
-        setDraft, setSending, setSession, pushMessage, pushAction,
-        setProvider, setModel, setLanguage, reset,
+        setDraft, setSending, setSession, pushMessage,
+        setProvider, setModel, setLanguage, reset, setMessages,
     } = useCopilotStore();
 
     const [config, setConfig] = useState<CopilotConfig | null>(null);
     const [balance, setBalance] = useState<{ remaining: number; totalBudget: number } | null>(null);
+    const [sessions, setSessions] = useState<CopilotSessionRow[]>([]);
+    const [sessionsBusy, setSessionsBusy] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    const loadSessions = async () => {
+        setSessionsBusy(true);
+        try {
+            const r = await api.get('/copilot/sessions');
+            if (r.data.success) setSessions(r.data.sessions || []);
+        } catch { /* an unreachable list is not worth an error banner */ }
+        finally { setSessionsBusy(false); }
+    };
+    useEffect(() => { loadSessions(); }, []);
+
+    // A finished turn either created a session or changed its title and
+    // running total, so the list is refreshed when sending settles rather
+    // than on a timer.
+    useEffect(() => { if (!isSending) loadSessions(); }, [isSending]);
+
+    const openSession = async (id: string) => {
+        if (id === sessionId) return;
+        try {
+            const r = await api.get(`/copilot/sessions/${id}`);
+            if (r.data.success) {
+                setMessages(r.data.session.messages || []);
+                setSession(id);
+            }
+        } catch { /* leave the current conversation alone */ }
+    };
+
+    const newChat = () => { reset(); loadSessions(); };
 
     const { start: startVoice, stop: stopVoice } = useCopilotVoice({
         onError: (message) => {
@@ -115,7 +139,7 @@ export default function CopilotFullPage() {
 
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-    }, [messages, actions]);
+    }, [messages]);
 
     const send = async () => {
         const text = draft.trim();
@@ -203,6 +227,51 @@ export default function CopilotFullPage() {
 
     return (
         <div className="h-[calc(100vh-8rem)] max-w-7xl mx-auto flex gap-4">
+            {/* Chats.
+                On the left, where a list of things you can switch between
+                belongs. It replaced a live feed of tool calls: that feed
+                repeated what the transcript already showed a few
+                centimetres away, and it emptied on every reload, so the
+                most valuable column on the page was showing the least
+                durable thing on it. */}
+            <div className="w-64 bg-card border border-border rounded-2xl overflow-hidden hidden lg:flex flex-col">
+                <div className="p-3 border-b border-border flex items-center justify-between gap-2">
+                    <h2 className="font-semibold text-sm flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-primary" /> Chats
+                    </h2>
+                    <button onClick={newChat}
+                        title="New chat"
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                        <Plus className="w-4 h-4" />
+                    </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                    {sessionsBusy && sessions.length === 0 && (
+                        <div className="py-8 flex justify-center">
+                            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        </div>
+                    )}
+                    {!sessionsBusy && sessions.length === 0 && (
+                        <p className="py-8 px-3 text-center text-xs text-muted-foreground">
+                            No chats yet.
+                        </p>
+                    )}
+                    {sessions.map(sn => (
+                        <button key={sn.id} onClick={() => openSession(sn.id)}
+                            className={`w-full text-left px-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors ${
+                                sn.id === sessionId ? 'bg-secondary/50' : ''
+                            }`}>
+                            <div className="text-xs truncate">{sn.title || 'Untitled chat'}</div>
+                            <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                <span>{new Date(sn.updatedAt).toLocaleDateString()}</span>
+                                {sn.totalCredits > 0 && <span>· {sn.totalCredits} cai</span>}
+                                {sn.mode === 'voice' && <span>· voice</span>}
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {/* Main chat column */}
             <div className="flex-1 flex flex-col bg-card border border-border rounded-2xl overflow-hidden">
                 {/* Toolbar */}
@@ -369,42 +438,6 @@ export default function CopilotFullPage() {
                 </div>
             </div>
 
-            {/* Actions sidebar */}
-            <div className="w-72 bg-card border border-border rounded-2xl overflow-hidden hidden lg:flex flex-col">
-                <div className="p-4 border-b border-border">
-                    <h2 className="font-semibold text-sm flex items-center gap-2"><MessageSquare className="w-4 h-4 text-primary" /> Recent actions</h2>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">Live feed of what the copilot did.</p>
-                </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                    {actions.length === 0 && (
-                        <div className="text-center py-8 text-xs text-muted-foreground">
-                            No actions yet.
-                        </div>
-                    )}
-                    {actions.slice().reverse().map((a, i) => {
-                        const path = ENTITY_PATH[a.entity];
-                        return (
-                            <div key={a.at + i} className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl px-3 py-2 text-xs">
-                                <div className="flex items-start gap-2">
-                                    <span className="text-emerald-400 mt-0.5">✓</span>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-foreground">
-                                            {a.entity} {a.verb}
-                                            {a.title && <span className="text-muted-foreground">: {a.title}</span>}
-                                        </div>
-                                        {path && (
-                                            <Link href={path}
-                                                className="text-primary hover:underline text-[10px] flex items-center gap-0.5 mt-1">
-                                                View <ArrowUpRight className="w-3 h-3" />
-                                            </Link>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
         </div>
     );
 }

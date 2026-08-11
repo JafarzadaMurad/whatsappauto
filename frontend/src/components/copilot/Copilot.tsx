@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, X, Send, Mic, MicOff, Loader2, ChevronDown, Sparkles, MessageSquare, Coins, Maximize2, History, Plus } from "lucide-react";
+import { Bot, X, Send, AudioLines, Square, Loader2, ChevronDown, Sparkles, MessageSquare, Coins, Maximize2, History, Plus } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { createSocket } from "@/lib/socket";
@@ -427,10 +427,22 @@ export default function Copilot() {
                                 disabled={isSending || voiceActive}
                                 className="flex-1 bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none max-h-32" />
                             {config.voiceEnabled && (
+                                /* A waveform rather than a microphone: this
+                                   starts a spoken conversation, it doesn't
+                                   record a voice note, and a mic icon reads
+                                   as the latter. Round and filled so it sits
+                                   apart from the square send button. */
                                 <button onClick={voiceActive ? stopVoice : startVoice} disabled={isSending}
-                                    title={voiceActive ? 'End voice' : 'Start voice'}
-                                    className={`p-2 rounded-xl transition-colors ${voiceActive ? 'bg-red-500 text-white' : 'bg-secondary/70 text-muted-foreground hover:text-foreground'}`}>
-                                    {voiceActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                                    title={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                    aria-label={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                    className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                                        voiceActive
+                                            ? 'bg-red-500 text-white hover:bg-red-600'
+                                            : 'bg-foreground text-background hover:opacity-90'
+                                    }`}>
+                                    {voiceActive
+                                        ? <Square className="w-4 h-4 fill-current" />
+                                        : <AudioLines className="w-5 h-5" />}
                                 </button>
                             )}
                             <button onClick={send} disabled={!draft.trim() || isSending || voiceActive}

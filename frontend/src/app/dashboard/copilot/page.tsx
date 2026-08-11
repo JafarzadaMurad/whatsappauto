@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Sparkles, Send, Mic, MicOff, Loader2, ArrowUpRight, Coins, RefreshCw, MessageSquare } from "lucide-react";
+import { Bot, Sparkles, Send, AudioLines, Square, Loader2, ArrowUpRight, Coins, RefreshCw, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { useCopilotStore } from "@/store/copilotStore";
@@ -219,34 +219,15 @@ export default function CopilotFullPage() {
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <select value={model || ''}
-                            onChange={e => {
-                                const next = e.target.value;
-                                setModel(next);
-                                const found = config?.availableModels?.find(m => m.model === next);
-                                if (found) setProvider(found.provider);
-                            }}
-                            className="bg-secondary/60 border border-border rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50">
-                            {(config?.availableModels || []).map(m => (
-                                <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
-                                    {m.model}
-                                </option>
-                            ))}
-                        </select>
-                        <select value={language || ''}
-                            onChange={e => setLanguage(e.target.value || null)}
-                            className="bg-secondary/60 border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50">
-                            {LANGUAGE_OPTIONS.map(l => (
-                                <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
-                            ))}
-                        </select>
-                        <button onClick={reset}
-                            title="Start a new conversation"
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
-                            <RefreshCw className="w-4 h-4" />
-                        </button>
-                    </div>
+                    {/* Model and language moved down into the composer:
+                        they describe the message you are about to send, not
+                        the page, and reading them a screen away from the
+                        box you type in made that hard to see. */}
+                    <button onClick={reset}
+                        title="Start a new conversation"
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50">
+                        <RefreshCw className="w-4 h-4" />
+                    </button>
                 </div>
 
                 {/* Messages */}
@@ -314,25 +295,72 @@ export default function CopilotFullPage() {
                     </div>
                 )}
 
-                {/* Input */}
+                {/* Input.
+                    One bordered box holds the text and everything that acts
+                    on it — the two pickers sit under the words they apply
+                    to, and the send and voice buttons sit at the far end of
+                    the same row. The whole thing takes the focus ring, so
+                    typing lights up the control it belongs to rather than a
+                    field floating between loose buttons. */}
                 <div className="p-4 border-t border-border bg-background/30">
-                    <div className="flex items-end gap-2">
+                    <div className="rounded-2xl border border-border bg-secondary/40 focus-within:ring-2 focus-within:ring-primary/40 transition-shadow">
                         <textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onKey}
                             placeholder="Ask anything…"
                             rows={2}
                             disabled={isSending || voiceActive}
-                            className="flex-1 bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none max-h-40" />
-                        {config?.voiceEnabled && (
-                            <button onClick={voiceActive ? stopVoice : startVoice} disabled={isSending}
-                                title={voiceActive ? 'End voice' : 'Start voice'}
-                                className={`p-2.5 rounded-xl transition-colors ${voiceActive ? 'bg-red-500 text-white' : 'bg-secondary/70 text-muted-foreground hover:text-foreground'}`}>
-                                {voiceActive ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                            className="w-full bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none max-h-40 placeholder:text-muted-foreground" />
+
+                        <div className="flex items-center gap-2 px-2.5 pb-2.5">
+                            <select value={model || ''}
+                                onChange={e => {
+                                    const next = e.target.value;
+                                    setModel(next);
+                                    const found = config?.availableModels?.find(m => m.model === next);
+                                    if (found) setProvider(found.provider);
+                                }}
+                                title="Model for text replies"
+                                className="bg-secondary/70 border border-border rounded-lg px-2.5 py-1.5 text-[11px] font-mono max-w-[12rem] truncate focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                {(config?.availableModels || []).map(m => (
+                                    <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
+                                        {m.model}
+                                    </option>
+                                ))}
+                            </select>
+                            <select value={language || ''}
+                                onChange={e => setLanguage(e.target.value || null)}
+                                title="Reply language"
+                                className="bg-secondary/70 border border-border rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                {LANGUAGE_OPTIONS.map(l => (
+                                    <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
+                                ))}
+                            </select>
+
+                            <div className="flex-1" />
+
+                            {config?.voiceEnabled && (
+                                /* A waveform rather than a microphone: this
+                                   starts a spoken conversation, it doesn't
+                                   record a voice note. */
+                                <button onClick={voiceActive ? stopVoice : startVoice} disabled={isSending}
+                                    title={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                    aria-label={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                    className={`w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                                        voiceActive
+                                            ? 'bg-red-500 text-white hover:bg-red-600'
+                                            : 'bg-foreground text-background hover:opacity-90'
+                                    }`}>
+                                    {voiceActive
+                                        ? <Square className="w-4 h-4 fill-current" />
+                                        : <AudioLines className="w-4 h-4" />}
+                                </button>
+                            )}
+                            <button onClick={send} disabled={!draft.trim() || isSending || voiceActive}
+                                title="Send"
+                                aria-label="Send"
+                                className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed">
+                                <Send className="w-4 h-4" />
                             </button>
-                        )}
-                        <button onClick={send} disabled={!draft.trim() || isSending || voiceActive}
-                            className="p-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed">
-                            <Send className="w-5 h-5" />
-                        </button>
+                        </div>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
                         <span>Enter to send · Shift+Enter for new line</span>

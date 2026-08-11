@@ -418,63 +418,73 @@ export default function Copilot() {
                         </div>
                     )}
 
-                    {/* Input */}
+                    {/* Input.
+                        One bordered box holds the text and every control that
+                        acts on it, matching the full-page copilot: pickers
+                        sit under the words they apply to, send and voice at
+                        the far end of the same row. */}
                     <div className="p-3 border-t border-border bg-background/30">
-                        <div className="flex items-end gap-2">
+                        <div className="rounded-2xl border border-border bg-secondary/40 focus-within:ring-2 focus-within:ring-primary/40 transition-shadow">
                             <textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onKey}
                                 placeholder="Ask anything..."
                                 rows={1}
                                 disabled={isSending || voiceActive}
-                                className="flex-1 bg-secondary/50 border border-border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none max-h-32" />
-                            {config.voiceEnabled && (
-                                /* A waveform rather than a microphone: this
-                                   starts a spoken conversation, it doesn't
-                                   record a voice note, and a mic icon reads
-                                   as the latter. Round and filled so it sits
-                                   apart from the square send button. */
-                                <button onClick={voiceActive ? stopVoice : startVoice} disabled={isSending}
-                                    title={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
-                                    aria-label={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
-                                    className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${
-                                        voiceActive
-                                            ? 'bg-red-500 text-white hover:bg-red-600'
-                                            : 'bg-foreground text-background hover:opacity-90'
-                                    }`}>
-                                    {voiceActive
-                                        ? <Square className="w-4 h-4 fill-current" />
-                                        : <AudioLines className="w-5 h-5" />}
+                                className="w-full bg-transparent px-3 pt-2.5 pb-1 text-sm focus:outline-none resize-none max-h-32 placeholder:text-muted-foreground" />
+
+                            <div className="flex items-center gap-1.5 px-2 pb-2">
+                                <select value={model || ''}
+                                    onChange={e => {
+                                        const next = e.target.value;
+                                        setModel(next);
+                                        const found = config?.availableModels?.find(m => m.model === next);
+                                        if (found) setProvider(found.provider);
+                                    }}
+                                    disabled={voiceActive}
+                                    title={voiceActive ? 'Voice mode runs on its own model' : 'Model for this conversation'}
+                                    className="bg-secondary/70 border border-border rounded-lg px-2 py-1 text-[10px] text-foreground max-w-[40%] truncate focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50">
+                                    {(config?.availableModels || []).map(m => (
+                                        <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
+                                            {m.model}
+                                        </option>
+                                    ))}
+                                </select>
+                                <select value={language || ''}
+                                    onChange={e => setLanguage(e.target.value || null)}
+                                    title="Reply language"
+                                    className="bg-secondary/70 border border-border rounded-lg px-2 py-1 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
+                                    {LANGUAGE_OPTIONS.map(l => (
+                                        <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
+                                    ))}
+                                </select>
+
+                                <div className="flex-1" />
+
+                                {config.voiceEnabled && (
+                                    /* A waveform rather than a microphone:
+                                       this starts a spoken conversation, it
+                                       doesn't record a voice note. */
+                                    <button onClick={voiceActive ? stopVoice : startVoice} disabled={isSending}
+                                        title={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                        aria-label={voiceActive ? 'End voice conversation' : 'Talk to the copilot'}
+                                        className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                                            voiceActive
+                                                ? 'bg-red-500 text-white hover:bg-red-600'
+                                                : 'bg-foreground text-background hover:opacity-90'
+                                        }`}>
+                                        {voiceActive
+                                            ? <Square className="w-3.5 h-3.5 fill-current" />
+                                            : <AudioLines className="w-4 h-4" />}
+                                    </button>
+                                )}
+                                <button onClick={send} disabled={!draft.trim() || isSending || voiceActive}
+                                    title="Send"
+                                    aria-label="Send"
+                                    className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed">
+                                    <Send className="w-4 h-4" />
                                 </button>
-                            )}
-                            <button onClick={send} disabled={!draft.trim() || isSending || voiceActive}
-                                className="p-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed">
-                                <Send className="w-5 h-5" />
-                            </button>
+                            </div>
                         </div>
-                        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <select value={model || ''}
-                                onChange={e => {
-                                    const next = e.target.value;
-                                    setModel(next);
-                                    const found = config?.availableModels?.find(m => m.model === next);
-                                    if (found) setProvider(found.provider);
-                                }}
-                                disabled={voiceActive}
-                                title={voiceActive ? 'Voice mode runs on its own model' : 'Model for this conversation'}
-                                className="bg-secondary/60 border border-border rounded px-1.5 py-0.5 text-[10px] text-foreground max-w-[45%] truncate focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50">
-                                {(config?.availableModels || []).map(m => (
-                                    <option key={`${m.provider}|${m.model}`} value={m.model} className="bg-card">
-                                        {m.model}
-                                    </option>
-                                ))}
-                            </select>
-                            <select value={language || ''}
-                                onChange={e => setLanguage(e.target.value || null)}
-                                title="Reply language"
-                                className="bg-secondary/60 border border-border rounded px-1.5 py-0.5 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50">
-                                {LANGUAGE_OPTIONS.map(l => (
-                                    <option key={l.code} value={l.code} className="bg-card">{l.label}</option>
-                                ))}
-                            </select>
+                        <div className="mt-1.5 flex text-[10px] text-muted-foreground">
                             <Link href="/dashboard/settings/copilot" className="ml-auto hover:text-foreground whitespace-nowrap">
                                 Custom prompt
                             </Link>
